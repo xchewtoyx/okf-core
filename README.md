@@ -23,9 +23,10 @@ The target pattern is semi-opaque:
 
 ## Status
 
-This repository is in early MVP development. Configuration loading and concept
-document parsing are implemented; the other OKF operations described below are
-the planned public shape of the project and are not implemented yet.
+This repository is in early MVP development. Configuration loading, concept
+document parsing, and configurable concept ID/path resolution are implemented;
+the other OKF operations described below are the planned public shape of the
+project and are not implemented yet.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
@@ -35,13 +36,15 @@ document stays internally consistent.
 ## Current Capabilities
 
 `okf-core` currently provides an installable Python package with typed project
-configuration loading and structural concept document parsing.
+configuration loading, structural concept document parsing, and deterministic
+concept ID/path resolution for configured bundle roots.
 
 ```python
-from okf_core import load_config, parse_concept_document
+from okf_core import concept_id_to_path, load_config, parse_concept_document
 
 config = load_config()
 document = parse_concept_document("---\ntype: concept\n---\nBody\n")
+path = concept_id_to_path("topics/example", config.bundles["default"])
 ```
 
 Install the package for local development and tests with:
@@ -130,6 +133,24 @@ body-only Markdown.
 base requirement is only a non-empty string `type` in frontmatter; missing
 optional fields are tolerated.
 
+### Concept ID and Path Resolution
+
+`concept_id_to_path()` maps a concept ID to a Markdown file path under a
+configured bundle root. `path_to_concept_id()` maps a Markdown file path inside
+configured bundle roots back to a concept ID. The implemented
+`relative-path` strategy treats concept IDs as slash-separated relative paths
+without file extensions: `topics/example` resolves to `topics/example.md`.
+
+Path resolution rejects empty IDs, absolute IDs, parent-directory traversal,
+backslash-separated IDs, and IDs that include a file extension. It also rejects
+configured reserved filenames such as `index.md` and `log.md` as normal concept
+documents.
+
+For bundles with multiple roots, ID-to-path resolution uses the first configured
+root by default. Callers may pass `bundle_root` to target a specific configured
+root. Path-to-ID resolution chooses the deepest configured root containing the
+path so nested roots behave deterministically.
+
 ## Planned Operations
 
 The planned library and CLI surface is grouped around deterministic operations.
@@ -146,7 +167,6 @@ No operation should require this package to own an LLM API token.
 ### Concept Operations
 
 - Locate a concept by ID.
-- Resolve concept IDs to safe paths and paths back to concept IDs.
 
 ### Query and Context Operations
 
