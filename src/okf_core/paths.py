@@ -135,7 +135,7 @@ def _concept_id_to_relative_markdown_path(concept_id: str) -> Path:
 
 def _is_within_root(path: Path, root: Path) -> bool:
     try:
-        path.resolve(strict=False).relative_to(root)
+        path.relative_to(root)
     except ValueError:
         return False
     return True
