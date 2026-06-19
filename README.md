@@ -101,3 +101,8 @@ All implementation work should be delivered through pull requests. Tests are
 mandatory for delivered behavior, and user-facing behavior changes must include
 README updates. Issues should stay open until their implementation PRs have been
 approved by a human and merged.
+
+## License
+
+`okf-core` is licensed under the Apache License, Version 2.0. See `LICENSE` for
+the full license text.
