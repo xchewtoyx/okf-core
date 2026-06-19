@@ -21,6 +21,9 @@ classifiers = [
   "Topic :: Software Development :: Libraries :: Python Modules",
   "Topic :: Text Processing :: Markup :: Markdown",
 ]
+dependencies = [
+  "pydantic >= 2, < 3",
+]
 
 [project.optional-dependencies]
 test = ["pytest"]
