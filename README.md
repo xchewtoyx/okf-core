@@ -23,8 +23,9 @@ The target pattern is semi-opaque:
 
 ## Status
 
-This repository is being bootstrapped. The operations described below are the
-planned public shape of the project and are not implemented yet.
+This repository is in early MVP development. Configuration loading is
+implemented; the other OKF operations described below are the planned public
+shape of the project and are not implemented yet.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
@@ -33,13 +34,13 @@ document stays internally consistent.
 
 ## Current Capabilities
 
-`okf-core` currently provides an installable Python package skeleton. The only
-public Python surface is:
+`okf-core` currently provides an installable Python package with typed project
+configuration loading.
 
 ```python
-import okf_core
+from okf_core import load_config
 
-okf_core.__version__
+config = load_config()
 ```
 
 Install the package for local development and tests with:
@@ -54,24 +55,62 @@ Run the test suite with:
 pytest
 ```
 
-The OKF operations described below remain planned and unimplemented.
+### Configuration
 
-## Planned Configuration
+The default project configuration file is `okf-core.toml`.
 
-The default project configuration file will be `okf-core.toml`.
+`load_config()` searches upward from the current working directory for
+`okf-core.toml`. If no config file is found, it returns built-in defaults rooted
+at the current working directory. Callers may pass `config_path` to load a
+specific file, `project_root` to choose a discovery/default root, and
+`overrides` to supply explicit Python API overrides.
 
-The configuration model is expected to support:
+Explicit config paths are loaded directly and must exist. When no explicit path
+is provided, future CLI commands should use the same behavior: explicit
+`--config` first, otherwise cwd-upward discovery, otherwise built-in defaults.
 
-- one or more OKF bundle roots;
-- include and exclude globs;
-- reserved filenames such as `index.md` and `log.md`;
-- concept ID to path mapping rules;
-- optional local profile validation rules;
-- taxonomy hints such as known or allowed concept `type` values;
-- optional index or cache locations.
+Supported top-level tables are:
 
-Python APIs should also accept explicit paths and options so `okf-core` remains
-usable without a configuration file.
+- `[defaults]`
+- `[taxonomy]`
+- `[profiles.<name>]`
+- `[bundles.<name>]`
+
+Supported `[defaults]` keys are:
+
+- `bundle_roots`
+- `include`
+- `exclude`
+- `reserved_filenames`
+- `concept_path_strategy`
+- `index_cache`
+
+Supported `[taxonomy]` keys are `known_types` and `allowed_types`.
+
+Supported `[profiles.<name>]` keys are `required_frontmatter`,
+`optional_frontmatter`, and nested `taxonomy` settings. Supported
+`[bundles.<name>]` keys are the same path/glob/reserved-name settings as
+`[defaults]`, plus `profile`.
+
+Relative paths are normalized against the resolved project root, and referenced
+files or directories do not need to exist yet. Unknown config keys fail closed
+with a configuration error so typos do not silently change behavior.
+
+Built-in defaults are equivalent to:
+
+```toml
+[defaults]
+bundle_roots = ["."]
+include = ["**/*.md"]
+exclude = []
+reserved_filenames = ["index.md", "log.md"]
+concept_path_strategy = "relative-path"
+index_cache = ".okf-cache"
+```
+
+If no bundles are declared, `okf-core` exposes one resolved bundle named
+`default` using the project defaults. Declared bundles inherit project defaults
+and may override them per bundle.
 
 ## Planned Operations
 
