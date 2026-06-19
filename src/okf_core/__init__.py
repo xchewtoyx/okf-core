@@ -17,6 +17,12 @@ from okf_core.documents import (
     serialize_concept_document,
     validate_concept_document,
 )
+from okf_core.manifest import (
+    BundleManifest,
+    ConceptManifestEntry,
+    ManifestProblem,
+    scan_bundle,
+)
 from okf_core.paths import (
     ConceptPathError,
     concept_id_to_path,
@@ -28,11 +34,14 @@ __version__ = "0.0.0"
 
 __all__ = [
     "BundleConfig",
+    "BundleManifest",
     "ConfigError",
     "ConfigOverrides",
     "ConceptDocument",
+    "ConceptManifestEntry",
     "ConceptPathError",
     "DocumentParseError",
+    "ManifestProblem",
     "OkfConfig",
     "ProfileConfig",
     "TaxonomyConfig",
@@ -43,6 +52,7 @@ __all__ = [
     "load_config",
     "path_to_concept_id",
     "parse_concept_document",
+    "scan_bundle",
     "serialize_concept_document",
     "validate_concept_document",
 ]
