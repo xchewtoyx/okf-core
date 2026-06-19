@@ -31,6 +31,31 @@ request. Documentation must distinguish implemented behavior from planned
 behavior, and README edits should be reviewed as a whole after patching so the
 document stays internally consistent.
 
+## Current Capabilities
+
+`okf-core` currently provides an installable Python package skeleton. The only
+public Python surface is:
+
+```python
+import okf_core
+
+okf_core.__version__
+```
+
+Install the package for local development and tests with:
+
+```sh
+python -m pip install -e ".[test]"
+```
+
+Run the test suite with:
+
+```sh
+pytest
+```
+
+The OKF operations described below remain planned and unimplemented.
+
 ## Planned Configuration
 
 The default project configuration file will be `okf-core.toml`.
