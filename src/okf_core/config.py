@@ -191,6 +191,8 @@ def _read_config_file(config_path: Path | None) -> _ConfigFile:
     try:
         with config_path.open("rb") as handle:
             raw_config = tomllib.load(handle)
+    except OSError as exc:
+        raise ConfigError(f"Could not read config file {config_path}: {exc}") from exc
     except tomllib.TOMLDecodeError as exc:
         raise ConfigError(f"Invalid TOML in {config_path}: {exc}") from exc
 
@@ -276,10 +278,16 @@ def _resolve_bundle(
     overrides: ConfigOverrides,
     project_root: Path,
 ) -> BundleConfig:
-    bundle_roots = (
-        overrides.bundle_roots or raw_bundle.bundle_roots or defaults.bundle_roots
+    bundle_roots = _select_config_value(
+        overrides.bundle_roots,
+        raw_bundle.bundle_roots,
+        defaults.bundle_roots,
     )
-    include = overrides.include or raw_bundle.include or defaults.include
+    include = _select_config_value(
+        overrides.include,
+        raw_bundle.include,
+        defaults.include,
+    )
     exclude = (
         overrides.exclude
         if overrides.exclude is not None
@@ -287,17 +295,21 @@ def _resolve_bundle(
         if raw_bundle.exclude is not None
         else defaults.exclude
     )
-    reserved_filenames = (
-        overrides.reserved_filenames
-        or raw_bundle.reserved_filenames
-        or defaults.reserved_filenames
+    reserved_filenames = _select_config_value(
+        overrides.reserved_filenames,
+        raw_bundle.reserved_filenames,
+        defaults.reserved_filenames,
     )
-    concept_path_strategy = (
-        overrides.concept_path_strategy
-        or raw_bundle.concept_path_strategy
-        or defaults.concept_path_strategy
+    concept_path_strategy = _select_config_value(
+        overrides.concept_path_strategy,
+        raw_bundle.concept_path_strategy,
+        defaults.concept_path_strategy,
     )
-    index_cache = overrides.index_cache or raw_bundle.index_cache or defaults.index_cache
+    index_cache = _select_config_value(
+        overrides.index_cache,
+        raw_bundle.index_cache,
+        defaults.index_cache,
+    )
 
     return BundleConfig(
         name=name,
@@ -309,6 +321,18 @@ def _resolve_bundle(
         index_cache=_normalize_path(index_cache, project_root),
         profile=raw_bundle.profile,
     )
+
+
+def _select_config_value(
+    override_value: Any | None,
+    file_value: Any | None,
+    default_value: Any,
+) -> Any:
+    if override_value is not None:
+        return override_value
+    if file_value is not None:
+        return file_value
+    return default_value
 
 
 def _normalize_path(path: Path, project_root: Path) -> Path:

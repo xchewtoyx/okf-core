@@ -45,6 +45,25 @@ def test_missing_explicit_config_path_raises_config_error(tmp_path: Path) -> Non
         load_config(config_path=tmp_path / "missing.toml")
 
 
+def test_config_read_errors_raise_config_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text("[defaults]\n", encoding="utf-8")
+    original_open = Path.open
+
+    def fail_open(path: Path, *args: object, **kwargs: object) -> object:
+        if path == config_path:
+            raise OSError("read failed")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", fail_open)
+
+    with pytest.raises(ConfigError, match="Could not read config file"):
+        load_config(config_path=config_path)
+
+
 def test_discovers_config_upward_from_start_path(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     nested = tmp_path / "a" / "b"
@@ -168,6 +187,30 @@ index_cache = ".cache/product"
     assert bundle.index_cache == tmp_path / ".cache" / "product"
 
 
+def test_explicit_empty_bundle_values_are_honored_from_toml(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+include = ["**/*.md"]
+reserved_filenames = ["index.md"]
+
+[bundles.docs]
+include = []
+exclude = []
+reserved_filenames = []
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path=config_path)
+    bundle = config.bundles["docs"]
+
+    assert bundle.include == ()
+    assert bundle.exclude == ()
+    assert bundle.reserved_filenames == ()
+
+
 @pytest.mark.parametrize(
     "toml",
     [
@@ -262,3 +305,31 @@ index_cache = ".file-cache"
     assert bundle.reserved_filenames == ("api.md",)
     assert bundle.concept_path_strategy == "api-strategy"
     assert bundle.index_cache == tmp_path / ".api-cache"
+
+
+def test_explicit_empty_bundle_values_are_honored_from_python_overrides(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+include = ["**/*.md"]
+reserved_filenames = ["index.md"]
+
+[bundles.docs]
+include = ["file/**/*.md"]
+reserved_filenames = ["file.md"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(
+        config_path=config_path,
+        overrides={"include": [], "exclude": [], "reserved_filenames": []},
+    )
+    bundle = config.bundles["docs"]
+
+    assert bundle.include == ()
+    assert bundle.exclude == ()
+    assert bundle.reserved_filenames == ()
