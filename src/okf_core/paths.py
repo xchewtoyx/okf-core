@@ -65,10 +65,9 @@ def concept_path_bundle_root(path: str | Path, bundle: BundleConfig) -> Path:
         raise ConceptPathError(f"Bundle has no roots: {bundle.name}")
 
     resolved_path = Path(path).expanduser().resolve(strict=False)
+    resolved_roots = tuple(root.resolve(strict=False) for root in bundle.bundle_roots)
     matches = [
-        root.resolve(strict=False)
-        for root in bundle.bundle_roots
-        if _is_within_root(resolved_path, root.resolve(strict=False))
+        root for root in resolved_roots if _is_within_root(resolved_path, root)
     ]
     if not matches:
         raise ConceptPathError(
@@ -129,7 +128,7 @@ def _concept_id_to_relative_markdown_path(concept_id: str) -> Path:
 
 def _is_within_root(path: Path, root: Path) -> bool:
     try:
-        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        path.resolve(strict=False).relative_to(root)
     except ValueError:
         return False
     return True

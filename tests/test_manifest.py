@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from okf_core import BundleConfig, scan_bundle
+from okf_core import BundleConfig, ConceptPathError, scan_bundle
 
 
 def test_scan_bundle_finds_nested_concepts(tmp_path: Path) -> None:
@@ -24,6 +24,11 @@ def test_scan_bundle_finds_nested_concepts(tmp_path: Path) -> None:
         "type": "concept",
         "title": "Example",
     }
+
+
+def test_scan_bundle_requires_configured_roots() -> None:
+    with pytest.raises(ConceptPathError, match="Bundle has no roots"):
+        scan_bundle(_bundle("empty"))
 
 
 def test_scan_bundle_supports_multiple_roots(tmp_path: Path) -> None:

@@ -55,6 +55,9 @@ class BundleManifest:
 def scan_bundle(bundle: BundleConfig) -> BundleManifest:
     """Scan a configured bundle into concept entries and non-fatal problems."""
 
+    if not bundle.bundle_roots:
+        raise ConceptPathError(f"Bundle has no roots: {bundle.name}")
+
     entries: list[ConceptManifestEntry] = []
     problems: list[ManifestProblem] = []
     scanned_paths: set[Path] = set()
