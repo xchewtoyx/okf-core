@@ -76,7 +76,7 @@ class OkfConfig(BaseModel):
 
 
 class ConfigOverrides(BaseModel):
-    """Explicit Python API overrides for project-level config options."""
+    """Explicit Python API overrides applied after file and bundle settings."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -177,10 +177,10 @@ def _resolve_project_root(
     project_root: str | Path | None,
     config_path: Path | None,
 ) -> Path:
-    if project_root is not None:
-        return Path(project_root).expanduser().resolve(strict=False)
     if config_path is not None:
         return config_path.parent.resolve(strict=False)
+    if project_root is not None:
+        return Path(project_root).expanduser().resolve(strict=False)
     return Path.cwd().resolve(strict=False)
 
 

@@ -71,7 +71,11 @@ def test_discovers_config_upward_from_start_path(tmp_path: Path) -> None:
     config_path.write_text("[defaults]\nbundle_roots = ['docs']\n", encoding="utf-8")
 
     assert discover_config(nested) == config_path
-    assert load_config(project_root=nested).config_path == config_path
+    config = load_config(project_root=nested)
+
+    assert config.config_path == config_path
+    assert config.project_root == tmp_path
+    assert config.defaults.bundle_roots == (tmp_path / "docs",)
 
 
 def test_multiple_bundle_roots(tmp_path: Path) -> None:
