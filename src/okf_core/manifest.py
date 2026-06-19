@@ -57,6 +57,7 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
 
     entries: list[ConceptManifestEntry] = []
     problems: list[ManifestProblem] = []
+    scanned_paths: set[Path] = set()
 
     for root in bundle.bundle_roots:
         resolved_root = root.resolve(strict=False)
@@ -64,10 +65,13 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
             continue
 
         for path in _iter_included_paths(resolved_root, bundle):
+            if path in scanned_paths:
+                continue
+            scanned_paths.add(path)
             if is_reserved_concept_path(path, bundle):
                 continue
 
-            entry, problem = _scan_concept_path(path, resolved_root, bundle)
+            entry, problem = _scan_concept_path(path, bundle)
             if entry is not None:
                 entries.append(entry)
             if problem is not None:
@@ -109,13 +113,10 @@ def _is_excluded(path: Path, root: Path, bundle: BundleConfig) -> bool:
 
 def _scan_concept_path(
     path: Path,
-    root: Path,
     bundle: BundleConfig,
 ) -> tuple[ConceptManifestEntry | None, ManifestProblem | None]:
     try:
         owning_root = concept_path_bundle_root(path, bundle)
-        if owning_root != root:
-            return None, None
         concept_id = path_to_concept_id(path, bundle)
     except ConceptPathError as exc:
         return None, ManifestProblem(path=path, kind="path-error", message=str(exc))

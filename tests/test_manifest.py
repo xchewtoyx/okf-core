@@ -54,6 +54,22 @@ def test_scan_bundle_prefers_nested_bundle_root_ownership(tmp_path: Path) -> Non
     assert manifest.concepts[0].bundle_root == nested
 
 
+def test_scan_bundle_keeps_parent_relative_include_for_nested_root(
+    tmp_path: Path,
+) -> None:
+    parent = tmp_path / "project"
+    nested = parent / "knowledge"
+    _write_concept(nested / "topic.md", title="Topic")
+
+    manifest = scan_bundle(
+        _bundle("nested", parent, nested, include=("knowledge/**/*.md",))
+    )
+
+    assert len(manifest.concepts) == 1
+    assert manifest.concepts[0].concept_id == "topic"
+    assert manifest.concepts[0].bundle_root == nested
+
+
 def test_scan_bundle_applies_include_and_exclude_globs(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "concepts" / "keep.md", title="Keep")

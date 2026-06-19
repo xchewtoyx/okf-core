@@ -61,6 +61,9 @@ def is_reserved_concept_path(path: str | Path, bundle: BundleConfig) -> bool:
 def concept_path_bundle_root(path: str | Path, bundle: BundleConfig) -> Path:
     """Return the deepest configured bundle root containing a concept path."""
 
+    if not bundle.bundle_roots:
+        raise ConceptPathError(f"Bundle has no roots: {bundle.name}")
+
     resolved_path = Path(path).expanduser().resolve(strict=False)
     matches = [
         root.resolve(strict=False)

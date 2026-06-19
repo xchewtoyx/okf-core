@@ -107,6 +107,13 @@ def test_concept_path_bundle_root_prefers_deepest_matching_root(
     )
 
 
+def test_concept_path_bundle_root_requires_configured_roots() -> None:
+    bundle = _bundle()
+
+    with pytest.raises(ConceptPathError, match="Bundle has no roots"):
+        concept_path_bundle_root("topic.md", bundle)
+
+
 def test_path_outside_bundle_roots_is_rejected(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path / "knowledge")
 
