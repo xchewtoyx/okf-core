@@ -39,6 +39,19 @@ def test_scan_bundle_supports_multiple_roots(tmp_path: Path) -> None:
     assert {entry.bundle_root for entry in manifest.concepts} == {docs, notes}
 
 
+def test_scan_bundle_prefers_nested_bundle_root_ownership(tmp_path: Path) -> None:
+    parent = tmp_path / "project"
+    nested = parent / "knowledge"
+    _write_concept(nested / "topic.md", title="Topic")
+
+    manifest = scan_bundle(_bundle("nested", parent, nested))
+
+    assert len(manifest.concepts) == 1
+    assert manifest.concepts[0].concept_id == "topic"
+    assert manifest.concepts[0].path == nested / "topic.md"
+    assert manifest.concepts[0].bundle_root == nested
+
+
 def test_scan_bundle_applies_include_and_exclude_globs(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "concepts" / "keep.md", title="Keep")

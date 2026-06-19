@@ -162,8 +162,8 @@ path so nested roots behave deterministically.
 
 `scan_bundle()` scans a resolved `BundleConfig` and returns a deterministic
 `BundleManifest`. Manifest entries include the concept ID, path, bundle root,
-mtime, size, SHA-256 hash, and parsed frontmatter summary for each discovered
-concept document.
+`mtime_ns` timestamp, size, SHA-256 hash, and parsed frontmatter summary for
+each discovered concept document.
 
 Scanning applies each bundle's configured include globs, exclude globs, and
 reserved filename rules. Missing bundle roots are skipped so configuration can
