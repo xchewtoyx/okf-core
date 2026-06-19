@@ -12,7 +12,6 @@ from okf_core import (
     load_config,
     path_to_concept_id,
 )
-from okf_core.paths import _path_to_concept_id_in_root
 from okf_core.config import BundleConfig
 
 
@@ -98,16 +97,15 @@ def test_path_to_concept_id_prefers_deepest_matching_root(tmp_path: Path) -> Non
     assert path_to_concept_id(tmp_path / "knowledge" / "topic.md", bundle) == "topic"
 
 
-def test_known_root_concept_id_helper_matches_public_resolution(
+def test_path_to_concept_id_matches_path_relative_to_owning_root(
     tmp_path: Path,
 ) -> None:
     bundle = _bundle(tmp_path, tmp_path / "knowledge")
-    path = tmp_path / "knowledge" / "topic.md"
+    path = tmp_path / "knowledge" / "topics" / "example.md"
     owning_root = concept_path_bundle_root(path, bundle)
+    expected = "/".join(path.relative_to(owning_root).with_suffix("").parts)
 
-    assert _path_to_concept_id_in_root(path, owning_root, bundle) == (
-        path_to_concept_id(path, bundle)
-    )
+    assert path_to_concept_id(path, bundle) == expected
 
 
 def test_concept_path_bundle_root_prefers_deepest_matching_root(
