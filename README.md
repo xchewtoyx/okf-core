@@ -23,9 +23,9 @@ The target pattern is semi-opaque:
 
 ## Status
 
-This repository is in early MVP development. Configuration loading is
-implemented; the other OKF operations described below are the planned public
-shape of the project and are not implemented yet.
+This repository is in early MVP development. Configuration loading and concept
+document parsing are implemented; the other OKF operations described below are
+the planned public shape of the project and are not implemented yet.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
@@ -35,12 +35,13 @@ document stays internally consistent.
 ## Current Capabilities
 
 `okf-core` currently provides an installable Python package with typed project
-configuration loading.
+configuration loading and structural concept document parsing.
 
 ```python
-from okf_core import load_config
+from okf_core import load_config, parse_concept_document
 
 config = load_config()
+document = parse_concept_document("---\ntype: concept\n---\nBody\n")
 ```
 
 Install the package for local development and tests with:
@@ -112,6 +113,23 @@ If no bundles are declared, `okf-core` exposes one resolved bundle named
 `default` using the project defaults. Declared bundles inherit project defaults
 and may override them per bundle.
 
+### Concept Documents
+
+`parse_concept_document()` parses a Markdown string into YAML frontmatter and
+body content. Documents without frontmatter are accepted and return empty
+frontmatter with the original Markdown as the body. Invalid YAML, unterminated
+frontmatter, non-mapping frontmatter, and non-string frontmatter keys raise
+`DocumentParseError`.
+
+`serialize_concept_document()` writes a parsed concept document back to
+Markdown. Unknown frontmatter keys are preserved when callers keep them in the
+parsed frontmatter dictionary. Documents with empty frontmatter serialize as
+body-only Markdown.
+
+`validate_concept_document()` performs base OKF concept conformance checks. The
+base requirement is only a non-empty string `type` in frontmatter; missing
+optional fields are tolerated.
+
 ## Planned Operations
 
 The planned library and CLI surface is grouped around deterministic operations.
@@ -128,8 +146,6 @@ No operation should require this package to own an LLM API token.
 ### Concept Operations
 
 - Locate a concept by ID.
-- Parse and serialize Markdown documents with YAML frontmatter.
-- Preserve unknown frontmatter keys during round trips.
 - Resolve concept IDs to safe paths and paths back to concept IDs.
 
 ### Query and Context Operations
