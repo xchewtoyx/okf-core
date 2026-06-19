@@ -34,3 +34,4 @@ packages = ["src/okf_core"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]

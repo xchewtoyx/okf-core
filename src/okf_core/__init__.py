@@ -17,6 +17,12 @@ from okf_core.documents import (
     serialize_concept_document,
     validate_concept_document,
 )
+from okf_core.paths import (
+    ConceptPathError,
+    concept_id_to_path,
+    is_reserved_concept_path,
+    path_to_concept_id,
+)
 
 __version__ = "0.0.0"
 
@@ -25,13 +31,17 @@ __all__ = [
     "ConfigError",
     "ConfigOverrides",
     "ConceptDocument",
+    "ConceptPathError",
     "DocumentParseError",
     "OkfConfig",
     "ProfileConfig",
     "TaxonomyConfig",
     "__version__",
     "discover_config",
+    "concept_id_to_path",
+    "is_reserved_concept_path",
     "load_config",
+    "path_to_concept_id",
     "parse_concept_document",
     "serialize_concept_document",
     "validate_concept_document",
