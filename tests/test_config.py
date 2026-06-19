@@ -78,6 +78,20 @@ def test_discovers_config_upward_from_start_path(tmp_path: Path) -> None:
     assert config.defaults.bundle_roots == (tmp_path / "docs",)
 
 
+def test_discover_config_expands_tilde_start_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    nested = home / "project" / "nested"
+    nested.mkdir(parents=True)
+    config_path = home / "project" / "okf-core.toml"
+    config_path.write_text("[defaults]\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+
+    assert discover_config("~/project/nested") == config_path
+
+
 def test_multiple_bundle_roots(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
@@ -230,6 +244,14 @@ def test_unknown_keys_fail_closed(tmp_path: Path, toml: str) -> None:
     config_path.write_text(toml, encoding="utf-8")
 
     with pytest.raises(ConfigError, match="Invalid OKF configuration"):
+        load_config(config_path=config_path)
+
+
+def test_validation_error_includes_config_path(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text("[defaults]\nunexpected = true\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match=str(config_path)):
         load_config(config_path=config_path)
 
 

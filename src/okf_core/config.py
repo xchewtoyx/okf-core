@@ -112,7 +112,7 @@ class _ConfigFile(BaseModel):
 def discover_config(start_path: str | Path | None = None) -> Path | None:
     """Search upward from ``start_path`` for ``okf-core.toml``."""
 
-    start = Path.cwd() if start_path is None else Path(start_path)
+    start = Path.cwd() if start_path is None else Path(start_path).expanduser()
     current = start if not start.exists() or start.is_dir() else start.parent
     current = current.resolve(strict=False)
 
@@ -199,7 +199,10 @@ def _read_config_file(config_path: Path | None) -> _ConfigFile:
     try:
         return _ConfigFile.model_validate(raw_config)
     except ValidationError as exc:
-        raise ConfigError(_format_validation_error(exc)) from exc
+        raise ConfigError(
+            f"Invalid OKF configuration in {config_path}: "
+            f"{_format_validation_error(exc)}"
+        ) from exc
 
 
 def _coerce_overrides(
