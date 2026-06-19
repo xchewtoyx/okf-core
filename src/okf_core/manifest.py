@@ -122,8 +122,8 @@ def _scan_concept_path(
         return None, ManifestProblem(path=path, kind="path-error", message=str(exc))
 
     try:
-        content = path.read_bytes()
         stat = path.stat()
+        content = path.read_bytes()
     except OSError as exc:
         return None, ManifestProblem(path=path, kind="read-error", message=str(exc))
 
@@ -143,7 +143,7 @@ def _scan_concept_path(
             path=path,
             bundle_root=owning_root,
             mtime_ns=stat.st_mtime_ns,
-            size=stat.st_size,
+            size=len(content),
             sha256=sha256(content).hexdigest(),
             frontmatter=_freeze_value(document.frontmatter),
         ),

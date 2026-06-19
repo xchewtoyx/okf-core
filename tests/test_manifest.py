@@ -111,12 +111,41 @@ def test_scan_bundle_records_hash_mtime_size_and_frontmatter(tmp_path: Path) -> 
 
     assert entry.sha256 == sha256(content.encode("utf-8")).hexdigest()
     assert entry.mtime_ns == stat.st_mtime_ns
-    assert entry.size == stat.st_size
+    assert entry.size == len(content.encode("utf-8"))
     assert entry.frontmatter == {
         "type": "concept",
         "title": "Topic",
         "extra": "kept",
     }
+
+
+def test_scan_bundle_size_matches_hashed_content_when_stat_size_is_stale(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "docs"
+    path = root / "topic.md"
+    content = _write_concept(path, title="Topic")
+    original_stat = Path.stat
+
+    def stale_size_stat(
+        stat_path: Path,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        stat_result = original_stat(stat_path, *args, **kwargs)
+        if stat_path == path:
+            values = list(stat_result)
+            values[6] = stat_result.st_size + 100
+            return type(stat_result)(values)
+        return stat_result
+
+    monkeypatch.setattr(Path, "stat", stale_size_stat)
+
+    entry = scan_bundle(_bundle("docs", root)).concepts[0]
+
+    assert entry.sha256 == sha256(content.encode("utf-8")).hexdigest()
+    assert entry.size == len(content.encode("utf-8"))
 
 
 def test_scan_bundle_freezes_frontmatter_values(tmp_path: Path) -> None:
