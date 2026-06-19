@@ -39,7 +39,14 @@ def path_to_concept_id(path: str | Path, bundle: BundleConfig) -> str:
     _require_relative_path_strategy(bundle)
     resolved_path = Path(path).expanduser().resolve(strict=False)
     root = concept_path_bundle_root(resolved_path, bundle)
+    return _path_to_concept_id_in_root(resolved_path, root, bundle)
 
+
+def _path_to_concept_id_in_root(
+    resolved_path: Path,
+    root: Path,
+    bundle: BundleConfig,
+) -> str:
     if _is_reserved_filename(resolved_path, bundle):
         raise ConceptPathError(
             f"Reserved filename cannot be a concept: {resolved_path.name}"

@@ -13,9 +13,9 @@ from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError, parse_concept_document
 from okf_core.paths import (
     ConceptPathError,
+    _path_to_concept_id_in_root,
     concept_path_bundle_root,
     is_reserved_concept_path,
-    path_to_concept_id,
 )
 
 
@@ -120,7 +120,7 @@ def _scan_concept_path(
 ) -> tuple[ConceptManifestEntry | None, ManifestProblem | None]:
     try:
         owning_root = concept_path_bundle_root(path, bundle)
-        concept_id = path_to_concept_id(path, bundle)
+        concept_id = _path_to_concept_id_in_root(path, owning_root, bundle)
     except ConceptPathError as exc:
         return None, ManifestProblem(path=path, kind="path-error", message=str(exc))
 
