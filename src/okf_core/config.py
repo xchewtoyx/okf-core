@@ -112,9 +112,7 @@ class _ConfigFile(BaseModel):
 def discover_config(start_path: str | Path | None = None) -> Path | None:
     """Search upward from ``start_path`` for ``okf-core.toml``."""
 
-    start = Path.cwd() if start_path is None else Path(start_path).expanduser()
-    current = start if not start.exists() or start.is_dir() else start.parent
-    current = current.resolve(strict=False)
+    current = _resolve_search_root(start_path)
 
     for directory in (current, *current.parents):
         candidate = directory / CONFIG_FILENAME
@@ -169,8 +167,7 @@ def _resolve_config_path(
             raise ConfigError(f"Config file does not exist: {resolved}")
         return resolved
 
-    start_path = Path.cwd() if project_root is None else Path(project_root)
-    return discover_config(start_path)
+    return discover_config(project_root)
 
 
 def _resolve_project_root(
@@ -180,7 +177,7 @@ def _resolve_project_root(
     if config_path is not None:
         return config_path.parent.resolve(strict=False)
     if project_root is not None:
-        return Path(project_root).expanduser().resolve(strict=False)
+        return _resolve_search_root(project_root)
     return Path.cwd().resolve(strict=False)
 
 
@@ -201,7 +198,7 @@ def _read_config_file(config_path: Path | None) -> _ConfigFile:
     except ValidationError as exc:
         raise ConfigError(
             f"Invalid OKF configuration in {config_path}: "
-            f"{_format_validation_error(exc)}"
+            f"{_format_validation_details(exc)}"
         ) from exc
 
 
@@ -345,9 +342,19 @@ def _normalize_path(path: Path, project_root: Path) -> Path:
     return (project_root / expanded).resolve(strict=False)
 
 
+def _resolve_search_root(start_path: str | Path | None) -> Path:
+    start = Path.cwd() if start_path is None else Path(start_path).expanduser()
+    current = start if not start.exists() or start.is_dir() else start.parent
+    return current.resolve(strict=False)
+
+
 def _format_validation_error(exc: ValidationError) -> str:
+    return "Invalid OKF configuration: " + _format_validation_details(exc)
+
+
+def _format_validation_details(exc: ValidationError) -> str:
     errors = []
     for error in exc.errors():
         location = ".".join(str(part) for part in error["loc"]) or "config"
         errors.append(f"{location}: {error['msg']}")
-    return "Invalid OKF configuration: " + "; ".join(errors)
+    return "; ".join(errors)

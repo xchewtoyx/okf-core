@@ -21,6 +21,33 @@ def test_absent_config_uses_built_in_defaults(tmp_path: Path) -> None:
     assert config.bundles["default"].bundle_roots == (tmp_path,)
 
 
+def test_absent_config_with_existing_file_project_root_uses_parent(
+    tmp_path: Path,
+) -> None:
+    start_file = tmp_path / "script.py"
+    start_file.write_text("", encoding="utf-8")
+
+    config = load_config(project_root=start_file)
+
+    assert config.project_root == tmp_path
+    assert config.config_path is None
+    assert config.defaults.bundle_roots == (tmp_path,)
+    assert config.defaults.index_cache == tmp_path / ".okf-cache"
+
+
+def test_absent_config_with_nonexistent_project_root_uses_requested_path(
+    tmp_path: Path,
+) -> None:
+    project_root = tmp_path / "future-project"
+
+    config = load_config(project_root=project_root)
+
+    assert config.project_root == project_root
+    assert config.config_path is None
+    assert config.defaults.bundle_roots == (project_root,)
+    assert config.defaults.index_cache == project_root / ".okf-cache"
+
+
 def test_explicit_config_path_loads_file(tmp_path: Path) -> None:
     config_path = tmp_path / "custom.toml"
     config_path.write_text(
@@ -76,6 +103,38 @@ def test_discovers_config_upward_from_start_path(tmp_path: Path) -> None:
     assert config.config_path == config_path
     assert config.project_root == tmp_path
     assert config.defaults.bundle_roots == (tmp_path / "docs",)
+
+
+@pytest.mark.parametrize(
+    ("start_kind", "relative_start"),
+    [
+        ("root directory", "."),
+        ("nested directory", "a/b"),
+        ("nested file", "a/b/concept.md"),
+    ],
+)
+def test_discover_config_start_path_contract(
+    tmp_path: Path,
+    start_kind: str,
+    relative_start: str,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text("[defaults]\n", encoding="utf-8")
+    start_path = tmp_path / relative_start
+    if start_path.suffix:
+        start_path.parent.mkdir(parents=True, exist_ok=True)
+        start_path.write_text("", encoding="utf-8")
+    else:
+        start_path.mkdir(parents=True, exist_ok=True)
+
+    assert discover_config(start_path) == config_path, start_kind
+
+
+def test_discover_config_returns_none_without_config(tmp_path: Path) -> None:
+    nested = tmp_path / "a" / "b"
+    nested.mkdir(parents=True)
+
+    assert discover_config(nested) is None
 
 
 def test_discover_config_expands_tilde_start_path(
@@ -251,8 +310,15 @@ def test_validation_error_includes_config_path(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text("[defaults]\nunexpected = true\n", encoding="utf-8")
 
-    with pytest.raises(ConfigError, match=str(config_path)):
+    with pytest.raises(ConfigError, match=str(config_path)) as exc_info:
         load_config(config_path=config_path)
+
+    assert str(exc_info.value).count("Invalid OKF configuration") == 1
+
+
+def test_invalid_override_error_uses_config_error() -> None:
+    with pytest.raises(ConfigError, match="Invalid OKF configuration"):
+        load_config(overrides={"unexpected": True})
 
 
 def test_python_overrides_take_precedence_over_file_values(tmp_path: Path) -> None:
