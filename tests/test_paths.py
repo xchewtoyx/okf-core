@@ -6,6 +6,7 @@ import pytest
 
 from okf_core import (
     ConceptPathError,
+    concept_path_bundle_root,
     concept_id_to_path,
     is_reserved_concept_path,
     load_config,
@@ -94,6 +95,16 @@ def test_path_to_concept_id_prefers_deepest_matching_root(tmp_path: Path) -> Non
     bundle = _bundle(tmp_path, tmp_path / "knowledge")
 
     assert path_to_concept_id(tmp_path / "knowledge" / "topic.md", bundle) == "topic"
+
+
+def test_concept_path_bundle_root_prefers_deepest_matching_root(
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "knowledge")
+
+    assert concept_path_bundle_root(tmp_path / "knowledge" / "topic.md", bundle) == (
+        tmp_path / "knowledge"
+    )
 
 
 def test_path_outside_bundle_roots_is_rejected(tmp_path: Path) -> None:

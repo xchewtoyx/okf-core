@@ -25,6 +25,7 @@ from okf_core.manifest import (
 )
 from okf_core.paths import (
     ConceptPathError,
+    concept_path_bundle_root,
     concept_id_to_path,
     is_reserved_concept_path,
     path_to_concept_id,
@@ -47,6 +48,7 @@ __all__ = [
     "TaxonomyConfig",
     "__version__",
     "discover_config",
+    "concept_path_bundle_root",
     "concept_id_to_path",
     "is_reserved_concept_path",
     "load_config",

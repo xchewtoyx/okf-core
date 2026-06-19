@@ -3,6 +3,8 @@ from __future__ import annotations
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
+
 from okf_core import BundleConfig, scan_bundle
 
 
@@ -101,6 +103,36 @@ def test_scan_bundle_records_hash_mtime_size_and_frontmatter(tmp_path: Path) -> 
     }
 
 
+def test_scan_bundle_freezes_frontmatter_values(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    path = root / "topic.md"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        """---
+type: concept
+title: Topic
+metadata:
+  owners:
+    - docs
+---
+Body
+""",
+        encoding="utf-8",
+    )
+
+    entry = scan_bundle(_bundle("docs", root)).concepts[0]
+
+    assert entry.frontmatter == {
+        "type": "concept",
+        "title": "Topic",
+        "metadata": {"owners": ("docs",)},
+    }
+    with pytest.raises(TypeError):
+        entry.frontmatter["title"] = "Changed"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        entry.frontmatter["metadata"]["status"] = "draft"  # type: ignore[index]
+
+
 def test_scan_bundle_reports_malformed_documents_without_aborting(
     tmp_path: Path,
 ) -> None:
@@ -131,6 +163,17 @@ def test_scan_bundle_orders_entries_deterministically(tmp_path: Path) -> None:
         "nested/beta",
         "zeta",
     ]
+
+
+def test_scan_bundle_deduplicates_repeated_include_matches(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "topic.md", title="Topic")
+
+    manifest = scan_bundle(
+        _bundle("docs", root, include=("**/*.md", "topic.md"))
+    )
+
+    assert [entry.concept_id for entry in manifest.concepts] == ["topic"]
 
 
 def test_scan_bundle_skips_missing_bundle_roots(tmp_path: Path) -> None:

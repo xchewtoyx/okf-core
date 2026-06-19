@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
+from types import MappingProxyType
 from typing import Any
 
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError, parse_concept_document
 from okf_core.paths import (
     ConceptPathError,
+    concept_path_bundle_root,
     is_reserved_concept_path,
     path_to_concept_id,
 )
@@ -26,7 +29,9 @@ class ConceptManifestEntry:
     mtime_ns: int
     size: int
     sha256: str
-    frontmatter: dict[str, Any] = field(default_factory=dict)
+    frontmatter: Mapping[str, Any] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
 
 @dataclass(frozen=True)
@@ -108,7 +113,7 @@ def _scan_concept_path(
     bundle: BundleConfig,
 ) -> tuple[ConceptManifestEntry | None, ManifestProblem | None]:
     try:
-        owning_root = _matching_bundle_root(path, bundle)
+        owning_root = concept_path_bundle_root(path, bundle)
         if owning_root != root:
             return None, None
         concept_id = path_to_concept_id(path, bundle)
@@ -139,28 +144,19 @@ def _scan_concept_path(
             mtime_ns=stat.st_mtime_ns,
             size=stat.st_size,
             sha256=sha256(content).hexdigest(),
-            frontmatter=document.frontmatter,
+            frontmatter=_freeze_value(document.frontmatter),
         ),
         None,
     )
 
 
-def _matching_bundle_root(path: Path, bundle: BundleConfig) -> Path:
-    matches = [
-        root.resolve(strict=False)
-        for root in bundle.bundle_roots
-        if _is_within_root(path, root.resolve(strict=False))
-    ]
-    if not matches:
-        raise ConceptPathError(
-            f"Concept path is outside configured bundle roots: {path}"
+def _freeze_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_value(item) for key, item in value.items()}
         )
-    return max(matches, key=lambda root: len(root.parts))
-
-
-def _is_within_root(path: Path, root: Path) -> bool:
-    try:
-        path.resolve(strict=False).relative_to(root.resolve(strict=False))
-    except ValueError:
-        return False
-    return True
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_value(item) for item in value)
+    if isinstance(value, set):
+        return frozenset(_freeze_value(item) for item in value)
+    return value

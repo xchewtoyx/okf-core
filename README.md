@@ -156,14 +156,17 @@ documents.
 For bundles with multiple roots, ID-to-path resolution uses the first configured
 root by default. Callers may pass `bundle_root` to target a specific configured
 root. Path-to-ID resolution chooses the deepest configured root containing the
-path so nested roots behave deterministically.
+path so nested roots behave deterministically. `concept_path_bundle_root()`
+exposes the same deepest-root ownership decision for callers that need path
+provenance.
 
 ### Bundle Manifests
 
 `scan_bundle()` scans a resolved `BundleConfig` and returns a deterministic
 `BundleManifest`. Manifest entries include the concept ID, path, bundle root,
 `mtime_ns` timestamp, size, SHA-256 hash, and parsed frontmatter summary for
-each discovered concept document.
+each discovered concept document. Frontmatter summaries are returned as
+immutable mappings so manifest data cannot be accidentally changed in place.
 
 Scanning applies each bundle's configured include globs, exclude globs, and
 reserved filename rules. Missing bundle roots are skipped so configuration can
