@@ -16,6 +16,10 @@ consume `okf-core`.
 
 - Keep behavior configurable and layout-agnostic so different repositories can
   use different OKF roots, document taxonomies, and path conventions.
+- Do not reinvent mature infrastructure. Prefer well-supported Python libraries
+  for parsing, validation, CLI surfaces, plugin/hook dispatch, and workflow
+  orchestration when they fit the project constraints. Build `okf-core` code
+  where OKF-specific behavior is the value.
 - Do not add mandatory direct LLM API calls, funded API token requirements, or
   hosted model dependencies.
 - Treat agent-facing examples for consuming projects as optional templates only.
@@ -25,6 +29,10 @@ consume `okf-core`.
   them.
 - Prefer deterministic parsing, validation, indexing, graph, and patch logic
   over agent interpretation.
+- Keep agent runtimes and workflow orchestrators optional. For example,
+  LangGraph may be an integration target for consuming projects, but should not
+  become a required core dependency unless a future issue explicitly justifies
+  that tradeoff.
 
 ## Delivery Rules
 
