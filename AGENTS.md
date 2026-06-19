@@ -43,5 +43,9 @@ consume `okf-core`.
 - Updates to `main` must happen through pull requests only.
 - Do not close story issues until the implementation PR has been approved by a
   human and merged.
+- Do not try to align pull request numbers with issue numbers. GitHub assigns
+  them from one shared sequence, and issues and PRs do not have a stable
+  one-to-one relationship. Link work explicitly with `Closes #N`, `Refs #N`, or
+  `Part of #N` in PR bodies instead.
 - Copilot review can supplement human review, but it does not replace the human
   approval requirement.
