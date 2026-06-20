@@ -426,3 +426,23 @@ reserved_filenames = ["file.md"]
     assert bundle.include == ()
     assert bundle.exclude == ()
     assert bundle.reserved_filenames == ()
+
+
+def test_missing_profile_reference_raises_config_error(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "."
+
+[bundles.docs]
+profile = "nonexistent"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        ConfigError,
+        match="bundle 'docs' references profile 'nonexistent' which does not exist",
+    ):
+        load_config(config_path=config_path)
