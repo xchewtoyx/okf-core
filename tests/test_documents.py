@@ -47,6 +47,17 @@ Only body content.
     assert validate_concept_document(document) == ()
 
 
+def test_unknown_type_and_unknown_fields_are_tolerated_by_base_validation() -> None:
+    document = parse_concept_document("""---
+type: Producer Defined Type
+custom_field: keep me
+---
+Body.
+""")
+
+    assert validate_concept_document(document) == ()
+
+
 def test_document_with_missing_frontmatter_keeps_body() -> None:
     markdown = "# Title\n\nBody without frontmatter.\n"
 
@@ -121,7 +132,9 @@ def test_non_string_frontmatter_key_raises_parse_error() -> None:
 Body
 """
 
-    with pytest.raises(DocumentParseError, match="YAML frontmatter keys must be strings"):
+    with pytest.raises(
+        DocumentParseError, match="YAML frontmatter keys must be strings"
+    ):
         parse_concept_document(markdown)
 
 

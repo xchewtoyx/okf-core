@@ -27,7 +27,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = [
+  "pytest",
+  "pytest-cov",
+  "coverage",
+  "black >= 24, < 27",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/okf_core"]
@@ -35,3 +40,6 @@ packages = ["src/okf_core"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.black]
+target-version = ["py311"]

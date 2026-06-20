@@ -37,8 +37,11 @@ document stays internally consistent.
 
 `okf-core` currently provides an installable Python package with typed project
 configuration loading, structural concept document parsing, deterministic
-concept ID/path resolution, and bundle manifest scanning for configured bundle
-roots.
+concept ID/path resolution, and bundle manifest scanning for the configured bundle
+root (one per bundle). Public behavior is intended to reduce to the OKF v0.1 base
+specification; `okf-core` configuration conveniences are optional and should not
+change OKF concepts such as bundles, concept IDs, reserved files, or
+frontmatter tolerance.
 
 ```python
 from okf_core import (
@@ -89,7 +92,7 @@ Supported top-level tables are:
 
 Supported `[defaults]` keys are:
 
-- `bundle_roots`
+- `bundle_root`
 - `include`
 - `exclude`
 - `reserved_filenames`
@@ -111,7 +114,7 @@ Built-in defaults are equivalent to:
 
 ```toml
 [defaults]
-bundle_roots = ["."]
+bundle_root = "."
 include = ["**/*.md"]
 exclude = []
 reserved_filenames = ["index.md", "log.md"]
@@ -121,7 +124,8 @@ index_cache = ".okf-cache"
 
 If no bundles are declared, `okf-core` exposes one resolved bundle named
 `default` using the project defaults. Declared bundles inherit project defaults
-and may override them per bundle.
+and may override them per bundle. Multiple OKF areas in one repository should
+be configured as separate named bundles, each with one `bundle_root`.
 
 ### Concept Documents
 
@@ -136,29 +140,24 @@ Markdown. Unknown frontmatter keys are preserved when callers keep them in the
 parsed frontmatter dictionary. Documents with empty frontmatter serialize as
 body-only Markdown.
 
-`validate_concept_document()` performs base OKF concept conformance checks. The
-base requirement is only a non-empty string `type` in frontmatter; missing
-optional fields are tolerated.
+`validate_concept_document()` performs base OKF concept conformance checks.
+Base consumers require only a non-empty string `type` in frontmatter; missing
+optional fields, unknown `type` values, and unknown additional frontmatter keys
+are tolerated.
 
 ### Concept ID and Path Resolution
 
-`concept_id_to_path()` maps a concept ID to a Markdown file path under a
-configured bundle root. `path_to_concept_id()` maps a Markdown file path inside
-configured bundle roots back to a concept ID. The implemented
-`relative-path` strategy treats concept IDs as slash-separated relative paths
-without file extensions: `topics/example` resolves to `topics/example.md`.
+`concept_id_to_path()` maps a concept ID to a Markdown file path under the
+bundle root. `path_to_concept_id()` maps a Markdown file path inside the bundle
+root back to a concept ID. This matches the OKF v0.1 and reference
+implementation model: concept IDs are bundle-relative path segments without the
+`.md` suffix. For example, `topics/example` resolves to
+`topics/example.md`.
 
 Path resolution rejects empty IDs, absolute IDs, parent-directory traversal,
 backslash-separated IDs, and IDs that include a file extension. It also rejects
 configured reserved filenames such as `index.md` and `log.md` as normal concept
-documents.
-
-For bundles with multiple roots, ID-to-path resolution uses the first configured
-root by default. Callers may pass `bundle_root` to target a specific configured
-root. Path-to-ID resolution chooses the deepest configured root containing the
-path so nested roots behave deterministically. `concept_path_bundle_root()`
-exposes the same deepest-root ownership decision for callers that need path
-provenance.
+documents at any hierarchy level.
 
 ### Bundle Manifests
 
@@ -168,10 +167,11 @@ provenance.
 each discovered concept document. Frontmatter summaries are returned as
 immutable mappings so manifest data cannot be accidentally changed in place.
 
-Scanning applies each bundle's configured include globs, exclude globs, and
-reserved filename rules. Missing bundle roots are skipped so configuration can
-refer to directories that do not exist yet. Reserved filenames such as
-`index.md` and `log.md` are ignored as normal concepts.
+Scanning applies the bundle's configured include globs, exclude globs, and
+reserved filename rules. A missing bundle root returns an empty manifest so
+configuration can refer to a directory that does not exist yet. Reserved
+filenames such as `index.md` and `log.md` are ignored as normal concepts at any
+hierarchy level.
 
 Malformed documents and other per-file scan failures are reported as structured
 manifest problems instead of aborting the full scan, allowing callers to inspect
@@ -185,7 +185,7 @@ No operation should require this package to own an LLM API token.
 ### Bundle Operations
 
 - List configured bundles.
-- Describe bundle roots and configuration.
+- Describe each bundle root and configuration.
 - Validate base OKF conformance and optional project-specific profiles.
 
 ### Concept Operations
@@ -201,7 +201,7 @@ No operation should require this package to own an LLM API token.
 ### Graph Operations
 
 - Extract Markdown links.
-- Resolve links according to configured bundle roots.
+- Resolve links according to configured bundle root ownership.
 - Compute links from a concept, backlinks, neighborhoods, and broken links.
 
 ### Write Operations

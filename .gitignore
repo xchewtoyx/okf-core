@@ -30,3 +30,4 @@ ENV/
 
 # Tool/runtime caches
 .cache/
+.agent-cache/

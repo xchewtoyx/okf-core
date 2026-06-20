@@ -6,7 +6,6 @@ import pytest
 
 from okf_core import (
     ConceptPathError,
-    concept_path_bundle_root,
     concept_id_to_path,
     is_reserved_concept_path,
     load_config,
@@ -15,27 +14,22 @@ from okf_core import (
 from okf_core.config import BundleConfig
 
 
-def test_nested_concept_id_resolves_under_first_bundle_root(tmp_path: Path) -> None:
-    bundle = _bundle(tmp_path / "knowledge", tmp_path / "notes")
+def test_concept_id_resolves_under_bundle_root(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path / "knowledge")
 
     assert concept_id_to_path("topics/example", bundle) == (
         tmp_path / "knowledge" / "topics" / "example.md"
     )
 
 
-def test_concept_id_can_target_explicit_configured_root(tmp_path: Path) -> None:
-    bundle = _bundle(tmp_path / "knowledge", tmp_path / "notes")
-
-    assert concept_id_to_path("topics/example", bundle, bundle_root=tmp_path / "notes") == (
-        tmp_path / "notes" / "topics" / "example.md"
-    )
-
-
-def test_explicit_bundle_root_must_be_configured(tmp_path: Path) -> None:
+def test_spec_concept_id_is_bundle_relative_path_without_extension(
+    tmp_path: Path,
+) -> None:
     bundle = _bundle(tmp_path / "knowledge")
+    path = tmp_path / "knowledge" / "tables" / "users.md"
 
-    with pytest.raises(ConceptPathError, match="not configured"):
-        concept_id_to_path("topics/example", bundle, bundle_root=tmp_path / "other")
+    assert path_to_concept_id(path, bundle) == "tables/users"
+    assert concept_id_to_path("tables/users", bundle) == path
 
 
 @pytest.mark.parametrize(
@@ -85,50 +79,10 @@ def test_markdown_path_round_trips_to_concept_id(tmp_path: Path) -> None:
     assert path_to_concept_id(path, bundle) == "topics/example"
 
 
-def test_path_to_concept_id_resolves_matching_bundle_root(tmp_path: Path) -> None:
-    bundle = _bundle(tmp_path / "knowledge", tmp_path / "notes")
-
-    assert path_to_concept_id(tmp_path / "notes" / "topic.md", bundle) == "topic"
-
-
-def test_path_to_concept_id_prefers_deepest_matching_root(tmp_path: Path) -> None:
-    bundle = _bundle(tmp_path, tmp_path / "knowledge")
-
-    assert path_to_concept_id(tmp_path / "knowledge" / "topic.md", bundle) == "topic"
-
-
-def test_path_to_concept_id_matches_path_relative_to_owning_root(
-    tmp_path: Path,
-) -> None:
-    bundle = _bundle(tmp_path, tmp_path / "knowledge")
-    path = tmp_path / "knowledge" / "topics" / "example.md"
-    owning_root = concept_path_bundle_root(path, bundle)
-    expected = "/".join(path.relative_to(owning_root).with_suffix("").parts)
-
-    assert path_to_concept_id(path, bundle) == expected
-
-
-def test_concept_path_bundle_root_prefers_deepest_matching_root(
-    tmp_path: Path,
-) -> None:
-    bundle = _bundle(tmp_path, tmp_path / "knowledge")
-
-    assert concept_path_bundle_root(tmp_path / "knowledge" / "topic.md", bundle) == (
-        tmp_path / "knowledge"
-    )
-
-
-def test_concept_path_bundle_root_requires_configured_roots() -> None:
-    bundle = _bundle()
-
-    with pytest.raises(ConceptPathError, match="Bundle has no roots"):
-        concept_path_bundle_root("topic.md", bundle)
-
-
-def test_path_outside_bundle_roots_is_rejected(tmp_path: Path) -> None:
+def test_path_outside_bundle_root_is_rejected(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path / "knowledge")
 
-    with pytest.raises(ConceptPathError, match="outside configured bundle roots"):
+    with pytest.raises(ConceptPathError, match="outside configured bundle root"):
         path_to_concept_id(tmp_path / "other" / "topic.md", bundle)
 
 
@@ -139,11 +93,15 @@ def test_non_markdown_path_is_rejected(tmp_path: Path) -> None:
         path_to_concept_id(tmp_path / "knowledge" / "topic.txt", bundle)
 
 
-def test_path_to_concept_id_rejects_reserved_markdown_path(tmp_path: Path) -> None:
+@pytest.mark.parametrize("relative_path", ["index.md", "nested/log.md"])
+def test_path_to_concept_id_rejects_reserved_markdown_paths_at_any_level(
+    tmp_path: Path,
+    relative_path: str,
+) -> None:
     bundle = _bundle(tmp_path / "knowledge")
 
     with pytest.raises(ConceptPathError, match="Reserved filename"):
-        path_to_concept_id(tmp_path / "knowledge" / "index.md", bundle)
+        path_to_concept_id(tmp_path / "knowledge" / relative_path, bundle)
 
 
 def test_path_to_concept_id_rejects_reserved_markdown_path_case_insensitively(
@@ -160,6 +118,9 @@ def test_reserved_paths_can_be_detected_without_raising(tmp_path: Path) -> None:
 
     assert is_reserved_concept_path(tmp_path / "knowledge" / "index.md", bundle)
     assert is_reserved_concept_path(tmp_path / "knowledge" / "Index.md", bundle)
+    assert is_reserved_concept_path(
+        tmp_path / "knowledge" / "nested" / "log.md", bundle
+    )
     assert not is_reserved_concept_path(tmp_path / "knowledge" / "topic.md", bundle)
 
 
@@ -168,16 +129,16 @@ def test_configured_relative_path_strategy_round_trip(tmp_path: Path) -> None:
     config_path.write_text(
         """
 [defaults]
-bundle_roots = ["docs", "notes"]
+bundle_root = "docs"
 reserved_filenames = ["README.md"]
 """.strip(),
         encoding="utf-8",
     )
     bundle = load_config(config_path=config_path).bundles["default"]
 
-    path = concept_id_to_path("nested/topic", bundle, bundle_root=tmp_path / "notes")
+    path = concept_id_to_path("nested/topic", bundle)
 
-    assert path == tmp_path / "notes" / "nested" / "topic.md"
+    assert path == tmp_path / "docs" / "nested" / "topic.md"
     assert path_to_concept_id(path, bundle) == "nested/topic"
 
 
@@ -189,12 +150,12 @@ def test_unsupported_path_strategy_fails_clearly(tmp_path: Path) -> None:
 
 
 def _bundle(
-    *roots: Path,
+    root: Path,
     concept_path_strategy: str = "relative-path",
 ) -> BundleConfig:
     return BundleConfig(
         name="test",
-        bundle_roots=tuple(root.resolve(strict=False) for root in roots),
+        bundle_root=root.resolve(strict=False),
         include=("**/*.md",),
         exclude=(),
         reserved_filenames=("index.md", "log.md"),

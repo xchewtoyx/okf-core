@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 CONFIG_FILENAME = "okf-core.toml"
 
@@ -39,7 +39,7 @@ class ProjectDefaults(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    bundle_roots: tuple[Path, ...] = (Path("."),)
+    bundle_root: Path = Path(".")
     include: tuple[str, ...] = ("**/*.md",)
     exclude: tuple[str, ...] = ()
     reserved_filenames: tuple[str, ...] = ("index.md", "log.md")
@@ -53,13 +53,18 @@ class BundleConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     name: str
-    bundle_roots: tuple[Path, ...]
+    bundle_root: Path
     include: tuple[str, ...]
     exclude: tuple[str, ...]
     reserved_filenames: tuple[str, ...]
     concept_path_strategy: str
     index_cache: Path
     profile: str | None = None
+
+    @field_validator("bundle_root", "index_cache", mode="after")
+    @classmethod
+    def _normalize_paths(cls, v: Path) -> Path:
+        return v.expanduser().resolve(strict=False)
 
 
 class OkfConfig(BaseModel):
@@ -80,7 +85,7 @@ class ConfigOverrides(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    bundle_roots: tuple[Path, ...] | None = None
+    bundle_root: Path | None = None
     include: tuple[str, ...] | None = None
     exclude: tuple[str, ...] | None = None
     reserved_filenames: tuple[str, ...] | None = None
@@ -91,7 +96,7 @@ class ConfigOverrides(BaseModel):
 class _BundleInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    bundle_roots: tuple[Path, ...] | None = None
+    bundle_root: Path | None = None
     include: tuple[str, ...] | None = None
     exclude: tuple[str, ...] | None = None
     reserved_filenames: tuple[str, ...] | None = None
@@ -238,9 +243,7 @@ def _normalize_defaults(
 ) -> ProjectDefaults:
     return defaults.model_copy(
         update={
-            "bundle_roots": tuple(
-                _normalize_path(root, project_root) for root in defaults.bundle_roots
-            ),
+            "bundle_root": _normalize_path(defaults.bundle_root, project_root),
             "index_cache": _normalize_path(defaults.index_cache, project_root),
         }
     )
@@ -256,7 +259,7 @@ def _resolve_bundles(
         return {
             "default": BundleConfig(
                 name="default",
-                bundle_roots=defaults.bundle_roots,
+                bundle_root=defaults.bundle_root,
                 include=defaults.include,
                 exclude=defaults.exclude,
                 reserved_filenames=defaults.reserved_filenames,
@@ -278,10 +281,10 @@ def _resolve_bundle(
     overrides: ConfigOverrides,
     project_root: Path,
 ) -> BundleConfig:
-    bundle_roots = _select_config_value(
-        overrides.bundle_roots,
-        raw_bundle.bundle_roots,
-        defaults.bundle_roots,
+    bundle_root = _select_config_value(
+        overrides.bundle_root,
+        raw_bundle.bundle_root,
+        defaults.bundle_root,
     )
     include = _select_config_value(
         overrides.include,
@@ -291,9 +294,7 @@ def _resolve_bundle(
     exclude = (
         overrides.exclude
         if overrides.exclude is not None
-        else raw_bundle.exclude
-        if raw_bundle.exclude is not None
-        else defaults.exclude
+        else raw_bundle.exclude if raw_bundle.exclude is not None else defaults.exclude
     )
     reserved_filenames = _select_config_value(
         overrides.reserved_filenames,
@@ -313,7 +314,7 @@ def _resolve_bundle(
 
     return BundleConfig(
         name=name,
-        bundle_roots=tuple(_normalize_path(root, project_root) for root in bundle_roots),
+        bundle_root=_normalize_path(bundle_root, project_root),
         include=include,
         exclude=exclude,
         reserved_filenames=reserved_filenames,

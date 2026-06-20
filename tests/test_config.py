@@ -12,13 +12,13 @@ def test_absent_config_uses_built_in_defaults(tmp_path: Path) -> None:
 
     assert config.project_root == tmp_path
     assert config.config_path is None
-    assert config.defaults.bundle_roots == (tmp_path,)
+    assert config.defaults.bundle_root == tmp_path
     assert config.defaults.include == ("**/*.md",)
     assert config.defaults.exclude == ()
     assert config.defaults.reserved_filenames == ("index.md", "log.md")
     assert config.defaults.concept_path_strategy == "relative-path"
     assert config.defaults.index_cache == tmp_path / ".okf-cache"
-    assert config.bundles["default"].bundle_roots == (tmp_path,)
+    assert config.bundles["default"].bundle_root == tmp_path
 
 
 def test_absent_config_with_existing_file_project_root_uses_parent(
@@ -31,7 +31,7 @@ def test_absent_config_with_existing_file_project_root_uses_parent(
 
     assert config.project_root == tmp_path
     assert config.config_path is None
-    assert config.defaults.bundle_roots == (tmp_path,)
+    assert config.defaults.bundle_root == tmp_path
     assert config.defaults.index_cache == tmp_path / ".okf-cache"
 
 
@@ -44,7 +44,7 @@ def test_absent_config_with_nonexistent_project_root_uses_requested_path(
 
     assert config.project_root == project_root
     assert config.config_path is None
-    assert config.defaults.bundle_roots == (project_root,)
+    assert config.defaults.bundle_root == project_root
     assert config.defaults.index_cache == project_root / ".okf-cache"
 
 
@@ -53,7 +53,7 @@ def test_explicit_config_path_loads_file(tmp_path: Path) -> None:
     config_path.write_text(
         """
 [defaults]
-bundle_roots = ["knowledge"]
+bundle_root = "knowledge"
 index_cache = ".cache/okf"
 """.strip(),
         encoding="utf-8",
@@ -63,7 +63,7 @@ index_cache = ".cache/okf"
 
     assert config.config_path == config_path
     assert config.project_root == tmp_path
-    assert config.defaults.bundle_roots == (tmp_path / "knowledge",)
+    assert config.defaults.bundle_root == tmp_path / "knowledge"
     assert config.defaults.index_cache == tmp_path / ".cache" / "okf"
 
 
@@ -95,14 +95,14 @@ def test_discovers_config_upward_from_start_path(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     nested = tmp_path / "a" / "b"
     nested.mkdir(parents=True)
-    config_path.write_text("[defaults]\nbundle_roots = ['docs']\n", encoding="utf-8")
+    config_path.write_text("[defaults]\nbundle_root = 'docs'\n", encoding="utf-8")
 
     assert discover_config(nested) == config_path
     config = load_config(project_root=nested)
 
     assert config.config_path == config_path
     assert config.project_root == tmp_path
-    assert config.defaults.bundle_roots == (tmp_path / "docs",)
+    assert config.defaults.bundle_root == tmp_path / "docs"
 
 
 @pytest.mark.parametrize(
@@ -151,23 +151,23 @@ def test_discover_config_expands_tilde_start_path(
     assert discover_config("~/project/nested") == config_path
 
 
-def test_multiple_bundle_roots(tmp_path: Path) -> None:
+def test_multiple_named_bundles_have_separate_roots(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
         """
-[defaults]
-bundle_roots = ["docs", "notes"]
+[bundles.docs]
+bundle_root = "docs"
+
+[bundles.notes]
+bundle_root = "notes"
 """.strip(),
         encoding="utf-8",
     )
 
     config = load_config(config_path=config_path)
 
-    assert config.defaults.bundle_roots == (tmp_path / "docs", tmp_path / "notes")
-    assert config.bundles["default"].bundle_roots == (
-        tmp_path / "docs",
-        tmp_path / "notes",
-    )
+    assert config.bundles["docs"].bundle_root == tmp_path / "docs"
+    assert config.bundles["notes"].bundle_root == tmp_path / "notes"
 
 
 def test_custom_include_exclude_globs(tmp_path: Path) -> None:
@@ -234,7 +234,7 @@ def test_bundle_level_profile_references_and_overrides(tmp_path: Path) -> None:
     config_path.write_text(
         """
 [defaults]
-bundle_roots = ["docs"]
+bundle_root = "docs"
 include = ["**/*.md"]
 exclude = ["**/tmp/**"]
 
@@ -242,12 +242,13 @@ exclude = ["**/tmp/**"]
 required_frontmatter = ["type"]
 
 [bundles.product]
-bundle_roots = ["product"]
-profile = "strict"
-include = ["product/**/*.md"]
-reserved_filenames = ["home.md"]
-concept_path_strategy = "slug"
-index_cache = ".cache/product"
+bundle_root = "product"             # Overridden
+profile = "strict"                  # Referenced profile
+include = ["topics/**/*.md"]        # Overridden (relative to bundle_root)
+reserved_filenames = ["home.md"]    # Overridden
+concept_path_strategy = "slug"      # Overridden
+index_cache = ".cache/product"      # Overridden
+# Note: exclude is inherited from [defaults]
 """.strip(),
         encoding="utf-8",
     )
@@ -255,9 +256,9 @@ index_cache = ".cache/product"
     config = load_config(config_path=config_path)
     bundle = config.bundles["product"]
 
-    assert bundle.bundle_roots == (tmp_path / "product",)
+    assert bundle.bundle_root == tmp_path / "product"
     assert bundle.profile == "strict"
-    assert bundle.include == ("product/**/*.md",)
+    assert bundle.include == ("topics/**/*.md",)
     assert bundle.exclude == ("**/tmp/**",)
     assert bundle.reserved_filenames == ("home.md",)
     assert bundle.concept_path_strategy == "slug"
@@ -326,7 +327,7 @@ def test_python_overrides_take_precedence_over_file_values(tmp_path: Path) -> No
     config_path.write_text(
         """
 [defaults]
-bundle_roots = ["from-file"]
+bundle_root = "from-file"
 include = ["file/**/*.md"]
 exclude = ["file-exclude/**"]
 reserved_filenames = ["file.md"]
@@ -339,7 +340,7 @@ index_cache = ".file-cache"
     config = load_config(
         config_path=config_path,
         overrides=ConfigOverrides(
-            bundle_roots=(Path("from-api"),),
+            bundle_root=Path("from-api"),
             include=("api/**/*.md",),
             exclude=("api-exclude/**",),
             reserved_filenames=("api.md",),
@@ -348,13 +349,13 @@ index_cache = ".file-cache"
         ),
     )
 
-    assert config.defaults.bundle_roots == (tmp_path / "from-api",)
+    assert config.defaults.bundle_root == tmp_path / "from-api"
     assert config.defaults.include == ("api/**/*.md",)
     assert config.defaults.exclude == ("api-exclude/**",)
     assert config.defaults.reserved_filenames == ("api.md",)
     assert config.defaults.concept_path_strategy == "api-strategy"
     assert config.defaults.index_cache == tmp_path / ".api-cache"
-    assert config.bundles["default"].bundle_roots == (tmp_path / "from-api",)
+    assert config.bundles["default"].bundle_root == tmp_path / "from-api"
 
 
 def test_python_overrides_take_precedence_over_declared_bundle_values(
@@ -364,10 +365,10 @@ def test_python_overrides_take_precedence_over_declared_bundle_values(
     config_path.write_text(
         """
 [defaults]
-bundle_roots = ["defaults"]
+bundle_root = "defaults"
 
 [bundles.docs]
-bundle_roots = ["from-file"]
+bundle_root = "from-file"
 include = ["file/**/*.md"]
 exclude = ["file-exclude/**"]
 reserved_filenames = ["file.md"]
@@ -380,7 +381,7 @@ index_cache = ".file-cache"
     config = load_config(
         config_path=config_path,
         overrides={
-            "bundle_roots": ["from-api"],
+            "bundle_root": "from-api",
             "include": ["api/**/*.md"],
             "exclude": ["api-exclude/**"],
             "reserved_filenames": ["api.md"],
@@ -391,7 +392,7 @@ index_cache = ".file-cache"
 
     bundle = config.bundles["docs"]
 
-    assert bundle.bundle_roots == (tmp_path / "from-api",)
+    assert bundle.bundle_root == tmp_path / "from-api"
     assert bundle.include == ("api/**/*.md",)
     assert bundle.exclude == ("api-exclude/**",)
     assert bundle.reserved_filenames == ("api.md",)
