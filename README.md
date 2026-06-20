@@ -182,7 +182,7 @@ hierarchy level.
 
 Malformed documents and other per-file scan failures are reported as structured
 manifest problems instead of aborting the full scan, allowing callers to inspect
-valid concepts and diagnostics from the same scan result.
+valid concepts and problems from the same scan result.
 
 ## Planned Operations
 

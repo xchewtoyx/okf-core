@@ -67,7 +67,7 @@ def serialize_concept_document(document: ConceptDocument) -> str:
 def validate_concept_document(
     document: ConceptDocument,
 ) -> tuple[ValidationFinding, ...]:
-    """Return base OKF conformance diagnostics for a parsed document."""
+    """Return base OKF conformance findings for a parsed document."""
 
     concept_type = document.frontmatter.get("type")
     if concept_type is None:
