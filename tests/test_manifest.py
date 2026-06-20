@@ -192,6 +192,7 @@ def test_scan_bundle_expands_tilde_in_bundle_root(
     root = home / "docs"
     _write_concept(root / "topic.md", title="Topic")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
     bundle = BundleConfig(
         name="docs",
@@ -234,5 +235,5 @@ def _write_concept(path: Path, *, title: str, extra: str | None = None) -> str:
     path.parent.mkdir(parents=True, exist_ok=True)
     extra_line = f"extra: {extra}\n" if extra is not None else ""
     content = f"---\ntype: concept\ntitle: {title}\n{extra_line}---\nBody\n"
-    path.write_text(content, encoding="utf-8")
+    path.write_text(content, encoding="utf-8", newline="\n")
     return content

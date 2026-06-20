@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
 import pytest
 
@@ -147,6 +148,7 @@ def test_discover_config_expands_tilde_start_path(
     config_path = home / "project" / "okf-core.toml"
     config_path.write_text("[defaults]\n", encoding="utf-8")
     monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
 
     assert discover_config("~/project/nested") == config_path
 
@@ -311,7 +313,7 @@ def test_validation_error_includes_config_path(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text("[defaults]\nunexpected = true\n", encoding="utf-8")
 
-    with pytest.raises(ConfigError, match=str(config_path)) as exc_info:
+    with pytest.raises(ConfigError, match=re.escape(str(config_path))) as exc_info:
         load_config(config_path=config_path)
 
     assert str(exc_info.value).count("Invalid OKF configuration") == 1
