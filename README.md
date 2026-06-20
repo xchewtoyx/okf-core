@@ -37,8 +37,8 @@ document stays internally consistent.
 
 `okf-core` currently provides an installable Python package with typed project
 configuration loading, structural concept document parsing, deterministic
-concept ID/path resolution, and bundle manifest scanning for configured bundle
-roots. Public behavior is intended to reduce to the OKF v0.1 base
+concept ID/path resolution, and bundle manifest scanning for the configured bundle
+root (one per bundle). Public behavior is intended to reduce to the OKF v0.1 base
 specification; `okf-core` configuration conveniences are optional and should not
 change OKF concepts such as bundles, concept IDs, reserved files, or
 frontmatter tolerance.

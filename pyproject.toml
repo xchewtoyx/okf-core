@@ -31,7 +31,7 @@ test = [
   "pytest",
   "pytest-cov",
   "coverage",
-  "black",
+  "black >= 24, < 27",
 ]
 
 [tool.hatch.build.targets.wheel]

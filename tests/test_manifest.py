@@ -184,6 +184,32 @@ def test_scan_bundle_returns_empty_manifest_for_missing_bundle_root(
     assert manifest.problems == ()
 
 
+def test_scan_bundle_expands_tilde_in_bundle_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    home = tmp_path / "home"
+    root = home / "docs"
+    _write_concept(root / "topic.md", title="Topic")
+    monkeypatch.setenv("HOME", str(home))
+
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=Path("~/docs"),
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        index_cache=Path(".okf-cache"),
+    )
+
+    manifest = scan_bundle(bundle)
+
+    assert len(manifest.concepts) == 1
+    assert manifest.concepts[0].concept_id == "topic"
+    assert manifest.concepts[0].bundle_root == root.resolve()
+
+
 def _bundle(
     name: str,
     root: Path,
