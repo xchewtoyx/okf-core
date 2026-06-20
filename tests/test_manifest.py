@@ -200,8 +200,11 @@ def test_scan_bundle_expands_tilde_in_bundle_root(
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=Path(".okf-cache"),
+        index_cache=Path("~/okf-cache"),
     )
+
+    assert bundle.bundle_root == root.resolve()
+    assert bundle.index_cache == (home / "okf-cache").resolve()
 
     manifest = scan_bundle(bundle)
 

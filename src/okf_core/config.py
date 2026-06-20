@@ -6,7 +6,7 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 CONFIG_FILENAME = "okf-core.toml"
 
@@ -60,6 +60,11 @@ class BundleConfig(BaseModel):
     concept_path_strategy: str
     index_cache: Path
     profile: str | None = None
+
+    @field_validator("bundle_root", "index_cache", mode="after")
+    @classmethod
+    def _normalize_paths(cls, v: Path) -> Path:
+        return v.expanduser().resolve(strict=False)
 
 
 class OkfConfig(BaseModel):

@@ -54,7 +54,7 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
 
     entries: list[ConceptManifestEntry] = []
     problems: list[ManifestProblem] = []
-    root = bundle.bundle_root.expanduser().resolve(strict=False)
+    root = bundle.bundle_root.resolve(strict=False)
 
     if root.is_dir():
         for path in _iter_included_paths(root, bundle):
