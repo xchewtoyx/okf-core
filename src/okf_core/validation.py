@@ -39,7 +39,7 @@ def validate_bundle(
     # Resolve the profile to use
     profile = None
     if bundle.profile is not None:
-        profile = config.profiles.get(bundle.profile)
+        profile = config.profiles[bundle.profile]
 
     for entry in manifest.concepts:
         # Reconstruct a document with the concept's frontmatter

@@ -194,7 +194,7 @@ def test_body_content_is_preserved_after_frontmatter() -> None:
         ),
     ],
 )
-def test_validate_concept_document_reports_type_diagnostics(
+def test_validate_concept_document_reports_type_findings(
     document: ConceptDocument,
     findings: tuple[ValidationFinding, ...],
 ) -> None:
