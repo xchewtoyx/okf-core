@@ -27,7 +27,12 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = ["pytest"]
+test = [
+  "pytest",
+  "pytest-cov",
+  "coverage",
+  "black",
+]
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/okf_core"]

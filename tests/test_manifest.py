@@ -170,9 +170,7 @@ def test_scan_bundle_deduplicates_repeated_include_matches(tmp_path: Path) -> No
     root = tmp_path / "docs"
     _write_concept(root / "topic.md", title="Topic")
 
-    manifest = scan_bundle(
-        _bundle("docs", root, include=("**/*.md", "topic.md"))
-    )
+    manifest = scan_bundle(_bundle("docs", root, include=("**/*.md", "topic.md")))
 
     assert [entry.concept_id for entry in manifest.concepts] == ["topic"]
 

@@ -118,7 +118,9 @@ def test_reserved_paths_can_be_detected_without_raising(tmp_path: Path) -> None:
 
     assert is_reserved_concept_path(tmp_path / "knowledge" / "index.md", bundle)
     assert is_reserved_concept_path(tmp_path / "knowledge" / "Index.md", bundle)
-    assert is_reserved_concept_path(tmp_path / "knowledge" / "nested" / "log.md", bundle)
+    assert is_reserved_concept_path(
+        tmp_path / "knowledge" / "nested" / "log.md", bundle
+    )
     assert not is_reserved_concept_path(tmp_path / "knowledge" / "topic.md", bundle)
 
 

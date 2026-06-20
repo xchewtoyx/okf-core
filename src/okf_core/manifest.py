@@ -28,9 +28,7 @@ class ConceptManifestEntry:
     mtime_ns: int
     size: int
     sha256: str
-    frontmatter: Mapping[str, Any] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
+    frontmatter: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
 
 
 @dataclass(frozen=True)

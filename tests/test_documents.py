@@ -132,7 +132,9 @@ def test_non_string_frontmatter_key_raises_parse_error() -> None:
 Body
 """
 
-    with pytest.raises(DocumentParseError, match="YAML frontmatter keys must be strings"):
+    with pytest.raises(
+        DocumentParseError, match="YAML frontmatter keys must be strings"
+    ):
         parse_concept_document(markdown)
 
 

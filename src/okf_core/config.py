@@ -289,9 +289,7 @@ def _resolve_bundle(
     exclude = (
         overrides.exclude
         if overrides.exclude is not None
-        else raw_bundle.exclude
-        if raw_bundle.exclude is not None
-        else defaults.exclude
+        else raw_bundle.exclude if raw_bundle.exclude is not None else defaults.exclude
     )
     reserved_filenames = _select_config_value(
         overrides.reserved_filenames,

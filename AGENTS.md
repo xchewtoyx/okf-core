@@ -4,6 +4,16 @@ This file is contributor guidance for humans and LLM coding agents working
 inside the `okf-core` repository. It is not a prompt template for projects that
 consume `okf-core`.
 
+## Developer Setup
+
+- Always develop and run tests within a local virtual environment named `.venv` to prevent package pollution.
+- Bootstrap the environment and dependencies using:
+  ```sh
+  python3 -m venv .venv
+  source .venv/bin/activate
+  python -m pip install -e ".[test]"
+  ```
+
 ## Project Shape
 
 - Implement `okf-core` as a Python package.
@@ -66,3 +76,16 @@ consume `okf-core`.
   `Part of #N` in PR bodies instead.
 - Copilot review can supplement human review, but it does not replace the human
   approval requirement.
+
+## Testing Guidelines
+
+- **Decompose Tests**: Avoid monolithic "happy-path" tests that assert multiple independent configurations in a single test case. Decompose them into focused, single-responsibility tests to prevent assertion shadowing.
+- **Utilize Parameterization**: Prefer `pytest.mark.parametrize` to cleanly cover variations of configurations, inputs, and boundaries rather than duplicating test structures.
+- **Ensure Negative Coverage**: Every feature or parsing capability must have explicit negative tests verifying failure modes, such as:
+  - Incorrect data/config types (e.g., list vs. string).
+  - Malformed file inputs or config structures (e.g. invalid syntax).
+  - Explicit error handling checks (asserting that `ConfigError` or expected domain exceptions are raised).
+- **Enforce Code Formatting**: Run code formatting with `black` on the codebase prior to executing tests and before pushing/submitting code changes:
+  ```sh
+  black src tests
+  ```
