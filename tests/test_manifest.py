@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from okf_core import BundleConfig, ConceptPathError, scan_bundle
+from okf_core import BundleConfig, scan_bundle
 
 
 def test_scan_bundle_finds_nested_concepts(tmp_path: Path) -> None:
@@ -24,55 +24,6 @@ def test_scan_bundle_finds_nested_concepts(tmp_path: Path) -> None:
         "type": "concept",
         "title": "Example",
     }
-
-
-def test_scan_bundle_requires_configured_roots() -> None:
-    with pytest.raises(ConceptPathError, match="Bundle has no roots"):
-        scan_bundle(_bundle("empty"))
-
-
-def test_scan_bundle_supports_multiple_roots(tmp_path: Path) -> None:
-    docs = tmp_path / "docs"
-    notes = tmp_path / "notes"
-    _write_concept(docs / "alpha.md", title="Alpha")
-    _write_concept(notes / "nested" / "beta.md", title="Beta")
-
-    manifest = scan_bundle(_bundle("mixed", docs, notes))
-
-    assert [entry.concept_id for entry in manifest.concepts] == [
-        "alpha",
-        "nested/beta",
-    ]
-    assert {entry.bundle_root for entry in manifest.concepts} == {docs, notes}
-
-
-def test_scan_bundle_prefers_nested_bundle_root_ownership(tmp_path: Path) -> None:
-    parent = tmp_path / "project"
-    nested = parent / "knowledge"
-    _write_concept(nested / "topic.md", title="Topic")
-
-    manifest = scan_bundle(_bundle("nested", parent, nested))
-
-    assert len(manifest.concepts) == 1
-    assert manifest.concepts[0].concept_id == "topic"
-    assert manifest.concepts[0].path == nested / "topic.md"
-    assert manifest.concepts[0].bundle_root == nested
-
-
-def test_scan_bundle_keeps_parent_relative_include_for_nested_root(
-    tmp_path: Path,
-) -> None:
-    parent = tmp_path / "project"
-    nested = parent / "knowledge"
-    _write_concept(nested / "topic.md", title="Topic")
-
-    manifest = scan_bundle(
-        _bundle("nested", parent, nested, include=("knowledge/**/*.md",))
-    )
-
-    assert len(manifest.concepts) == 1
-    assert manifest.concepts[0].concept_id == "topic"
-    assert manifest.concepts[0].bundle_root == nested
 
 
 def test_scan_bundle_applies_include_and_exclude_globs(tmp_path: Path) -> None:
@@ -226,25 +177,24 @@ def test_scan_bundle_deduplicates_repeated_include_matches(tmp_path: Path) -> No
     assert [entry.concept_id for entry in manifest.concepts] == ["topic"]
 
 
-def test_scan_bundle_skips_missing_bundle_roots(tmp_path: Path) -> None:
-    existing = tmp_path / "docs"
-    _write_concept(existing / "topic.md", title="Topic")
+def test_scan_bundle_returns_empty_manifest_for_missing_bundle_root(
+    tmp_path: Path,
+) -> None:
+    manifest = scan_bundle(_bundle("docs", tmp_path / "missing"))
 
-    manifest = scan_bundle(_bundle("docs", tmp_path / "missing", existing))
-
-    assert [entry.concept_id for entry in manifest.concepts] == ["topic"]
+    assert manifest.concepts == ()
     assert manifest.problems == ()
 
 
 def _bundle(
     name: str,
-    *roots: Path,
+    root: Path,
     include: tuple[str, ...] = ("**/*.md",),
     exclude: tuple[str, ...] = (),
 ) -> BundleConfig:
     return BundleConfig(
         name=name,
-        bundle_roots=tuple(root.resolve(strict=False) for root in roots),
+        bundle_root=root.resolve(strict=False),
         include=include,
         exclude=exclude,
         reserved_filenames=("index.md", "log.md"),

@@ -14,7 +14,6 @@ from okf_core.documents import DocumentParseError, parse_concept_document
 from okf_core.paths import (
     ConceptPathError,
     _path_to_concept_id_in_root,
-    concept_path_bundle_root,
     is_reserved_concept_path,
 )
 
@@ -55,26 +54,16 @@ class BundleManifest:
 def scan_bundle(bundle: BundleConfig) -> BundleManifest:
     """Scan a configured bundle into concept entries and non-fatal problems."""
 
-    if not bundle.bundle_roots:
-        raise ConceptPathError(f"Bundle has no roots: {bundle.name}")
-
     entries: list[ConceptManifestEntry] = []
     problems: list[ManifestProblem] = []
-    scanned_paths: set[Path] = set()
+    root = bundle.bundle_root.resolve(strict=False)
 
-    for root in bundle.bundle_roots:
-        resolved_root = root.resolve(strict=False)
-        if not resolved_root.is_dir():
-            continue
-
-        for path in _iter_included_paths(resolved_root, bundle):
-            if path in scanned_paths:
-                continue
-            scanned_paths.add(path)
+    if root.is_dir():
+        for path in _iter_included_paths(root, bundle):
             if is_reserved_concept_path(path, bundle):
                 continue
 
-            entry, problem = _scan_concept_path(path, bundle)
+            entry, problem = _scan_concept_path(path, root, bundle)
             if entry is not None:
                 entries.append(entry)
             if problem is not None:
@@ -116,11 +105,11 @@ def _is_excluded(path: Path, root: Path, bundle: BundleConfig) -> bool:
 
 def _scan_concept_path(
     path: Path,
+    root: Path,
     bundle: BundleConfig,
 ) -> tuple[ConceptManifestEntry | None, ManifestProblem | None]:
     try:
-        owning_root = concept_path_bundle_root(path, bundle)
-        concept_id = _path_to_concept_id_in_root(path, owning_root, bundle)
+        concept_id = _path_to_concept_id_in_root(path, root, bundle)
     except ConceptPathError as exc:
         return None, ManifestProblem(path=path, kind="path-error", message=str(exc))
 
@@ -144,7 +133,7 @@ def _scan_concept_path(
         ConceptManifestEntry(
             concept_id=concept_id,
             path=path,
-            bundle_root=owning_root,
+            bundle_root=root,
             mtime_ns=stat.st_mtime_ns,
             size=len(content),
             sha256=sha256(content).hexdigest(),
