@@ -60,6 +60,8 @@ consume `okf-core`.
   LangGraph may be an integration target for consuming projects, but should not
   become a required core dependency unless a future issue explicitly justifies
   that tradeoff.
+- Avoid over-engineering type/schema validation within core validation APIs. Core validation must focus on base OKF conformance (like the `type` string) and simple presence/non-emptiness checks for profile-required fields, leaving rich type/schema enforcement to the consuming project or custom workflow hooks.
+
 
 ## Delivery Rules
 
