@@ -5,9 +5,11 @@ import pytest
 from okf_core import (
     ConceptDocument,
     DocumentParseError,
+    ValidationFinding,
     parse_concept_document,
     serialize_concept_document,
     validate_concept_document,
+    validate_concept_document_with_profile,
 )
 
 
@@ -148,31 +150,168 @@ def test_body_content_is_preserved_after_frontmatter() -> None:
 
 
 @pytest.mark.parametrize(
-    ("document", "diagnostics"),
+    ("document", "findings"),
     [
         (
             ConceptDocument(frontmatter={}, body="Body"),
-            ("Missing required frontmatter field: type",),
+            (
+                ValidationFinding(
+                    severity="error",
+                    message="Missing required frontmatter field: type",
+                    field="type",
+                ),
+            ),
         ),
         (
             ConceptDocument(frontmatter={"type": ""}, body="Body"),
-            ("Frontmatter field 'type' must be a non-empty string",),
+            (
+                ValidationFinding(
+                    severity="error",
+                    message="Frontmatter field 'type' must be a non-empty string",
+                    field="type",
+                ),
+            ),
         ),
         (
             ConceptDocument(frontmatter={"type": "   "}, body="Body"),
-            ("Frontmatter field 'type' must be a non-empty string",),
+            (
+                ValidationFinding(
+                    severity="error",
+                    message="Frontmatter field 'type' must be a non-empty string",
+                    field="type",
+                ),
+            ),
         ),
         (
             ConceptDocument(frontmatter={"type": ["concept"]}, body="Body"),
-            ("Frontmatter field 'type' must be a non-empty string",),
+            (
+                ValidationFinding(
+                    severity="error",
+                    message="Frontmatter field 'type' must be a non-empty string",
+                    field="type",
+                ),
+            ),
         ),
     ],
 )
-def test_validate_concept_document_reports_type_diagnostics(
+def test_validate_concept_document_reports_type_findings(
     document: ConceptDocument,
-    diagnostics: tuple[str, ...],
+    findings: tuple[ValidationFinding, ...],
 ) -> None:
-    assert validate_concept_document(document) == diagnostics
+    assert validate_concept_document(document) == findings
+
+
+def test_validate_concept_document_with_profile_required_fields() -> None:
+    from okf_core import ProfileConfig
+
+    profile = ProfileConfig(required_frontmatter=("title", "status"))
+    doc = ConceptDocument(frontmatter={"type": "concept", "title": ""})
+
+    findings = validate_concept_document_with_profile(doc, profile)
+
+    assert len(findings) == 2
+    assert findings[0] == ValidationFinding(
+        severity="error",
+        message="Required frontmatter field 'title' must be a non-empty string",
+        field="title",
+    )
+    assert findings[1] == ValidationFinding(
+        severity="error",
+        message="Missing required frontmatter field: status",
+        field="status",
+    )
+
+
+def test_validate_concept_document_with_profile_undocumented_fields() -> None:
+    from okf_core import ProfileConfig
+
+    profile = ProfileConfig(
+        required_frontmatter=("title",), optional_frontmatter=("status",)
+    )
+    doc = ConceptDocument(
+        frontmatter={
+            "type": "concept",
+            "title": "Topic",
+            "status": "draft",
+            "description": "A topic",
+            "custom_field": "some value",
+        }
+    )
+
+    findings = validate_concept_document_with_profile(doc, profile)
+
+    assert findings == (
+        ValidationFinding(
+            severity="warning",
+            message="Unknown frontmatter field: custom_field",
+            field="custom_field",
+        ),
+    )
+
+
+def test_validate_concept_document_with_profile_taxonomy_rules() -> None:
+    from okf_core import ProfileConfig, TaxonomyConfig
+
+    project_taxonomy = TaxonomyConfig(
+        known_types=("concept", "decision"), allowed_types=("concept",)
+    )
+    profile_with_allowed = ProfileConfig(
+        taxonomy=TaxonomyConfig(allowed_types=("decision",))
+    )
+    profile_with_known = ProfileConfig(
+        taxonomy=TaxonomyConfig(known_types=("concept", "decision"))
+    )
+
+    # 1. Allowed type error
+    doc_concept = ConceptDocument(frontmatter={"type": "concept"})
+    findings = validate_concept_document_with_profile(
+        doc_concept, profile_with_allowed, project_taxonomy
+    )
+    assert findings == (
+        ValidationFinding(
+            severity="error",
+            message="Concept type 'concept' is not allowed by this profile",
+            field="type",
+        ),
+    )
+
+    # 2. Known type warning
+    doc_unknown = ConceptDocument(frontmatter={"type": "proposal"})
+    findings = validate_concept_document_with_profile(doc_unknown, profile_with_known)
+    assert findings == (
+        ValidationFinding(
+            severity="warning",
+            message="Concept type 'proposal' is not recognized as a known type",
+            field="type",
+        ),
+    )
+
+    # 3. Fallback to project taxonomy allowed_types
+    profile_no_tax = ProfileConfig()
+    doc_decision = ConceptDocument(frontmatter={"type": "decision"})
+    findings_project_allowed = validate_concept_document_with_profile(
+        doc_decision, profile_no_tax, project_taxonomy
+    )
+    assert findings_project_allowed == (
+        ValidationFinding(
+            severity="error",
+            message="Concept type 'decision' is not allowed by this profile",
+            field="type",
+        ),
+    )
+
+    # 4. Fallback to project taxonomy known_types
+    project_taxonomy_known = TaxonomyConfig(known_types=("concept", "decision"))
+    findings_project_known = validate_concept_document_with_profile(
+        doc_unknown, profile_no_tax, project_taxonomy_known
+    )
+    assert findings_project_known == (
+        ValidationFinding(
+            severity="warning",
+            message="Concept type 'proposal' is not recognized as a known type",
+            field="type",
+        ),
+    )
 
 
 def test_serialize_concept_document_emits_frontmatter_and_body() -> None:

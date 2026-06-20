@@ -6,7 +6,14 @@ import tomllib
 from pathlib import Path
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 CONFIG_FILENAME = "okf-core.toml"
 
@@ -78,6 +85,15 @@ class OkfConfig(BaseModel):
     taxonomy: TaxonomyConfig = Field(default_factory=TaxonomyConfig)
     profiles: dict[str, ProfileConfig] = Field(default_factory=dict)
     bundles: dict[str, BundleConfig]
+
+    @model_validator(mode="after")
+    def _validate_profile_references(self) -> OkfConfig:
+        for name, bundle in self.bundles.items():
+            if bundle.profile is not None and bundle.profile not in self.profiles:
+                raise ValueError(
+                    f"bundle '{name}' references profile '{bundle.profile}' which does not exist"
+                )
+        return self
 
 
 class ConfigOverrides(BaseModel):
