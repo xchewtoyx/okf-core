@@ -133,4 +133,4 @@ bundle_root = "docs"
 
 
 def _write_concept(path: Path, content: str) -> None:
-    path.write_text(content, encoding="utf-8")
+    path.write_text(content, encoding="utf-8", newline="\n")
