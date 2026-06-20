@@ -140,10 +140,17 @@ Markdown. Unknown frontmatter keys are preserved when callers keep them in the
 parsed frontmatter dictionary. Documents with empty frontmatter serialize as
 body-only Markdown.
 
-`validate_concept_document()` performs base OKF concept conformance checks.
-Base consumers require only a non-empty string `type` in frontmatter; missing
-optional fields, unknown `type` values, and unknown additional frontmatter keys
-are tolerated.
+### Validation
+
+`validate_concept_document()` performs base OKF concept conformance checks, returning a tuple of structured `ValidationFinding` objects (e.g. reporting missing or empty `type` fields as errors).
+
+`validate_concept_document_with_profile(document, profile, project_taxonomy)` validates a concept document against a specific `ProfileConfig` and optional `TaxonomyConfig`, checking for:
+- Base OKF conformance.
+- Profile-required frontmatter fields (errors if missing).
+- Undocumented custom frontmatter fields (warnings if present but not defined in the profile or standard OKF fields).
+- Taxonomy type rules (errors if type violates profile/project `allowed_types`, warnings if type violates `known_types`).
+
+`validate_bundle(bundle, config)` scans a bundle and validates all of its concept documents against the configured profile, returning a mapping of file paths to their respective validation findings. Any scan or parsing failures are reported as validation errors.
 
 ### Concept ID and Path Resolution
 
@@ -186,7 +193,6 @@ No operation should require this package to own an LLM API token.
 
 - List configured bundles.
 - Describe each bundle root and configuration.
-- Validate base OKF conformance and optional project-specific profiles.
 
 ### Concept Operations
 
