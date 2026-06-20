@@ -24,9 +24,9 @@ The target pattern is semi-opaque:
 ## Status
 
 This repository is in early MVP development. Configuration loading, concept
-document parsing, and configurable concept ID/path resolution are implemented;
-the other OKF operations described below are the planned public shape of the
-project and are not implemented yet.
+document parsing, configurable concept ID/path resolution, and bundle manifest
+scanning are implemented; the other OKF operations described below are the
+planned public shape of the project and are not implemented yet.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
@@ -36,15 +36,22 @@ document stays internally consistent.
 ## Current Capabilities
 
 `okf-core` currently provides an installable Python package with typed project
-configuration loading, structural concept document parsing, and deterministic
-concept ID/path resolution for configured bundle roots.
+configuration loading, structural concept document parsing, deterministic
+concept ID/path resolution, and bundle manifest scanning for configured bundle
+roots.
 
 ```python
-from okf_core import concept_id_to_path, load_config, parse_concept_document
+from okf_core import (
+    concept_id_to_path,
+    load_config,
+    parse_concept_document,
+    scan_bundle,
+)
 
 config = load_config()
 document = parse_concept_document("---\ntype: concept\n---\nBody\n")
 path = concept_id_to_path("topics/example", config.bundles["default"])
+manifest = scan_bundle(config.bundles["default"])
 ```
 
 Install the package for local development and tests with:
@@ -149,7 +156,26 @@ documents.
 For bundles with multiple roots, ID-to-path resolution uses the first configured
 root by default. Callers may pass `bundle_root` to target a specific configured
 root. Path-to-ID resolution chooses the deepest configured root containing the
-path so nested roots behave deterministically.
+path so nested roots behave deterministically. `concept_path_bundle_root()`
+exposes the same deepest-root ownership decision for callers that need path
+provenance.
+
+### Bundle Manifests
+
+`scan_bundle()` scans a resolved `BundleConfig` and returns a deterministic
+`BundleManifest`. Manifest entries include the concept ID, path, bundle root,
+`mtime_ns` timestamp, size, SHA-256 hash, and parsed frontmatter summary for
+each discovered concept document. Frontmatter summaries are returned as
+immutable mappings so manifest data cannot be accidentally changed in place.
+
+Scanning applies each bundle's configured include globs, exclude globs, and
+reserved filename rules. Missing bundle roots are skipped so configuration can
+refer to directories that do not exist yet. Reserved filenames such as
+`index.md` and `log.md` are ignored as normal concepts.
+
+Malformed documents and other per-file scan failures are reported as structured
+manifest problems instead of aborting the full scan, allowing callers to inspect
+valid concepts and diagnostics from the same scan result.
 
 ## Planned Operations
 
@@ -160,8 +186,6 @@ No operation should require this package to own an LLM API token.
 
 - List configured bundles.
 - Describe bundle roots and configuration.
-- Scan bundles into a manifest of concept IDs, paths, hashes, mtimes, and
-  frontmatter summaries.
 - Validate base OKF conformance and optional project-specific profiles.
 
 ### Concept Operations

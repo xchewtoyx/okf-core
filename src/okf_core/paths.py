@@ -38,8 +38,15 @@ def path_to_concept_id(path: str | Path, bundle: BundleConfig) -> str:
 
     _require_relative_path_strategy(bundle)
     resolved_path = Path(path).expanduser().resolve(strict=False)
-    root = _matching_bundle_root(resolved_path, bundle)
+    root = concept_path_bundle_root(resolved_path, bundle)
+    return _path_to_concept_id_in_root(resolved_path, root, bundle)
 
+
+def _path_to_concept_id_in_root(
+    resolved_path: Path,
+    root: Path,
+    bundle: BundleConfig,
+) -> str:
     if _is_reserved_filename(resolved_path, bundle):
         raise ConceptPathError(
             f"Reserved filename cannot be a concept: {resolved_path.name}"
@@ -56,6 +63,24 @@ def is_reserved_concept_path(path: str | Path, bundle: BundleConfig) -> bool:
     """Return whether a path has a configured reserved filename."""
 
     return _is_reserved_filename(Path(path), bundle)
+
+
+def concept_path_bundle_root(path: str | Path, bundle: BundleConfig) -> Path:
+    """Return the deepest configured bundle root containing a concept path."""
+
+    if not bundle.bundle_roots:
+        raise ConceptPathError(f"Bundle has no roots: {bundle.name}")
+
+    resolved_path = Path(path).expanduser().resolve(strict=False)
+    resolved_roots = tuple(root.resolve(strict=False) for root in bundle.bundle_roots)
+    matches = [
+        root for root in resolved_roots if _is_within_root(resolved_path, root)
+    ]
+    if not matches:
+        raise ConceptPathError(
+            f"Concept path is outside configured bundle roots: {resolved_path}"
+        )
+    return max(matches, key=lambda root: len(root.parts))
 
 
 def _require_relative_path_strategy(bundle: BundleConfig) -> None:
@@ -81,17 +106,6 @@ def _select_bundle_root(
         if requested == resolved_root:
             return resolved_root
     raise ConceptPathError(f"Bundle root is not configured for bundle {bundle.name}: {requested}")
-
-
-def _matching_bundle_root(path: Path, bundle: BundleConfig) -> Path:
-    matches = [
-        root.resolve(strict=False)
-        for root in bundle.bundle_roots
-        if _is_within_root(path, root.resolve(strict=False))
-    ]
-    if not matches:
-        raise ConceptPathError(f"Concept path is outside configured bundle roots: {path}")
-    return max(matches, key=lambda root: len(root.parts))
 
 
 def _concept_id_to_relative_markdown_path(concept_id: str) -> Path:
@@ -121,7 +135,7 @@ def _concept_id_to_relative_markdown_path(concept_id: str) -> Path:
 
 def _is_within_root(path: Path, root: Path) -> bool:
     try:
-        path.resolve(strict=False).relative_to(root.resolve(strict=False))
+        path.relative_to(root)
     except ValueError:
         return False
     return True

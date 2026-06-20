@@ -6,6 +6,7 @@ import pytest
 
 from okf_core import (
     ConceptPathError,
+    concept_path_bundle_root,
     concept_id_to_path,
     is_reserved_concept_path,
     load_config,
@@ -94,6 +95,34 @@ def test_path_to_concept_id_prefers_deepest_matching_root(tmp_path: Path) -> Non
     bundle = _bundle(tmp_path, tmp_path / "knowledge")
 
     assert path_to_concept_id(tmp_path / "knowledge" / "topic.md", bundle) == "topic"
+
+
+def test_path_to_concept_id_matches_path_relative_to_owning_root(
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "knowledge")
+    path = tmp_path / "knowledge" / "topics" / "example.md"
+    owning_root = concept_path_bundle_root(path, bundle)
+    expected = "/".join(path.relative_to(owning_root).with_suffix("").parts)
+
+    assert path_to_concept_id(path, bundle) == expected
+
+
+def test_concept_path_bundle_root_prefers_deepest_matching_root(
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "knowledge")
+
+    assert concept_path_bundle_root(tmp_path / "knowledge" / "topic.md", bundle) == (
+        tmp_path / "knowledge"
+    )
+
+
+def test_concept_path_bundle_root_requires_configured_roots() -> None:
+    bundle = _bundle()
+
+    with pytest.raises(ConceptPathError, match="Bundle has no roots"):
+        concept_path_bundle_root("topic.md", bundle)
 
 
 def test_path_outside_bundle_roots_is_rejected(tmp_path: Path) -> None:
