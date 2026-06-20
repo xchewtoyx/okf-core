@@ -242,12 +242,13 @@ exclude = ["**/tmp/**"]
 required_frontmatter = ["type"]
 
 [bundles.product]
-bundle_root = "product"
-profile = "strict"
-include = ["product/**/*.md"]
-reserved_filenames = ["home.md"]
-concept_path_strategy = "slug"
-index_cache = ".cache/product"
+bundle_root = "product"             # Overridden
+profile = "strict"                  # Referenced profile
+include = ["topics/**/*.md"]        # Overridden (relative to bundle_root)
+reserved_filenames = ["home.md"]    # Overridden
+concept_path_strategy = "slug"      # Overridden
+index_cache = ".cache/product"      # Overridden
+# Note: exclude is inherited from [defaults]
 """.strip(),
         encoding="utf-8",
     )
@@ -257,7 +258,7 @@ index_cache = ".cache/product"
 
     assert bundle.bundle_root == tmp_path / "product"
     assert bundle.profile == "strict"
-    assert bundle.include == ("product/**/*.md",)
+    assert bundle.include == ("topics/**/*.md",)
     assert bundle.exclude == ("**/tmp/**",)
     assert bundle.reserved_filenames == ("home.md",)
     assert bundle.concept_path_strategy == "slug"
