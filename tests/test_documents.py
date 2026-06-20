@@ -38,13 +38,11 @@ nested:
 
 
 def test_document_with_only_type_and_body_is_valid() -> None:
-    document = parse_concept_document(
-        """---
+    document = parse_concept_document("""---
 type: concept
 ---
 Only body content.
-"""
-    )
+""")
 
     assert document.frontmatter == {"type": "concept"}
     assert document.body == "Only body content.\n"
@@ -52,14 +50,12 @@ Only body content.
 
 
 def test_unknown_type_and_unknown_fields_are_tolerated_by_base_validation() -> None:
-    document = parse_concept_document(
-        """---
+    document = parse_concept_document("""---
 type: Producer Defined Type
 custom_field: keep me
 ---
 Body.
-"""
-    )
+""")
 
     assert validate_concept_document(document) == ()
 
