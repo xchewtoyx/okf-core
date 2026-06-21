@@ -116,5 +116,12 @@ consume `okf-core`.
 - **Enforce Code Formatting**: Run code formatting with `black` on the codebase prior to executing tests and before pushing/submitting code changes:
   ```sh
   just fmt
+  # or without just:
+  black src tests
   ```
-- Use `just ci` to run the full check + test suite (`just check && just test`) that mirrors what CI requires.
+- Use `just ci` to run the full check + test suite that mirrors what CI requires:
+  ```sh
+  just ci
+  # or without just:
+  black --check src tests && pytest
+  ```

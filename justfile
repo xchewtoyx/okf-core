@@ -6,22 +6,23 @@ install:
     {{python}} -m pip install -e ".[test]"
 
 [private]
-_ensure-venv:
+_require-venv:
     #!/usr/bin/env bash
     if [ ! -x "{{python}}" ]; then
-        just install
+        echo "error: venv not found — run 'just install' first" >&2
+        exit 1
     fi
 
 # Format code with black
-fmt: _ensure-venv
+fmt: _require-venv
     {{python}} -m black src tests
 
 # Check formatting with black (non-destructive)
-check: _ensure-venv
+check: _require-venv
     {{python}} -m black --check src tests
 
 # Run tests
-test: _ensure-venv
+test: _require-venv
     {{python}} -m pytest
 
 # Run check + test (mirrors CI)
