@@ -118,8 +118,13 @@ def generate_index(
     - Entries or subdirectories whose resolved path does not fall under the
       resolved ``directory``.
 
-    ``title`` and ``description`` are extracted with explicit ``None`` checks so
-    that falsy-but-valid YAML values (e.g. ``0``, ``false``) are preserved.
+    ``title`` is taken from frontmatter: the raw value is converted to a string
+    and stripped; if absent, ``None``, or empty/whitespace-only after stripping,
+    the file stem is used as the fallback so that every entry has a non-empty
+    title.  Falsy-but-non-empty values such as ``0`` or ``false`` are preserved
+    as their string representation.  ``description`` uses an explicit ``None``
+    check: any non-``None`` value (including ``0`` or ``false``) is preserved as
+    a string; absent or ``None`` description omits the suffix.
 
     ``describe_directory`` is a hook for callers (e.g. workflow agents) to
     supply directory-level descriptions without ``okf-core`` owning any model

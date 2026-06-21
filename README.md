@@ -195,7 +195,10 @@ OKF spec §9. Entries whose `type` is absent or not a string are a spec §4.1
 violation; they are skipped and reported as `IndexProblem` objects in the
 second return value. Entries or subdirectories whose path falls outside
 `directory` are likewise skipped and reported. Subdirectory entries appear in a
-trailing `Subdirectories` section. The function returns `(body, problems)`;
+trailing `Subdirectories` section. Entry titles come from the `title`
+frontmatter field, converted to a string and stripped; if absent, `None`, or
+empty/whitespace-only, the file stem is used as a fallback. Falsy-but-non-empty
+values such as `title: 0` are preserved as their string form. The function returns `(body, problems)`;
 writing the file to disk is the caller's responsibility (the CLI `okf index`
 command will own that step once implemented).
 
