@@ -9,6 +9,10 @@ consume `okf-core`.
 - Always develop and run tests within a local virtual environment named `.venv` to prevent package pollution.
 - Bootstrap the environment and dependencies using:
   ```sh
+  just install
+  ```
+  This creates `.venv` and installs the package with test dependencies. Equivalent manual steps:
+  ```sh
   python3 -m venv .venv
   source .venv/bin/activate
   python -m pip install -e ".[test]"
@@ -110,5 +114,6 @@ consume `okf-core`.
   - Explicit error handling checks (asserting that `ConfigError` or expected domain exceptions are raised).
 - **Enforce Code Formatting**: Run code formatting with `black` on the codebase prior to executing tests and before pushing/submitting code changes:
   ```sh
-  black src tests
+  just fmt
   ```
+- Use `just ci` to run the full check + test suite (`just check && just test`) that mirrors what CI requires.
