@@ -325,6 +325,55 @@ def test_round_trip_backslash_before_bracket(tmp_path: Path) -> None:
     assert parsed.sections[0].entries[0].title == "foo\\]bar"
 
 
+def test_generate_multiline_title_normalized(tmp_path: Path) -> None:
+    # YAML multiline strings can embed \n; title must stay single-line
+    e = ConceptManifestEntry(
+        concept_id="ml",
+        path=tmp_path / "ml.md",
+        bundle_root=tmp_path,
+        mtime_ns=0,
+        size=0,
+        sha256="",
+        frontmatter=MappingProxyType({"type": "concept", "title": "line one\nline two"}),
+    )
+    body, problems = generate_index(tmp_path, [e])
+    assert problems == ()
+    assert "\n\n" not in body.replace("\n\n", "§")  # only structural blank lines
+    assert "line one line two" in body
+
+
+def test_generate_multiline_description_normalized(tmp_path: Path) -> None:
+    # description with embedded \r\n must be collapsed to a single space-joined line
+    e = ConceptManifestEntry(
+        concept_id="ml",
+        path=tmp_path / "ml.md",
+        bundle_root=tmp_path,
+        mtime_ns=0,
+        size=0,
+        sha256="",
+        frontmatter=MappingProxyType(
+            {"type": "concept", "title": "T", "description": "part one\r\npart two"}
+        ),
+    )
+    body, problems = generate_index(tmp_path, [e])
+    assert problems == ()
+    assert "part one part two" in body
+
+
+def test_generate_describe_directory_multiline_normalized(tmp_path: Path) -> None:
+    # describe_directory callback returning a multiline string must be normalized
+    subdir = tmp_path / "sub"
+
+    def describe(path: Path) -> str | None:
+        return "first line\nsecond line"
+
+    body, problems = generate_index(
+        tmp_path, [], subdirectories=[subdir], describe_directory=describe
+    )
+    assert problems == ()
+    assert "first line second line" in body
+
+
 def test_generate_empty_produces_empty_string(tmp_path: Path) -> None:
     body, problems = generate_index(tmp_path, [])
     assert body == ""

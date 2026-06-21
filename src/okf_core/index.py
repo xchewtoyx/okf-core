@@ -118,14 +118,18 @@ def generate_index(
     - Entries or subdirectories whose resolved path does not fall under the
       resolved ``directory``.
 
-    ``title`` is taken from frontmatter: the raw value is converted to a string
-    and stripped; if absent, ``None``, or empty/whitespace-only after stripping,
-    the file stem is used as the fallback so that every entry has a non-empty
-    title.  Falsy-but-non-empty values such as ``0`` or ``false`` are preserved
-    as their string representation.  ``description`` follows the same
-    normalisation: stripped; if absent, ``None``, or empty/whitespace-only
-    after stripping, the entry suffix is omitted.  Falsy-but-non-empty values
+    ``title`` is taken from frontmatter: the raw value is converted to a string,
+    internal newlines collapsed to spaces, and stripped; if absent, ``None``, or
+    empty/whitespace-only after normalisation, the file stem is used as the
+    fallback so that every entry has a non-empty title.  Falsy-but-non-empty
+    values such as ``0`` or ``false`` are preserved as their string
+    representation.  ``description`` follows the same normalisation: internal
+    newlines collapsed and stripped; if absent, ``None``, or empty/whitespace-only
+    after normalisation, the entry suffix is omitted.  Falsy-but-non-empty values
     such as ``0`` or ``false`` are preserved as their string representation.
+    ``describe_directory`` callback return values are normalised the same way:
+    internal newlines collapsed and stripped; empty/whitespace-only results are
+    treated as ``None``.
 
     ``describe_directory`` is a hook for callers (e.g. workflow agents) to
     supply directory-level descriptions without ``okf-core`` owning any model
@@ -162,11 +166,11 @@ def generate_index(
             continue
 
         title_raw = entry.frontmatter.get("title")
-        title_str = str(title_raw).strip() if title_raw is not None else ""
+        title_str = _normalize_inline(str(title_raw)) if title_raw is not None else ""
         title = title_str if title_str else entry.path.stem
         description_raw = entry.frontmatter.get("description")
         description_str = (
-            str(description_raw).strip() if description_raw is not None else ""
+            _normalize_inline(str(description_raw)) if description_raw is not None else ""
         )
         description = description_str if description_str else None
         link = rel.as_posix()
@@ -203,7 +207,10 @@ def generate_index(
                 continue
             desc: str | None = None
             if describe_directory is not None:
-                desc = describe_directory(resolved_subdir)
+                desc_raw = describe_directory(resolved_subdir)
+                if desc_raw is not None:
+                    normalized = _normalize_inline(desc_raw)
+                    desc = normalized if normalized else None
             subdir_entries.append(
                 IndexEntry(title=rel_path, link=rel_path + "/", description=desc)
             )
@@ -215,6 +222,11 @@ def generate_index(
             lines.append("")
 
     return "\n".join(lines), tuple(problems)
+
+
+def _normalize_inline(s: str) -> str:
+    """Collapse internal newlines/CRs to spaces and strip, keeping output single-line."""
+    return re.sub(r"[\r\n]+", " ", s).strip()
 
 
 def _md_escape(s: str) -> str:
