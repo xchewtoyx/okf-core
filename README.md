@@ -190,19 +190,20 @@ valid concepts and problems from the same scan result.
 `generate_index()` produces a conformant `index.md` body string from a sequence
 of `ConceptManifestEntry` objects scoped to a directory. Entries are grouped by
 their `type` frontmatter field and sorted alphabetically within each group.
-Entries without a `type` value fall into a configurable fallback group (default:
-`Other`). Subdirectory entries appear in a trailing `Subdirectories` section.
-The function returns a string; writing the file to disk is the caller's
-responsibility (the CLI `okf index` command will own that step once implemented).
+Entries whose `type` is absent or not a string are a spec §4.1 violation;
+they are skipped and reported as `IndexProblem` objects in the second return
+value rather than silently omitted or coerced. Subdirectory entries appear in a
+trailing `Subdirectories` section. The function returns `(body, problems)`;
+writing the file to disk is the caller's responsibility (the CLI `okf index`
+command will own that step once implemented).
 
 ```python
 from okf_core import generate_index, scan_bundle, load_config
-from pathlib import Path
 
 config = load_config()
 bundle = config.bundles["default"]
 manifest = scan_bundle(bundle)
-body = generate_index(bundle.bundle_root, manifest.concepts)
+body, problems = generate_index(bundle.bundle_root, manifest.concepts)
 ```
 
 `parse_index()` parses an existing `index.md` body into a `ParsedIndex`

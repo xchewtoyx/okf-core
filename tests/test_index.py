@@ -9,6 +9,7 @@ import pytest
 
 from okf_core.index import (
     IndexEntry,
+    IndexProblem,
     IndexSection,
     ParsedIndex,
     generate_index,
@@ -26,7 +27,7 @@ def _entry(
     bundle_root: Path,
     *,
     concept_id: str = "stub",
-    type: str | None = "concept",
+    type: object = "concept",
     title: str | None = None,
     description: str | None = None,
 ) -> ConceptManifestEntry:
@@ -57,19 +58,21 @@ def test_generate_flat_typed_concepts(tmp_path: Path) -> None:
     directory = tmp_path
     a = _entry(tmp_path / "alpha.md", tmp_path, concept_id="alpha", title="Alpha")
     b = _entry(tmp_path / "beta.md", tmp_path, concept_id="beta", title="Beta")
-    result = generate_index(directory, [a, b])
-    assert "# Concept" in result
-    assert "* [Alpha](alpha.md)" in result
-    assert "* [Beta](beta.md)" in result
+    body, problems = generate_index(directory, [a, b])
+    assert problems == ()
+    assert "# Concept" in body
+    assert "* [Alpha](alpha.md)" in body
+    assert "* [Beta](beta.md)" in body
 
 
 def test_generate_mixed_types_sort_order(tmp_path: Path) -> None:
     directory = tmp_path
     a = _entry(tmp_path / "a.md", tmp_path, type="zebra", title="Z Entry")
     b = _entry(tmp_path / "b.md", tmp_path, type="apple", title="A Entry")
-    result = generate_index(directory, [a, b])
-    apple_pos = result.index("# Apple")
-    zebra_pos = result.index("# Zebra")
+    body, problems = generate_index(directory, [a, b])
+    assert problems == ()
+    apple_pos = body.index("# Apple")
+    zebra_pos = body.index("# Zebra")
     assert apple_pos < zebra_pos
 
 
@@ -77,53 +80,77 @@ def test_generate_entries_alphabetical_within_group(tmp_path: Path) -> None:
     directory = tmp_path
     a = _entry(tmp_path / "z.md", tmp_path, title="Zulu")
     b = _entry(tmp_path / "a.md", tmp_path, title="Alpha")
-    result = generate_index(directory, [a, b])
-    alpha_pos = result.index("Alpha")
-    zulu_pos = result.index("Zulu")
+    body, problems = generate_index(directory, [a, b])
+    assert problems == ()
+    alpha_pos = body.index("Alpha")
+    zulu_pos = body.index("Zulu")
     assert alpha_pos < zulu_pos
 
 
 def test_generate_with_subdirectories(tmp_path: Path) -> None:
     subdir = tmp_path / "subtopic"
-    result = generate_index(tmp_path, [], subdirectories=[subdir])
-    assert "# Subdirectories" in result
-    assert "* [subtopic](subtopic/)" in result
+    body, problems = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert problems == ()
+    assert "# Subdirectories" in body
+    assert "* [subtopic](subtopic/)" in body
 
 
 def test_generate_missing_title_falls_back_to_stem(tmp_path: Path) -> None:
     directory = tmp_path
     e = _entry(tmp_path / "my-file.md", tmp_path, title=None)
-    result = generate_index(directory, [e])
-    assert "* [my-file](my-file.md)" in result
+    body, problems = generate_index(directory, [e])
+    assert problems == ()
+    assert "* [my-file](my-file.md)" in body
 
 
 def test_generate_missing_description_omits_suffix(tmp_path: Path) -> None:
     directory = tmp_path
     e = _entry(tmp_path / "a.md", tmp_path, title="Alpha", description=None)
-    result = generate_index(directory, [e])
-    assert " - " not in result
+    body, problems = generate_index(directory, [e])
+    assert problems == ()
+    assert " - " not in body
 
 
 def test_generate_with_description_included(tmp_path: Path) -> None:
     directory = tmp_path
     e = _entry(tmp_path / "a.md", tmp_path, title="Alpha", description="A short desc")
-    result = generate_index(directory, [e])
-    assert "* [Alpha](a.md) - A short desc" in result
+    body, problems = generate_index(directory, [e])
+    assert problems == ()
+    assert "* [Alpha](a.md) - A short desc" in body
 
 
-def test_generate_unknown_type_goes_to_fallback_group(tmp_path: Path) -> None:
+def test_generate_nonstring_type_skipped_and_reported(tmp_path: Path) -> None:
     directory = tmp_path
-    e = _entry(tmp_path / "a.md", tmp_path, type=None, title="Orphan")
-    result = generate_index(directory, [e])
-    assert "# Other" in result
-    assert "* [Orphan](a.md)" in result
+    e = _entry(
+        tmp_path / "bad.md",
+        tmp_path,
+        concept_id="bad",
+        type=["concept"],
+        title="Bad",
+    )
+    body, problems = generate_index(directory, [e])
+    assert "bad.md" not in body
+    assert "Bad" not in body
+    assert len(problems) == 1
+    assert problems[0].concept_id == "bad"
+    assert problems[0].path == tmp_path / "bad.md"
 
 
-def test_generate_custom_fallback_group(tmp_path: Path) -> None:
+def test_generate_missing_type_skipped_and_reported(tmp_path: Path) -> None:
+    directory = tmp_path
+    e = _entry(tmp_path / "a.md", tmp_path, concept_id="a", type=None, title="Orphan")
+    body, problems = generate_index(directory, [e])
+    assert "Orphan" not in body
+    assert len(problems) == 1
+    assert problems[0].concept_id == "a"
+
+
+def test_generate_custom_fallback_group_no_longer_applies(tmp_path: Path) -> None:
     directory = tmp_path
     e = _entry(tmp_path / "a.md", tmp_path, type=None, title="X")
-    result = generate_index(directory, [e], fallback_group="Uncategorised")
-    assert "# Uncategorised" in result
+    body, problems = generate_index(directory, [e], fallback_group="Uncategorised")
+    assert "Uncategorised" not in body
+    assert len(problems) == 1
 
 
 def test_generate_describe_directory_hook(tmp_path: Path) -> None:
@@ -132,10 +159,11 @@ def test_generate_describe_directory_hook(tmp_path: Path) -> None:
     def describe(path: Path) -> str | None:
         return "A subdirectory"
 
-    result = generate_index(
+    body, problems = generate_index(
         tmp_path, [], subdirectories=[subdir], describe_directory=describe
     )
-    assert "* [sub](sub/) - A subdirectory" in result
+    assert problems == ()
+    assert "* [sub](sub/) - A subdirectory" in body
 
 
 def test_generate_describe_directory_none_return(tmp_path: Path) -> None:
@@ -144,16 +172,26 @@ def test_generate_describe_directory_none_return(tmp_path: Path) -> None:
     def describe(path: Path) -> str | None:
         return None
 
-    result = generate_index(
+    body, problems = generate_index(
         tmp_path, [], subdirectories=[subdir], describe_directory=describe
     )
-    assert "* [sub](sub/)" in result
-    assert " - " not in result
+    assert problems == ()
+    assert "* [sub](sub/)" in body
+    assert " - " not in body
+
+
+def test_generate_nested_subdirectory_link(tmp_path: Path) -> None:
+    subdir = tmp_path / "foo" / "bar"
+    body, problems = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert problems == ()
+    assert "* [foo/bar](foo/bar/)" in body
+    assert "* [bar](bar/)" not in body
 
 
 def test_generate_empty_produces_empty_string(tmp_path: Path) -> None:
-    result = generate_index(tmp_path, [])
-    assert result == ""
+    body, problems = generate_index(tmp_path, [])
+    assert body == ""
+    assert problems == ()
 
 
 # ---------------------------------------------------------------------------
@@ -235,7 +273,8 @@ def test_round_trip(tmp_path: Path) -> None:
     ]
     subdir = tmp_path / "sub"
 
-    first = generate_index(directory, entries, subdirectories=[subdir])
+    first, problems = generate_index(directory, entries, subdirectories=[subdir])
+    assert problems == ()
     parsed = parse_index(first)
 
     # Re-render from parsed index

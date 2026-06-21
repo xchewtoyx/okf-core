@@ -15,6 +15,15 @@ _ENTRY_RE = re.compile(
 
 
 @dataclass(frozen=True)
+class IndexProblem:
+    """A non-fatal problem encountered while generating an index."""
+
+    concept_id: str
+    path: Path
+    message: str
+
+
+@dataclass(frozen=True)
 class IndexEntry:
     """A single entry in an index file section."""
 
@@ -87,13 +96,16 @@ def generate_index(
     *,
     fallback_group: str = "Other",
     describe_directory: Callable[[Path], str | None] | None = None,
-) -> str:
+) -> tuple[str, tuple[IndexProblem, ...]]:
     """Generate an index.md body from manifest entries scoped to a directory.
 
-    Entries are grouped by their ``type`` frontmatter field.  Entries without a
-    type value fall into ``fallback_group``.  Within each group entries are
-    sorted alphabetically by resolved title.  Subdirectories are listed in a
-    trailing section.
+    Entries are grouped by their ``type`` frontmatter field.  Within each group
+    entries are sorted alphabetically by resolved title.  Subdirectories are
+    listed in a trailing section.
+
+    Entries whose ``type`` value is not a string are skipped — a non-string
+    ``type`` is a spec §4.1 violation — and reported as ``IndexProblem``
+    objects in the second return value.
 
     ``describe_directory`` is a hook for callers (e.g. workflow agents) to
     supply directory-level descriptions without ``okf-core`` owning any model
@@ -101,37 +113,38 @@ def generate_index(
     description string or ``None``.
     """
     groups: dict[str, list[IndexEntry]] = {}
+    problems: list[IndexProblem] = []
 
     for entry in entries:
-        type_key = entry.frontmatter.get("type") or None
+        type_key = entry.frontmatter.get("type")
+        if not isinstance(type_key, str) or not type_key:
+            problems.append(
+                IndexProblem(
+                    concept_id=entry.concept_id,
+                    path=entry.path,
+                    message=f"skipped: 'type' frontmatter must be a non-empty string, got {type_key!r}",
+                )
+            )
+            continue
+
         title = str(entry.frontmatter.get("title") or entry.path.stem)
         description_raw = entry.frontmatter.get("description")
         description = str(description_raw) if description_raw else None
         rel = entry.path.relative_to(directory)
         link = rel.as_posix()
 
-        index_entry = IndexEntry(title=title, link=link, description=description)
-        group = type_key if type_key is not None else None
-        groups.setdefault(group, []).append(index_entry)  # type: ignore[arg-type]
-
-    fallback_entries = groups.pop(None, [])  # type: ignore[call-overload]
+        groups.setdefault(type_key, []).append(
+            IndexEntry(title=title, link=link, description=description)
+        )
 
     lines: list[str] = []
 
     for group_key in sorted(groups):
-        heading = str(group_key).title()
+        heading = group_key.title()
         sorted_entries = sorted(groups[group_key], key=lambda e: e.title.lower())
         lines.append(f"# {heading}")
         lines.append("")
         for e in sorted_entries:
-            lines.append(_render_entry(e))
-        lines.append("")
-
-    if fallback_entries:
-        sorted_fallback = sorted(fallback_entries, key=lambda e: e.title.lower())
-        lines.append(f"# {fallback_group}")
-        lines.append("")
-        for e in sorted_fallback:
             lines.append(_render_entry(e))
         lines.append("")
 
@@ -142,15 +155,14 @@ def generate_index(
             desc: str | None = None
             if describe_directory is not None:
                 desc = describe_directory(subdir)
-            rel_link = subdir.name + "/"
+            rel_link = subdir.relative_to(directory).as_posix() + "/"
+            title = subdir.relative_to(directory).as_posix()
             lines.append(
-                _render_entry(
-                    IndexEntry(title=subdir.name, link=rel_link, description=desc)
-                )
+                _render_entry(IndexEntry(title=title, link=rel_link, description=desc))
             )
         lines.append("")
 
-    return "\n".join(lines)
+    return "\n".join(lines), tuple(problems)
 
 
 def _render_entry(entry: IndexEntry) -> str:

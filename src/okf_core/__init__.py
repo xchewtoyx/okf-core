@@ -33,6 +33,7 @@ from okf_core.paths import (
 )
 from okf_core.index import (
     IndexEntry,
+    IndexProblem,
     IndexSection,
     ParsedIndex,
     generate_index,
@@ -58,6 +59,7 @@ __all__ = [
     "ValidationFinding",
     "__version__",
     "IndexEntry",
+    "IndexProblem",
     "IndexSection",
     "ParsedIndex",
     "discover_config",
