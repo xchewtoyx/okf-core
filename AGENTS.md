@@ -12,7 +12,7 @@ consume `okf-core`.
   ```sh
   just install
   ```
-  This creates `.venv` and installs the package with test dependencies. Equivalent manual steps:
+  This creates `.venv` and installs the package with test dependencies. `just` recipes invoke the venv Python directly so no manual activation is needed for `just fmt`, `just test`, etc. For interactive use (e.g. a Python shell), activate with `source .venv/bin/activate`. Equivalent manual steps:
   ```sh
   python3 -m venv .venv
   source .venv/bin/activate

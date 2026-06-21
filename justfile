@@ -7,8 +7,8 @@ install:
 
 [private]
 _ensure-venv:
-    #!/bin/bash
-    if [ ! -f {{python}} ]; then
+    #!/usr/bin/env bash
+    if [ ! -x "{{python}}" ]; then
         just install
     fi
 

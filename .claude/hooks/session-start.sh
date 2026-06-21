@@ -1,9 +1,11 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
+
+cd "$CLAUDE_PROJECT_DIR"
 
 # Install just if not present
 if ! command -v just &>/dev/null; then
