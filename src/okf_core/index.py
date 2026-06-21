@@ -122,9 +122,10 @@ def generate_index(
     and stripped; if absent, ``None``, or empty/whitespace-only after stripping,
     the file stem is used as the fallback so that every entry has a non-empty
     title.  Falsy-but-non-empty values such as ``0`` or ``false`` are preserved
-    as their string representation.  ``description`` uses an explicit ``None``
-    check: any non-``None`` value (including ``0`` or ``false``) is preserved as
-    a string; absent or ``None`` description omits the suffix.
+    as their string representation.  ``description`` follows the same
+    normalisation: stripped; if absent, ``None``, or empty/whitespace-only
+    after stripping, the entry suffix is omitted.  Falsy-but-non-empty values
+    such as ``0`` or ``false`` are preserved as their string representation.
 
     ``describe_directory`` is a hook for callers (e.g. workflow agents) to
     supply directory-level descriptions without ``okf-core`` owning any model
@@ -164,7 +165,10 @@ def generate_index(
         title_str = str(title_raw).strip() if title_raw is not None else ""
         title = title_str if title_str else entry.path.stem
         description_raw = entry.frontmatter.get("description")
-        description = str(description_raw) if description_raw is not None else None
+        description_str = (
+            str(description_raw).strip() if description_raw is not None else ""
+        )
+        description = description_str if description_str else None
         link = rel.as_posix()
 
         groups.setdefault(type_key.strip(), []).append(

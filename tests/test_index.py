@@ -111,6 +111,25 @@ def test_generate_missing_description_omits_suffix(tmp_path: Path) -> None:
     assert " - " not in body
 
 
+@pytest.mark.parametrize("desc_value", ["", "   ", "\t"])
+def test_generate_empty_description_omits_suffix(
+    tmp_path: Path, desc_value: str
+) -> None:
+    # empty/whitespace-only description is treated as absent — no suffix emitted
+    e = ConceptManifestEntry(
+        concept_id="a",
+        path=tmp_path / "a.md",
+        bundle_root=tmp_path,
+        mtime_ns=0,
+        size=0,
+        sha256="",
+        frontmatter=MappingProxyType({"type": "concept", "description": desc_value}),
+    )
+    body, problems = generate_index(tmp_path, [e])
+    assert problems == ()
+    assert " - " not in body
+
+
 def test_generate_with_description_included(tmp_path: Path) -> None:
     directory = tmp_path
     e = _entry(tmp_path / "a.md", tmp_path, title="Alpha", description="A short desc")

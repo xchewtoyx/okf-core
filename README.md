@@ -198,7 +198,10 @@ second return value. Entries or subdirectories whose path falls outside
 trailing `Subdirectories` section. Entry titles come from the `title`
 frontmatter field, converted to a string and stripped; if absent, `None`, or
 empty/whitespace-only, the file stem is used as a fallback. Falsy-but-non-empty
-values such as `title: 0` are preserved as their string form. The function returns `(body, problems)`;
+values such as `title: 0` are preserved as their string form. The same
+normalisation applies to `description`: absent, `None`, or
+empty/whitespace-only values omit the entry suffix; falsy-but-non-empty
+values are preserved. The function returns `(body, problems)`;
 writing the file to disk is the caller's responsibility (the CLI `okf index`
 command will own that step once implemented).
 
