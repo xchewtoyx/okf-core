@@ -18,9 +18,13 @@ cd "$CLAUDE_PROJECT_DIR"
 # available without sudo. The install is best-effort: a transient network
 # failure should not abort the session.
 if ! command -v just &>/dev/null; then
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq \
-    && DEBIAN_FRONTEND=noninteractive apt-get install -y just \
-    || echo "warning: could not install just via apt-get" >&2
+  if command -v apt-get &>/dev/null; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq \
+      && DEBIAN_FRONTEND=noninteractive apt-get install -y just \
+      || echo "warning: could not install just via apt-get" >&2
+  else
+    echo "warning: apt-get not available; install just manually" >&2
+  fi
 fi
 
 # Create venv and install package with test deps. Best-effort: a pip or

@@ -4,12 +4,11 @@ python := ".venv/bin/python"
 install:
     #!/usr/bin/env bash
     set -euo pipefail
-    python3 -m venv .venv
-    if ! {{python}} -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"; then
-        echo "error: Python 3.11+ required, got $({{python}} --version)" >&2
-        rm -rf .venv
+    if ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"; then
+        echo "error: Python 3.11+ required, got $(python3 --version)" >&2
         exit 1
     fi
+    python3 -m venv .venv
     {{python}} -m pip install -e ".[test]"
 
 [private]
