@@ -24,9 +24,10 @@ The target pattern is semi-opaque:
 ## Status
 
 This repository is in early MVP development. Configuration loading, concept
-document parsing, configurable concept ID/path resolution, and bundle manifest
-scanning are implemented; the other OKF operations described below are the
-planned public shape of the project and are not implemented yet.
+document parsing, configurable concept ID/path resolution, bundle manifest
+scanning, and index file parsing and generation are implemented; the other OKF
+operations described below are the planned public shape of the project and are
+not implemented yet.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
@@ -183,6 +184,36 @@ hierarchy level.
 Malformed documents and other per-file scan failures are reported as structured
 manifest problems instead of aborting the full scan, allowing callers to inspect
 valid concepts and problems from the same scan result.
+
+### Index Files
+
+`generate_index()` produces a conformant `index.md` body string from a sequence
+of `ConceptManifestEntry` objects scoped to a directory. Entries are grouped by
+their `type` frontmatter field and sorted alphabetically within each group.
+Entries without a `type` value fall into a configurable fallback group (default:
+`Other`). Subdirectory entries appear in a trailing `Subdirectories` section.
+The function returns a string; writing the file to disk is the caller's
+responsibility (the CLI `okf index` command will own that step once implemented).
+
+```python
+from okf_core import generate_index, scan_bundle, load_config
+from pathlib import Path
+
+config = load_config()
+bundle = config.bundles["default"]
+manifest = scan_bundle(bundle)
+body = generate_index(bundle.bundle_root, manifest.concepts)
+```
+
+`parse_index()` parses an existing `index.md` body into a `ParsedIndex`
+containing `IndexSection` and `IndexEntry` objects. Generated output
+round-trips through `parse_index` without loss.
+
+The `describe_directory` keyword argument to `generate_index()` is a hook point
+for callers that want to supply directory-level descriptions — for example, a
+workflow agent using its own model access. It receives the absolute subdirectory
+path and should return a description string or `None`.  `okf-core` itself never
+makes model API calls.
 
 ## Planned Operations
 

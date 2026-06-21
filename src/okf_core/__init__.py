@@ -31,6 +31,13 @@ from okf_core.paths import (
     is_reserved_concept_path,
     path_to_concept_id,
 )
+from okf_core.index import (
+    IndexEntry,
+    IndexSection,
+    ParsedIndex,
+    generate_index,
+    parse_index,
+)
 from okf_core.validation import validate_bundle
 
 __version__ = "0.0.0"
@@ -50,7 +57,12 @@ __all__ = [
     "TaxonomyConfig",
     "ValidationFinding",
     "__version__",
+    "IndexEntry",
+    "IndexSection",
+    "ParsedIndex",
     "discover_config",
+    "generate_index",
+    "parse_index",
     "concept_id_to_path",
     "is_reserved_concept_path",
     "load_config",
