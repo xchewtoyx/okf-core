@@ -32,6 +32,7 @@ from okf_core.paths import (
     path_to_concept_id,
 )
 from okf_core.index import (
+    GeneratedIndex,
     IndexEntry,
     IndexProblem,
     IndexSection,
@@ -58,6 +59,7 @@ __all__ = [
     "TaxonomyConfig",
     "ValidationFinding",
     "__version__",
+    "GeneratedIndex",
     "IndexEntry",
     "IndexProblem",
     "IndexSection",

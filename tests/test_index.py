@@ -8,6 +8,7 @@ from types import MappingProxyType
 import pytest
 
 from okf_core.index import (
+    GeneratedIndex,
     IndexEntry,
     IndexProblem,
     IndexSection,
@@ -58,21 +59,26 @@ def test_generate_flat_typed_concepts(tmp_path: Path) -> None:
     directory = tmp_path
     a = _entry(tmp_path / "alpha.md", tmp_path, concept_id="alpha", title="Alpha")
     b = _entry(tmp_path / "beta.md", tmp_path, concept_id="beta", title="Beta")
-    body, problems = generate_index(directory, [a, b])
-    assert problems == ()
-    assert "# Concept" in body
-    assert "* [Alpha](alpha.md)" in body
-    assert "* [Beta](beta.md)" in body
+    result = generate_index(directory, [a, b])
+    assert result.problems == ()
+    assert "# Concept" in result.body
+    assert "* [Alpha](alpha.md)" in result.body
+    assert "* [Beta](beta.md)" in result.body
+
+
+def test_generate_returns_generated_index_dataclass(tmp_path: Path) -> None:
+    result = generate_index(tmp_path, [])
+    assert isinstance(result, GeneratedIndex)
 
 
 def test_generate_mixed_types_sort_order(tmp_path: Path) -> None:
     directory = tmp_path
     a = _entry(tmp_path / "a.md", tmp_path, type="zebra", title="Z Entry")
     b = _entry(tmp_path / "b.md", tmp_path, type="apple", title="A Entry")
-    body, problems = generate_index(directory, [a, b])
-    assert problems == ()
-    apple_pos = body.index("# Apple")
-    zebra_pos = body.index("# Zebra")
+    result = generate_index(directory, [a, b])
+    assert result.problems == ()
+    apple_pos = result.body.index("# Apple")
+    zebra_pos = result.body.index("# Zebra")
     assert apple_pos < zebra_pos
 
 
@@ -80,35 +86,35 @@ def test_generate_entries_alphabetical_within_group(tmp_path: Path) -> None:
     directory = tmp_path
     a = _entry(tmp_path / "z.md", tmp_path, title="Zulu")
     b = _entry(tmp_path / "a.md", tmp_path, title="Alpha")
-    body, problems = generate_index(directory, [a, b])
-    assert problems == ()
-    alpha_pos = body.index("Alpha")
-    zulu_pos = body.index("Zulu")
+    result = generate_index(directory, [a, b])
+    assert result.problems == ()
+    alpha_pos = result.body.index("Alpha")
+    zulu_pos = result.body.index("Zulu")
     assert alpha_pos < zulu_pos
 
 
 def test_generate_with_subdirectories(tmp_path: Path) -> None:
     subdir = tmp_path / "subtopic"
-    body, problems = generate_index(tmp_path, [], subdirectories=[subdir])
-    assert problems == ()
-    assert "# Subdirectories" in body
-    assert "* [subtopic](subtopic/)" in body
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert result.problems == ()
+    assert "# Subdirectories" in result.body
+    assert "* [subtopic](subtopic/)" in result.body
 
 
 def test_generate_missing_title_falls_back_to_stem(tmp_path: Path) -> None:
     directory = tmp_path
     e = _entry(tmp_path / "my-file.md", tmp_path, title=None)
-    body, problems = generate_index(directory, [e])
-    assert problems == ()
-    assert "* [my-file](my-file.md)" in body
+    result = generate_index(directory, [e])
+    assert result.problems == ()
+    assert "* [my-file](my-file.md)" in result.body
 
 
 def test_generate_missing_description_omits_suffix(tmp_path: Path) -> None:
     directory = tmp_path
     e = _entry(tmp_path / "a.md", tmp_path, title="Alpha", description=None)
-    body, problems = generate_index(directory, [e])
-    assert problems == ()
-    assert " - " not in body
+    result = generate_index(directory, [e])
+    assert result.problems == ()
+    assert " - " not in result.body
 
 
 @pytest.mark.parametrize("desc_value", ["", "   ", "\t"])
@@ -125,17 +131,17 @@ def test_generate_empty_description_omits_suffix(
         sha256="",
         frontmatter=MappingProxyType({"type": "concept", "description": desc_value}),
     )
-    body, problems = generate_index(tmp_path, [e])
-    assert problems == ()
-    assert " - " not in body
+    result = generate_index(tmp_path, [e])
+    assert result.problems == ()
+    assert " - " not in result.body
 
 
 def test_generate_with_description_included(tmp_path: Path) -> None:
     directory = tmp_path
     e = _entry(tmp_path / "a.md", tmp_path, title="Alpha", description="A short desc")
-    body, problems = generate_index(directory, [e])
-    assert problems == ()
-    assert "* [Alpha](a.md) - A short desc" in body
+    result = generate_index(directory, [e])
+    assert result.problems == ()
+    assert "* [Alpha](a.md) - A short desc" in result.body
 
 
 def test_generate_nonstring_type_skipped_and_reported(tmp_path: Path) -> None:
@@ -147,21 +153,21 @@ def test_generate_nonstring_type_skipped_and_reported(tmp_path: Path) -> None:
         type=["concept"],
         title="Bad",
     )
-    body, problems = generate_index(directory, [e])
-    assert "bad.md" not in body
-    assert "Bad" not in body
-    assert len(problems) == 1
-    assert problems[0].concept_id == "bad"
-    assert problems[0].path == tmp_path / "bad.md"
+    result = generate_index(directory, [e])
+    assert "bad.md" not in result.body
+    assert "Bad" not in result.body
+    assert len(result.problems) == 1
+    assert result.problems[0].concept_id == "bad"
+    assert result.problems[0].path == tmp_path / "bad.md"
 
 
 def test_generate_missing_type_skipped_and_reported(tmp_path: Path) -> None:
     directory = tmp_path
     e = _entry(tmp_path / "a.md", tmp_path, concept_id="a", type=None, title="Orphan")
-    body, problems = generate_index(directory, [e])
-    assert "Orphan" not in body
-    assert len(problems) == 1
-    assert problems[0].concept_id == "a"
+    result = generate_index(directory, [e])
+    assert "Orphan" not in result.body
+    assert len(result.problems) == 1
+    assert result.problems[0].concept_id == "a"
 
 
 def test_generate_entry_path_outside_directory_skipped_and_reported(
@@ -172,10 +178,10 @@ def test_generate_entry_path_outside_directory_skipped_and_reported(
     directory = tmp_path / "docs"
     directory.mkdir()
     e = _entry(other / "a.md", other, concept_id="a", title="Outside")
-    body, problems = generate_index(directory, [e])
-    assert "Outside" not in body
-    assert len(problems) == 1
-    assert problems[0].concept_id == "a"
+    result = generate_index(directory, [e])
+    assert "Outside" not in result.body
+    assert len(result.problems) == 1
+    assert result.problems[0].concept_id == "a"
 
 
 def test_generate_subdirectory_outside_directory_skipped_and_reported(
@@ -184,10 +190,10 @@ def test_generate_subdirectory_outside_directory_skipped_and_reported(
     directory = tmp_path / "docs"
     directory.mkdir()
     outside = tmp_path / "other"
-    body, problems = generate_index(directory, [], subdirectories=[outside])
-    assert "# Subdirectories" not in body
-    assert len(problems) == 1
-    assert problems[0].path == outside
+    result = generate_index(directory, [], subdirectories=[outside])
+    assert "# Subdirectories" not in result.body
+    assert len(result.problems) == 1
+    assert result.problems[0].path == outside
 
 
 def test_generate_describe_directory_hook(tmp_path: Path) -> None:
@@ -196,11 +202,11 @@ def test_generate_describe_directory_hook(tmp_path: Path) -> None:
     def describe(path: Path) -> str | None:
         return "A subdirectory"
 
-    body, problems = generate_index(
+    result = generate_index(
         tmp_path, [], subdirectories=[subdir], describe_directory=describe
     )
-    assert problems == ()
-    assert "* [sub](sub/) - A subdirectory" in body
+    assert result.problems == ()
+    assert "* [sub](sub/) - A subdirectory" in result.body
 
 
 def test_generate_describe_directory_none_return(tmp_path: Path) -> None:
@@ -209,28 +215,28 @@ def test_generate_describe_directory_none_return(tmp_path: Path) -> None:
     def describe(path: Path) -> str | None:
         return None
 
-    body, problems = generate_index(
+    result = generate_index(
         tmp_path, [], subdirectories=[subdir], describe_directory=describe
     )
-    assert problems == ()
-    assert "* [sub](sub/)" in body
-    assert " - " not in body
+    assert result.problems == ()
+    assert "* [sub](sub/)" in result.body
+    assert " - " not in result.body
 
 
 def test_generate_nested_subdirectory_link(tmp_path: Path) -> None:
     subdir = tmp_path / "foo" / "bar"
-    body, problems = generate_index(tmp_path, [], subdirectories=[subdir])
-    assert problems == ()
-    assert "* [foo/bar](foo/bar/)" in body
-    assert "* [bar](bar/)" not in body
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert result.problems == ()
+    assert "* [foo/bar](foo/bar/)" in result.body
+    assert "* [bar](bar/)" not in result.body
 
 
 def test_generate_whitespace_only_type_skipped_and_reported(tmp_path: Path) -> None:
     e = _entry(tmp_path / "a.md", tmp_path, concept_id="a", type="   ", title="X")
-    body, problems = generate_index(tmp_path, [e])
-    assert "X" not in body
-    assert len(problems) == 1
-    assert problems[0].concept_id == "a"
+    result = generate_index(tmp_path, [e])
+    assert "X" not in result.body
+    assert len(result.problems) == 1
+    assert result.problems[0].concept_id == "a"
 
 
 def test_generate_falsy_title_value_used_not_stem(tmp_path: Path) -> None:
@@ -244,9 +250,9 @@ def test_generate_falsy_title_value_used_not_stem(tmp_path: Path) -> None:
         sha256="",
         frontmatter=MappingProxyType({"type": "concept", "title": 0}),
     )
-    body, problems = generate_index(tmp_path, [e2])
-    assert problems == ()
-    assert "* [0](zero.md)" in body
+    result = generate_index(tmp_path, [e2])
+    assert result.problems == ()
+    assert "* [0](zero.md)" in result.body
 
 
 def test_generate_relative_directory_resolves_correctly(tmp_path: Path) -> None:
@@ -258,11 +264,11 @@ def test_generate_relative_directory_resolves_correctly(tmp_path: Path) -> None:
     try:
         os.chdir(tmp_path.parent)
         rel_dir = Path(tmp_path.name)
-        body, problems = generate_index(rel_dir, [e])
+        result = generate_index(rel_dir, [e])
     finally:
         os.chdir(cwd)
-    assert problems == ()
-    assert "* [Alpha](a.md)" in body
+    assert result.problems == ()
+    assert "* [Alpha](a.md)" in result.body
 
 
 def test_generate_empty_string_title_falls_back_to_stem(tmp_path: Path) -> None:
@@ -276,18 +282,18 @@ def test_generate_empty_string_title_falls_back_to_stem(tmp_path: Path) -> None:
         sha256="",
         frontmatter=MappingProxyType({"type": "concept", "title": ""}),
     )
-    body, problems = generate_index(tmp_path, [e])
-    assert problems == ()
-    assert "* [my-doc](my-doc.md)" in body
+    result = generate_index(tmp_path, [e])
+    assert result.problems == ()
+    assert "* [my-doc](my-doc.md)" in result.body
 
 
 def test_generate_title_with_closing_bracket_is_escaped(tmp_path: Path) -> None:
     # ] terminates the markdown link title; must be escaped
     e = _entry(tmp_path / "a.md", tmp_path, title="Foo [Bar]", description=None)
-    body, problems = generate_index(tmp_path, [e])
-    assert problems == ()
+    result = generate_index(tmp_path, [e])
+    assert result.problems == ()
     # [ does not need escaping (only ] terminates the title group)
-    assert "* [Foo [Bar\\]](a.md)" in body
+    assert "* [Foo [Bar\\]](a.md)" in result.body
 
 
 def test_generate_link_with_closing_paren_is_escaped(tmp_path: Path) -> None:
@@ -301,17 +307,17 @@ def test_generate_link_with_closing_paren_is_escaped(tmp_path: Path) -> None:
         sha256="",
         frontmatter=MappingProxyType({"type": "concept", "title": "Foo Bar"}),
     )
-    body, problems = generate_index(tmp_path, [e])
-    assert problems == ()
+    result = generate_index(tmp_path, [e])
+    assert result.problems == ()
     # ( does not need escaping (only ) terminates the link group)
-    assert "* [Foo Bar](foo(bar\\).md)" in body
+    assert "* [Foo Bar](foo(bar\\).md)" in result.body
 
 
 def test_round_trip_metacharacters(tmp_path: Path) -> None:
     e = _entry(tmp_path / "a.md", tmp_path, title="Has ]bracket[", description="desc")
-    body, problems = generate_index(tmp_path, [e])
-    assert problems == ()
-    parsed = parse_index(body)
+    result = generate_index(tmp_path, [e])
+    assert result.problems == ()
+    parsed = parse_index(result.body)
     assert parsed.sections[0].entries[0].title == "Has ]bracket["
     assert parsed.sections[0].entries[0].link == "a.md"
 
@@ -319,9 +325,9 @@ def test_round_trip_metacharacters(tmp_path: Path) -> None:
 def test_round_trip_backslash_before_bracket(tmp_path: Path) -> None:
     # backslash must be escaped before ] so \\] is unambiguous on parse
     e = _entry(tmp_path / "a.md", tmp_path, title="foo\\]bar", description=None)
-    body, problems = generate_index(tmp_path, [e])
-    assert problems == ()
-    parsed = parse_index(body)
+    result = generate_index(tmp_path, [e])
+    assert result.problems == ()
+    parsed = parse_index(result.body)
     assert parsed.sections[0].entries[0].title == "foo\\]bar"
 
 
@@ -336,10 +342,10 @@ def test_generate_multiline_title_normalized(tmp_path: Path) -> None:
         sha256="",
         frontmatter=MappingProxyType({"type": "concept", "title": "line one\nline two"}),
     )
-    body, problems = generate_index(tmp_path, [e])
-    assert problems == ()
-    assert "\n\n" not in body.replace("\n\n", "§")  # only structural blank lines
-    assert "line one line two" in body
+    result = generate_index(tmp_path, [e])
+    assert result.problems == ()
+    assert "line one line two" in result.body
+    assert "line one\nline two" not in result.body
 
 
 def test_generate_multiline_description_normalized(tmp_path: Path) -> None:
@@ -355,9 +361,9 @@ def test_generate_multiline_description_normalized(tmp_path: Path) -> None:
             {"type": "concept", "title": "T", "description": "part one\r\npart two"}
         ),
     )
-    body, problems = generate_index(tmp_path, [e])
-    assert problems == ()
-    assert "part one part two" in body
+    result = generate_index(tmp_path, [e])
+    assert result.problems == ()
+    assert "part one part two" in result.body
 
 
 def test_generate_describe_directory_multiline_normalized(tmp_path: Path) -> None:
@@ -367,17 +373,17 @@ def test_generate_describe_directory_multiline_normalized(tmp_path: Path) -> Non
     def describe(path: Path) -> str | None:
         return "first line\nsecond line"
 
-    body, problems = generate_index(
+    result = generate_index(
         tmp_path, [], subdirectories=[subdir], describe_directory=describe
     )
-    assert problems == ()
-    assert "first line second line" in body
+    assert result.problems == ()
+    assert "first line second line" in result.body
 
 
 def test_generate_empty_produces_empty_string(tmp_path: Path) -> None:
-    body, problems = generate_index(tmp_path, [])
-    assert body == ""
-    assert problems == ()
+    result = generate_index(tmp_path, [])
+    assert result.body == ""
+    assert result.problems == ()
 
 
 # ---------------------------------------------------------------------------
@@ -459,9 +465,9 @@ def test_round_trip(tmp_path: Path) -> None:
     ]
     subdir = tmp_path / "sub"
 
-    first, problems = generate_index(directory, entries, subdirectories=[subdir])
-    assert problems == ()
-    parsed = parse_index(first)
+    result = generate_index(directory, entries, subdirectories=[subdir])
+    assert result.problems == ()
+    parsed = parse_index(result.body)
 
     # Re-render from parsed index
     lines: list[str] = []
@@ -476,4 +482,4 @@ def test_round_trip(tmp_path: Path) -> None:
         lines.append("")
     second = "\n".join(lines)
 
-    assert first == second
+    assert result.body == second

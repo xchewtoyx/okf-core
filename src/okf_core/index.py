@@ -26,6 +26,19 @@ class IndexProblem:
 
 
 @dataclass(frozen=True)
+class GeneratedIndex:
+    """Result of a ``generate_index()`` call.
+
+    ``body`` is the rendered ``index.md`` content string.  ``problems`` is a
+    tuple of non-fatal issues encountered during generation (skipped entries,
+    out-of-scope paths, etc.).
+    """
+
+    body: str
+    problems: tuple[IndexProblem, ...] = ()
+
+
+@dataclass(frozen=True)
 class IndexEntry:
     """A single entry in an index file section."""
 
@@ -99,7 +112,7 @@ def generate_index(
     subdirectories: Sequence[Path] = (),
     *,
     describe_directory: Callable[[Path], str | None] | None = None,
-) -> tuple[str, tuple[IndexProblem, ...]]:
+) -> GeneratedIndex:
     """Generate an index.md body from manifest entries scoped to a directory.
 
     ``directory`` is resolved to an absolute path before any comparison so
@@ -221,7 +234,7 @@ def generate_index(
                 lines.append(_render_entry(e))
             lines.append("")
 
-    return "\n".join(lines), tuple(problems)
+    return GeneratedIndex(body="\n".join(lines), problems=tuple(problems))
 
 
 def _normalize_inline(s: str) -> str:

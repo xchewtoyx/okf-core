@@ -65,10 +65,13 @@ consume `okf-core`.
   encounters input it cannot process (malformed data, spec violations, missing
   required fields), expose the problem through a structured return channel.
   Preferred channels in order:
-  1. **Tuple return `(result, problems)`** — for functions that produce
-     collections or generated output. Mirrors `scan_bundle`'s
-     `(concepts, problems)` pattern. Use when the caller should always see
-     what was skipped, even if they choose not to act on it.
+  1. **Named-dataclass return** — for functions that produce collections or
+     generated output. Mirrors `scan_bundle`'s `BundleManifest` pattern: return
+     a frozen dataclass with named fields (e.g. `.body` and `.problems`, or
+     `.concepts` and `.problems`) so callers access results by name and the
+     return type can gain fields without breaking call sites. Use when the
+     caller should always see what was skipped, even if they choose not to act
+     on it.
   2. **Raised exception** — for functions where any failure makes the result
      meaningless (e.g. `parse_concept_document`, `load_config`). Use a
      domain-specific exception type already established in the module.

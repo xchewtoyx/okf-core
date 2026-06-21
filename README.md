@@ -193,15 +193,17 @@ their `type` frontmatter field and sorted alphabetically within each group.
 Unknown but valid string `type` values are tolerated and grouped normally per
 OKF spec §9. Entries whose `type` is absent or not a string are a spec §4.1
 violation; they are skipped and reported as `IndexProblem` objects in the
-second return value. Entries or subdirectories whose path falls outside
-`directory` are likewise skipped and reported. Subdirectory entries appear in a
-trailing `Subdirectories` section. Entry titles come from the `title`
-frontmatter field, converted to a string and stripped; if absent, `None`, or
+`problems` field of the result. Entries or subdirectories whose path falls
+outside `directory` are likewise skipped and reported. Subdirectory entries
+appear in a trailing `Subdirectories` section. Entry titles come from the
+`title` frontmatter field, converted to a string, with internal newlines
+collapsed to spaces and then stripped; if absent, `None`, or
 empty/whitespace-only, the file stem is used as a fallback. Falsy-but-non-empty
 values such as `title: 0` are preserved as their string form. The same
-normalisation applies to `description`: absent, `None`, or
-empty/whitespace-only values omit the entry suffix; falsy-but-non-empty
-values are preserved. The function returns `(body, problems)`;
+normalisation applies to `description` and to strings returned by
+`describe_directory`: absent, `None`, or empty/whitespace-only values omit
+the entry suffix; falsy-but-non-empty values are preserved. The function
+returns a `GeneratedIndex` dataclass with `.body` and `.problems` fields;
 writing the file to disk is the caller's responsibility (the CLI `okf index`
 command will own that step once implemented).
 
@@ -211,7 +213,9 @@ from okf_core import generate_index, scan_bundle, load_config
 config = load_config()
 bundle = config.bundles["default"]
 manifest = scan_bundle(bundle)
-body, problems = generate_index(bundle.bundle_root, manifest.concepts)
+result = generate_index(bundle.bundle_root, manifest.concepts)
+# result.body  — the rendered index.md content
+# result.problems  — tuple of IndexProblem for any skipped entries
 ```
 
 `parse_index()` parses an existing `index.md` body into a `ParsedIndex`
