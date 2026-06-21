@@ -5,6 +5,13 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
+# CLAUDE_PROJECT_DIR is always set when CLAUDE_CODE_REMOTE=true, but guard
+# defensively so a misconfigured environment warns rather than crashes.
+if [ -z "${CLAUDE_PROJECT_DIR:-}" ]; then
+  echo "warning: CLAUDE_PROJECT_DIR not set; skipping session hook" >&2
+  exit 0
+fi
+
 cd "$CLAUDE_PROJECT_DIR"
 
 # Claude Code on the web runs on Debian/Ubuntu as root, so apt-get is
