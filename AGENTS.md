@@ -61,12 +61,33 @@ consume `okf-core`.
   become a required core dependency unless a future issue explicitly justifies
   that tradeoff.
 - Avoid over-engineering type/schema validation within core validation APIs. Core validation must focus on base OKF conformance (like the `type` string) and simple presence/non-emptiness checks for profile-required fields, leaving rich type/schema enforcement to the consuming project or custom workflow hooks.
-
+- **Surface problems explicitly; never fail silently.** When a function
+  encounters input it cannot process (malformed data, spec violations, missing
+  required fields), expose the problem through a structured return channel.
+  Preferred channels in order:
+  1. **Named-dataclass return** — for functions that produce collections or
+     generated output. Mirrors `scan_bundle`'s `BundleManifest` pattern: return
+     a frozen dataclass with named fields (e.g. `.body` and `.problems`, or
+     `.concepts` and `.problems`) so callers access results by name and the
+     return type can gain fields without breaking call sites. Use when the
+     caller should always see what was skipped, even if they choose not to act
+     on it.
+  2. **Raised exception** — for functions where any failure makes the result
+     meaningless (e.g. `parse_concept_document`, `load_config`). Use a
+     domain-specific exception type already established in the module.
+  3. **Callback / hook** — only when the caller explicitly opts in and
+     silent-skip on no-callback is documented and acceptable.
+  Do not use `logging.warning()`, `warnings.warn()`, or `print()` as the
+  primary problem channel — they are invisible to library callers and
+  untestable without patching.
 
 ## Delivery Rules
 
 - Tests are mandatory for delivered behavior.
-- User-facing behavior changes must update `README.md`.
+- User-facing behavior changes must update `README.md` and any affected
+  function docstrings in the same commit.  After editing either, search for
+  all references to the changed function or parameter across `README.md`,
+  `AGENTS.md`, and module docstrings to ensure nothing is left stale.
 - After editing `README.md`, review the document as a whole so it stays accurate
   and internally consistent.
 - Updates to `main` must happen through pull requests only.

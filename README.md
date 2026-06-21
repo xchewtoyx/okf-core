@@ -24,9 +24,10 @@ The target pattern is semi-opaque:
 ## Status
 
 This repository is in early MVP development. Configuration loading, concept
-document parsing, configurable concept ID/path resolution, and bundle manifest
-scanning are implemented; the other OKF operations described below are the
-planned public shape of the project and are not implemented yet.
+document parsing, configurable concept ID/path resolution, bundle manifest
+scanning, and index file parsing and generation are implemented; the other OKF
+operations described below are the planned public shape of the project and are
+not implemented yet.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
@@ -183,6 +184,51 @@ hierarchy level.
 Malformed documents and other per-file scan failures are reported as structured
 manifest problems instead of aborting the full scan, allowing callers to inspect
 valid concepts and problems from the same scan result.
+
+### Index Files
+
+`generate_index()` produces a conformant `index.md` body string from a sequence
+of `ConceptManifestEntry` objects scoped to a directory. Entries are grouped by
+their `type` frontmatter field and sorted alphabetically within each group.
+Unknown but valid string `type` values are tolerated and grouped normally per
+OKF spec §9. Entries whose `type` is absent or not a string are a spec §4.1
+violation; they are skipped and reported as `IndexProblem` objects in the
+`problems` field of the result. Entries or subdirectories whose path falls
+outside `directory` are likewise skipped and reported. Subdirectory entries
+appear in a trailing `Subdirectories` section. Entry titles come from the
+`title` frontmatter field, converted to a string, with internal newlines
+collapsed to spaces and then stripped; if absent, `None`, or
+empty/whitespace-only, the file stem is used as a fallback. Falsy-but-non-empty
+values such as `title: 0` are preserved as their string form. The same
+normalisation applies to `description` and to strings returned by
+`describe_directory`: absent, `None`, or empty/whitespace-only values omit
+the entry suffix; falsy-but-non-empty values are preserved. The function
+returns a `GeneratedIndex` dataclass with `.body` and `.problems` fields;
+writing the file to disk is the caller's responsibility (the CLI `okf index`
+command will own that step once implemented).
+
+```python
+from okf_core import generate_index, scan_bundle, load_config
+
+config = load_config()
+bundle = config.bundles["default"]
+manifest = scan_bundle(bundle)
+result = generate_index(bundle.bundle_root, manifest.concepts)
+# result.body  — the rendered index.md content
+# result.problems  — tuple of IndexProblem for any skipped entries
+```
+
+`parse_index()` parses an existing `index.md` body into a `ParsedIndex`
+containing `IndexSection` and `IndexEntry` objects. Generated output
+round-trips through `parse_index` without loss; markdown link
+metacharacters (`]` in titles, `)` in links) are escaped on generation
+and unescaped on parsing.
+
+The `describe_directory` keyword argument to `generate_index()` is a hook point
+for callers that want to supply directory-level descriptions — for example, a
+workflow agent using its own model access. It receives the absolute subdirectory
+path and should return a description string or `None`.  `okf-core` itself never
+makes model API calls.
 
 ## Planned Operations
 
