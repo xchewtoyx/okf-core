@@ -81,7 +81,10 @@ consume `okf-core`.
 ## Delivery Rules
 
 - Tests are mandatory for delivered behavior.
-- User-facing behavior changes must update `README.md`.
+- User-facing behavior changes must update `README.md` and any affected
+  function docstrings in the same commit.  After editing either, search for
+  all references to the changed function or parameter across `README.md`,
+  `AGENTS.md`, and module docstrings to ensure nothing is left stale.
 - After editing `README.md`, review the document as a whole so it stays accurate
   and internally consistent.
 - Updates to `main` must happen through pull requests only.
