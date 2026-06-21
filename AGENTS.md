@@ -7,7 +7,7 @@ consume `okf-core`.
 ## Developer Setup
 
 - Always develop and run tests within a local virtual environment named `.venv` to prevent package pollution.
-- Requires [`just`](https://just.systems/) to be installed. If unavailable, use the manual steps below instead.
+- Install [`just`](https://just.systems/) for a simpler command surface. If unavailable, use the manual steps below instead.
 - Bootstrap the environment and dependencies using:
   ```sh
   just install
