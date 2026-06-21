@@ -95,6 +95,9 @@ consume `okf-core`.
   `AGENTS.md`, and module docstrings to ensure nothing is left stale.
 - After editing `README.md`, review the document as a whole so it stays accurate
   and internally consistent.
+- After editing `AGENTS.md`, review the affected section as a whole for internal
+  consistency (e.g. a sentence that says X is required should not be immediately
+  followed by instructions for when X is unavailable).
 - Updates to `main` must happen through pull requests only.
 - Do not close story issues until the implementation PR has been approved by a
   human and merged.
