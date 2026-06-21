@@ -126,12 +126,6 @@ def generate_index(
     access.  It always receives the resolved absolute subdirectory path and
     should return a description string or ``None``.
 
-    Assumption: entry titles, frontmatter descriptions, and relative path
-    strings are free of markdown link metacharacters (``]``, ``)``,
-    newlines).  OKF concept ID constraints enforced by ``concept_id_to_path``
-    and ``scan_bundle`` already prevent these characters from appearing in
-    valid bundle entries and subdirectory paths.  Callers supplying synthetic
-    entries that violate this assumption will produce unparseable markdown.
     """
     resolved_dir = directory.resolve()
     groups: dict[str, list[IndexEntry]] = {}
@@ -162,7 +156,8 @@ def generate_index(
             continue
 
         title_raw = entry.frontmatter.get("title")
-        title = str(title_raw) if title_raw is not None else entry.path.stem
+        title_str = str(title_raw).strip() if title_raw is not None else ""
+        title = title_str if title_str else entry.path.stem
         description_raw = entry.frontmatter.get("description")
         description = str(description_raw) if description_raw is not None else None
         link = rel.as_posix()

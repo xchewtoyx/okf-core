@@ -246,6 +246,22 @@ def test_generate_relative_directory_resolves_correctly(tmp_path: Path) -> None:
     assert "* [Alpha](a.md)" in body
 
 
+def test_generate_empty_string_title_falls_back_to_stem(tmp_path: Path) -> None:
+    # title: "" is not None but produces no usable text — fall back to stem
+    e = ConceptManifestEntry(
+        concept_id="my-doc",
+        path=tmp_path / "my-doc.md",
+        bundle_root=tmp_path,
+        mtime_ns=0,
+        size=0,
+        sha256="",
+        frontmatter=MappingProxyType({"type": "concept", "title": ""}),
+    )
+    body, problems = generate_index(tmp_path, [e])
+    assert problems == ()
+    assert "* [my-doc](my-doc.md)" in body
+
+
 def test_generate_title_with_closing_bracket_is_escaped(tmp_path: Path) -> None:
     # ] terminates the markdown link title; must be escaped
     e = _entry(tmp_path / "a.md", tmp_path, title="Foo [Bar]", description=None)

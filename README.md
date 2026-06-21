@@ -210,7 +210,9 @@ body, problems = generate_index(bundle.bundle_root, manifest.concepts)
 
 `parse_index()` parses an existing `index.md` body into a `ParsedIndex`
 containing `IndexSection` and `IndexEntry` objects. Generated output
-round-trips through `parse_index` without loss.
+round-trips through `parse_index` without loss; markdown link
+metacharacters (`]` in titles, `)` in links) are escaped on generation
+and unescaped on parsing.
 
 The `describe_directory` keyword argument to `generate_index()` is a hook point
 for callers that want to supply directory-level descriptions — for example, a
