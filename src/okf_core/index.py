@@ -76,8 +76,8 @@ def parse_index(content: str) -> ParsedIndex:
             if m:
                 current_entries.append(
                     IndexEntry(
-                        title=m.group("title").replace("\\]", "]"),
-                        link=m.group("link").replace("\\)", ")"),
+                        title=_md_unescape(m.group("title")),
+                        link=_md_unescape(m.group("link")),
                         description=m.group("desc"),
                     )
                 )
@@ -188,7 +188,7 @@ def generate_index(
 
     if subdirectories:
         subdir_entries: list[IndexEntry] = []
-        for subdir in sorted(subdirectories, key=lambda p: p.name.lower()):
+        for subdir in sorted(subdirectories, key=lambda p: str(p.resolve()).lower()):
             resolved_subdir = subdir.resolve()
             try:
                 rel_path = resolved_subdir.relative_to(resolved_dir).as_posix()
@@ -217,10 +217,18 @@ def generate_index(
     return "\n".join(lines), tuple(problems)
 
 
+def _md_escape(s: str) -> str:
+    """Escape backslash then markdown link delimiters so output round-trips."""
+    return s.replace("\\", "\\\\").replace("]", "\\]").replace(")", "\\)")
+
+
+def _md_unescape(s: str) -> str:
+    """Reverse _md_escape: decode any \\X sequence to X."""
+    return re.sub(r"\\(.)", r"\1", s)
+
+
 def _render_entry(entry: IndexEntry) -> str:
-    title = entry.title.replace("]", "\\]")
-    link = entry.link.replace(")", "\\)")
-    base = f"* [{title}]({link})"
+    base = f"* [{_md_escape(entry.title)}]({_md_escape(entry.link)})"
     if entry.description:
         return f"{base} - {entry.description}"
     return base

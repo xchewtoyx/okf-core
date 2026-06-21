@@ -316,6 +316,15 @@ def test_round_trip_metacharacters(tmp_path: Path) -> None:
     assert parsed.sections[0].entries[0].link == "a.md"
 
 
+def test_round_trip_backslash_before_bracket(tmp_path: Path) -> None:
+    # backslash must be escaped before ] so \\] is unambiguous on parse
+    e = _entry(tmp_path / "a.md", tmp_path, title="foo\\]bar", description=None)
+    body, problems = generate_index(tmp_path, [e])
+    assert problems == ()
+    parsed = parse_index(body)
+    assert parsed.sections[0].entries[0].title == "foo\\]bar"
+
+
 def test_generate_empty_produces_empty_string(tmp_path: Path) -> None:
     body, problems = generate_index(tmp_path, [])
     assert body == ""
