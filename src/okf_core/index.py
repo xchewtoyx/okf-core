@@ -50,7 +50,9 @@ class ParsedIndex:
 def parse_index(content: str) -> ParsedIndex:
     """Parse an index.md body into structured sections and entries.
 
-    Lines that are not headings or well-formed list entries are ignored.
+    Only lines under a ``# Heading`` are captured as entries; list items that
+    appear before the first heading are ignored.  Lines that are not headings
+    or well-formed ``* [title](link)`` entries are also ignored.
     """
     sections: list[IndexSection] = []
     current_heading: str | None = None
@@ -121,6 +123,13 @@ def generate_index(
     supply directory-level descriptions without ``okf-core`` owning any model
     access.  It always receives the resolved absolute subdirectory path and
     should return a description string or ``None``.
+
+    Assumption: entry titles, frontmatter descriptions, and relative path
+    strings are free of markdown link metacharacters (``]``, ``)``,
+    newlines).  OKF concept ID constraints enforced by ``concept_id_to_path``
+    and ``scan_bundle`` already prevent these characters from appearing in
+    valid bundle entries and subdirectory paths.  Callers supplying synthetic
+    entries that violate this assumption will produce unparseable markdown.
     """
     resolved_dir = directory.resolve()
     groups: dict[str, list[IndexEntry]] = {}
