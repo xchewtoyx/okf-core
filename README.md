@@ -190,9 +190,11 @@ valid concepts and problems from the same scan result.
 `generate_index()` produces a conformant `index.md` body string from a sequence
 of `ConceptManifestEntry` objects scoped to a directory. Entries are grouped by
 their `type` frontmatter field and sorted alphabetically within each group.
-Entries whose `type` is absent or not a string are a spec §4.1 violation;
-they are skipped and reported as `IndexProblem` objects in the second return
-value rather than silently omitted or coerced. Subdirectory entries appear in a
+Unknown but valid string `type` values are tolerated and grouped normally per
+OKF spec §9. Entries whose `type` is absent or not a string are a spec §4.1
+violation; they are skipped and reported as `IndexProblem` objects in the
+second return value. Entries or subdirectories whose path falls outside
+`directory` are likewise skipped and reported. Subdirectory entries appear in a
 trailing `Subdirectories` section. The function returns `(body, problems)`;
 writing the file to disk is the caller's responsibility (the CLI `okf index`
 command will own that step once implemented).

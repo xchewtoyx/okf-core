@@ -94,7 +94,6 @@ def generate_index(
     entries: Sequence[ConceptManifestEntry],
     subdirectories: Sequence[Path] = (),
     *,
-    fallback_group: str = "Other",
     describe_directory: Callable[[Path], str | None] | None = None,
 ) -> tuple[str, tuple[IndexProblem, ...]]:
     """Generate an index.md body from manifest entries scoped to a directory.
@@ -103,9 +102,14 @@ def generate_index(
     entries are sorted alphabetically by resolved title.  Subdirectories are
     listed in a trailing section.
 
-    Entries whose ``type`` value is not a string are skipped — a non-string
-    ``type`` is a spec §4.1 violation — and reported as ``IndexProblem``
-    objects in the second return value.
+    Entries whose ``type`` value is not a non-empty string are skipped — a
+    missing or non-string ``type`` is a spec §4.1 violation — and reported as
+    ``IndexProblem`` objects in the second return value.  Entries or
+    subdirectories whose path does not fall under ``directory`` are likewise
+    skipped and reported.
+
+    Note: unknown but valid string ``type`` values are tolerated and grouped
+    normally per the OKF spec (§9 consumers MUST tolerate unknown types).
 
     ``describe_directory`` is a hook for callers (e.g. workflow agents) to
     supply directory-level descriptions without ``okf-core`` owning any model
@@ -127,10 +131,21 @@ def generate_index(
             )
             continue
 
+        try:
+            rel = entry.path.relative_to(directory)
+        except ValueError:
+            problems.append(
+                IndexProblem(
+                    concept_id=entry.concept_id,
+                    path=entry.path,
+                    message=f"skipped: path is not under directory {directory}",
+                )
+            )
+            continue
+
         title = str(entry.frontmatter.get("title") or entry.path.stem)
         description_raw = entry.frontmatter.get("description")
         description = str(description_raw) if description_raw else None
-        rel = entry.path.relative_to(directory)
         link = rel.as_posix()
 
         groups.setdefault(type_key, []).append(
@@ -149,18 +164,31 @@ def generate_index(
         lines.append("")
 
     if subdirectories:
-        lines.append("# Subdirectories")
-        lines.append("")
+        subdir_entries: list[IndexEntry] = []
         for subdir in sorted(subdirectories, key=lambda p: p.name.lower()):
+            try:
+                rel_path = subdir.relative_to(directory).as_posix()
+            except ValueError:
+                problems.append(
+                    IndexProblem(
+                        concept_id="",
+                        path=subdir,
+                        message=f"skipped: subdirectory is not under directory {directory}",
+                    )
+                )
+                continue
             desc: str | None = None
             if describe_directory is not None:
                 desc = describe_directory(subdir)
-            rel_link = subdir.relative_to(directory).as_posix() + "/"
-            title = subdir.relative_to(directory).as_posix()
-            lines.append(
-                _render_entry(IndexEntry(title=title, link=rel_link, description=desc))
+            subdir_entries.append(
+                IndexEntry(title=rel_path, link=rel_path + "/", description=desc)
             )
-        lines.append("")
+        if subdir_entries:
+            lines.append("# Subdirectories")
+            lines.append("")
+            for e in subdir_entries:
+                lines.append(_render_entry(e))
+            lines.append("")
 
     return "\n".join(lines), tuple(problems)
 

@@ -145,12 +145,30 @@ def test_generate_missing_type_skipped_and_reported(tmp_path: Path) -> None:
     assert problems[0].concept_id == "a"
 
 
-def test_generate_custom_fallback_group_no_longer_applies(tmp_path: Path) -> None:
-    directory = tmp_path
-    e = _entry(tmp_path / "a.md", tmp_path, type=None, title="X")
-    body, problems = generate_index(directory, [e], fallback_group="Uncategorised")
-    assert "Uncategorised" not in body
+def test_generate_entry_path_outside_directory_skipped_and_reported(
+    tmp_path: Path,
+) -> None:
+    other = tmp_path / "other"
+    other.mkdir()
+    directory = tmp_path / "docs"
+    directory.mkdir()
+    e = _entry(other / "a.md", other, concept_id="a", title="Outside")
+    body, problems = generate_index(directory, [e])
+    assert "Outside" not in body
     assert len(problems) == 1
+    assert problems[0].concept_id == "a"
+
+
+def test_generate_subdirectory_outside_directory_skipped_and_reported(
+    tmp_path: Path,
+) -> None:
+    directory = tmp_path / "docs"
+    directory.mkdir()
+    outside = tmp_path / "other"
+    body, problems = generate_index(directory, [], subdirectories=[outside])
+    assert "# Subdirectories" not in body
+    assert len(problems) == 1
+    assert problems[0].path == outside
 
 
 def test_generate_describe_directory_hook(tmp_path: Path) -> None:
