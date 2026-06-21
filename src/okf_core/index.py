@@ -184,7 +184,9 @@ def generate_index(
         title = title_str if title_str else entry.path.stem
         description_raw = entry.frontmatter.get("description")
         description_str = (
-            _normalize_inline(str(description_raw)) if description_raw is not None else ""
+            _normalize_inline(str(description_raw))
+            if description_raw is not None
+            else ""
         )
         description = description_str if description_str else None
         link = rel.as_posix()

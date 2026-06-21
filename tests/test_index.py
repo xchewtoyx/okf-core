@@ -340,7 +340,9 @@ def test_generate_multiline_title_normalized(tmp_path: Path) -> None:
         mtime_ns=0,
         size=0,
         sha256="",
-        frontmatter=MappingProxyType({"type": "concept", "title": "line one\nline two"}),
+        frontmatter=MappingProxyType(
+            {"type": "concept", "title": "line one\nline two"}
+        ),
     )
     result = generate_index(tmp_path, [e])
     assert result.problems == ()
