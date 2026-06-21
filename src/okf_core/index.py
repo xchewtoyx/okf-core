@@ -9,8 +9,10 @@ from pathlib import Path
 
 from okf_core.manifest import ConceptManifestEntry
 
+# Matches * [title](link) or * [title](link) - description.
+# Title and link may contain backslash-escaped ] and ) respectively.
 _ENTRY_RE = re.compile(
-    r"^\* \[(?P<title>[^\]]+)\]\((?P<link>[^)]+)\)(?:\s+-\s+(?P<desc>.+))?$"
+    r"^\* \[(?P<title>(?:[^\]\\]|\\.)+)\]\((?P<link>(?:[^)\\]|\\.)+)\)(?:\s+-\s+(?P<desc>.+))?$"
 )
 
 
@@ -74,8 +76,8 @@ def parse_index(content: str) -> ParsedIndex:
             if m:
                 current_entries.append(
                     IndexEntry(
-                        title=m.group("title"),
-                        link=m.group("link"),
+                        title=m.group("title").replace("\\]", "]"),
+                        link=m.group("link").replace("\\)", ")"),
                         description=m.group("desc"),
                     )
                 )
@@ -212,7 +214,9 @@ def generate_index(
 
 
 def _render_entry(entry: IndexEntry) -> str:
-    base = f"* [{entry.title}]({entry.link})"
+    title = entry.title.replace("]", "\\]")
+    link = entry.link.replace(")", "\\)")
+    base = f"* [{title}]({link})"
     if entry.description:
         return f"{base} - {entry.description}"
     return base

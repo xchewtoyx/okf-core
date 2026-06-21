@@ -216,7 +216,6 @@ def test_generate_whitespace_only_type_skipped_and_reported(tmp_path: Path) -> N
 
 def test_generate_falsy_title_value_used_not_stem(tmp_path: Path) -> None:
     # title: 0 is falsy but valid YAML — must not fall back to filename stem
-    e = _entry(tmp_path / "my-file.md", tmp_path, title=None)
     e2 = ConceptManifestEntry(
         concept_id="zero",
         path=tmp_path / "zero.md",
@@ -245,6 +244,41 @@ def test_generate_relative_directory_resolves_correctly(tmp_path: Path) -> None:
         os.chdir(cwd)
     assert problems == ()
     assert "* [Alpha](a.md)" in body
+
+
+def test_generate_title_with_closing_bracket_is_escaped(tmp_path: Path) -> None:
+    # ] terminates the markdown link title; must be escaped
+    e = _entry(tmp_path / "a.md", tmp_path, title="Foo [Bar]", description=None)
+    body, problems = generate_index(tmp_path, [e])
+    assert problems == ()
+    # [ does not need escaping (only ] terminates the title group)
+    assert "* [Foo [Bar\\]](a.md)" in body
+
+
+def test_generate_link_with_closing_paren_is_escaped(tmp_path: Path) -> None:
+    # ) terminates the markdown link target; must be escaped
+    e = ConceptManifestEntry(
+        concept_id="foo(bar)",
+        path=tmp_path / "foo(bar).md",
+        bundle_root=tmp_path,
+        mtime_ns=0,
+        size=0,
+        sha256="",
+        frontmatter=MappingProxyType({"type": "concept", "title": "Foo Bar"}),
+    )
+    body, problems = generate_index(tmp_path, [e])
+    assert problems == ()
+    # ( does not need escaping (only ) terminates the link group)
+    assert "* [Foo Bar](foo(bar\\).md)" in body
+
+
+def test_round_trip_metacharacters(tmp_path: Path) -> None:
+    e = _entry(tmp_path / "a.md", tmp_path, title="Has ]bracket[", description="desc")
+    body, problems = generate_index(tmp_path, [e])
+    assert problems == ()
+    parsed = parse_index(body)
+    assert parsed.sections[0].entries[0].title == "Has ]bracket["
+    assert parsed.sections[0].entries[0].link == "a.md"
 
 
 def test_generate_empty_produces_empty_string(tmp_path: Path) -> None:
