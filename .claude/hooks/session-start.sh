@@ -16,7 +16,9 @@ if ! command -v just &>/dev/null; then
     || echo "warning: could not install just via apt-get" >&2
 fi
 
-# Create venv and install package with test deps
+# Create venv and install package with test deps. Best-effort: a pip or
+# network failure should warn but not abort the session — the user can
+# run 'just install' manually, and just recipes will prompt them if needed.
 if command -v just &>/dev/null; then
-  just install
+  just install || echo "warning: just install failed; run 'just install' manually" >&2
 fi
