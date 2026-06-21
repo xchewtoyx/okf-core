@@ -7,7 +7,8 @@ fi
 
 # Install just if not present
 if ! command -v just &>/dev/null; then
-  apt-get install -y just
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq
+  DEBIAN_FRONTEND=noninteractive apt-get install -y just
 fi
 
 # Create venv and install package with test deps
