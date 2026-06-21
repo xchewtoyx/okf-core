@@ -184,6 +184,16 @@ def test_generate_entry_path_outside_directory_skipped_and_reported(
     assert result.problems[0].concept_id == "a"
 
 
+def test_generate_subdirectory_is_directory_itself_skipped_and_reported(
+    tmp_path: Path,
+) -> None:
+    result = generate_index(tmp_path, [], subdirectories=[tmp_path])
+    assert "# Subdirectories" not in result.body
+    assert len(result.problems) == 1
+    assert result.problems[0].path == tmp_path
+    assert "index directory itself" in result.problems[0].message
+
+
 def test_generate_subdirectory_outside_directory_skipped_and_reported(
     tmp_path: Path,
 ) -> None:

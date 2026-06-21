@@ -210,6 +210,15 @@ def generate_index(
         subdir_entries: list[IndexEntry] = []
         for subdir in sorted(subdirectories, key=lambda p: str(p.resolve()).lower()):
             resolved_subdir = subdir.resolve()
+            if resolved_subdir == resolved_dir:
+                problems.append(
+                    IndexProblem(
+                        concept_id="",
+                        path=subdir,
+                        message=f"skipped: subdirectory is the index directory itself {resolved_dir}",
+                    )
+                )
+                continue
             try:
                 rel_path = resolved_subdir.relative_to(resolved_dir).as_posix()
             except ValueError:
