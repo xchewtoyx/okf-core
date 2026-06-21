@@ -124,7 +124,8 @@ def generate_index(
     listed in a trailing section.
 
     The following inputs are skipped and reported as ``IndexProblem`` objects
-    in the second return value rather than raising:
+    in the ``.problems`` field of the returned ``GeneratedIndex`` rather than
+    raising:
 
     - Entries whose ``type`` is not a non-empty, non-whitespace string
       (missing or non-string ``type`` is a spec §4.1 violation).
