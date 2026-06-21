@@ -98,30 +98,37 @@ def generate_index(
 ) -> tuple[str, tuple[IndexProblem, ...]]:
     """Generate an index.md body from manifest entries scoped to a directory.
 
-    Entries are grouped by their ``type`` frontmatter field.  Within each group
-    entries are sorted alphabetically by resolved title.  Subdirectories are
+    ``directory`` is resolved to an absolute path before any comparison so
+    relative, absolute, and symlink-containing inputs all behave consistently.
+
+    Entries are grouped by their ``type`` frontmatter field and sorted
+    alphabetically within each group.  Unknown but valid string ``type`` values
+    are tolerated and grouped normally per OKF spec §9.  Subdirectories are
     listed in a trailing section.
 
-    Entries whose ``type`` value is not a non-empty string are skipped — a
-    missing or non-string ``type`` is a spec §4.1 violation — and reported as
-    ``IndexProblem`` objects in the second return value.  Entries or
-    subdirectories whose path does not fall under ``directory`` are likewise
-    skipped and reported.
+    The following inputs are skipped and reported as ``IndexProblem`` objects
+    in the second return value rather than raising:
 
-    Note: unknown but valid string ``type`` values are tolerated and grouped
-    normally per the OKF spec (§9 consumers MUST tolerate unknown types).
+    - Entries whose ``type`` is not a non-empty, non-whitespace string
+      (missing or non-string ``type`` is a spec §4.1 violation).
+    - Entries or subdirectories whose resolved path does not fall under the
+      resolved ``directory``.
+
+    ``title`` and ``description`` are extracted with explicit ``None`` checks so
+    that falsy-but-valid YAML values (e.g. ``0``, ``false``) are preserved.
 
     ``describe_directory`` is a hook for callers (e.g. workflow agents) to
     supply directory-level descriptions without ``okf-core`` owning any model
-    access.  It receives the absolute subdirectory path and should return a
-    description string or ``None``.
+    access.  It always receives the resolved absolute subdirectory path and
+    should return a description string or ``None``.
     """
+    resolved_dir = directory.resolve()
     groups: dict[str, list[IndexEntry]] = {}
     problems: list[IndexProblem] = []
 
     for entry in entries:
         type_key = entry.frontmatter.get("type")
-        if not isinstance(type_key, str) or not type_key:
+        if not isinstance(type_key, str) or not type_key.strip():
             problems.append(
                 IndexProblem(
                     concept_id=entry.concept_id,
@@ -132,23 +139,24 @@ def generate_index(
             continue
 
         try:
-            rel = entry.path.relative_to(directory)
+            rel = entry.path.resolve().relative_to(resolved_dir)
         except ValueError:
             problems.append(
                 IndexProblem(
                     concept_id=entry.concept_id,
                     path=entry.path,
-                    message=f"skipped: path is not under directory {directory}",
+                    message=f"skipped: path is not under directory {resolved_dir}",
                 )
             )
             continue
 
-        title = str(entry.frontmatter.get("title") or entry.path.stem)
+        title_raw = entry.frontmatter.get("title")
+        title = str(title_raw) if title_raw is not None else entry.path.stem
         description_raw = entry.frontmatter.get("description")
-        description = str(description_raw) if description_raw else None
+        description = str(description_raw) if description_raw is not None else None
         link = rel.as_posix()
 
-        groups.setdefault(type_key, []).append(
+        groups.setdefault(type_key.strip(), []).append(
             IndexEntry(title=title, link=link, description=description)
         )
 
@@ -166,20 +174,21 @@ def generate_index(
     if subdirectories:
         subdir_entries: list[IndexEntry] = []
         for subdir in sorted(subdirectories, key=lambda p: p.name.lower()):
+            resolved_subdir = subdir.resolve()
             try:
-                rel_path = subdir.relative_to(directory).as_posix()
+                rel_path = resolved_subdir.relative_to(resolved_dir).as_posix()
             except ValueError:
                 problems.append(
                     IndexProblem(
                         concept_id="",
                         path=subdir,
-                        message=f"skipped: subdirectory is not under directory {directory}",
+                        message=f"skipped: subdirectory is not under directory {resolved_dir}",
                     )
                 )
                 continue
             desc: str | None = None
             if describe_directory is not None:
-                desc = describe_directory(subdir)
+                desc = describe_directory(resolved_subdir)
             subdir_entries.append(
                 IndexEntry(title=rel_path, link=rel_path + "/", description=desc)
             )

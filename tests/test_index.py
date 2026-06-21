@@ -206,6 +206,47 @@ def test_generate_nested_subdirectory_link(tmp_path: Path) -> None:
     assert "* [bar](bar/)" not in body
 
 
+def test_generate_whitespace_only_type_skipped_and_reported(tmp_path: Path) -> None:
+    e = _entry(tmp_path / "a.md", tmp_path, concept_id="a", type="   ", title="X")
+    body, problems = generate_index(tmp_path, [e])
+    assert "X" not in body
+    assert len(problems) == 1
+    assert problems[0].concept_id == "a"
+
+
+def test_generate_falsy_title_value_used_not_stem(tmp_path: Path) -> None:
+    # title: 0 is falsy but valid YAML — must not fall back to filename stem
+    e = _entry(tmp_path / "my-file.md", tmp_path, title=None)
+    e2 = ConceptManifestEntry(
+        concept_id="zero",
+        path=tmp_path / "zero.md",
+        bundle_root=tmp_path,
+        mtime_ns=0,
+        size=0,
+        sha256="",
+        frontmatter=MappingProxyType({"type": "concept", "title": 0}),
+    )
+    body, problems = generate_index(tmp_path, [e2])
+    assert problems == ()
+    assert "* [0](zero.md)" in body
+
+
+def test_generate_relative_directory_resolves_correctly(tmp_path: Path) -> None:
+    # entries from scan_bundle use absolute paths; directory may be relative
+    e = _entry(tmp_path / "a.md", tmp_path, title="Alpha")
+    import os
+
+    cwd = os.getcwd()
+    try:
+        os.chdir(tmp_path.parent)
+        rel_dir = Path(tmp_path.name)
+        body, problems = generate_index(rel_dir, [e])
+    finally:
+        os.chdir(cwd)
+    assert problems == ()
+    assert "* [Alpha](a.md)" in body
+
+
 def test_generate_empty_produces_empty_string(tmp_path: Path) -> None:
     body, problems = generate_index(tmp_path, [])
     assert body == ""
