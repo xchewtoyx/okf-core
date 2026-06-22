@@ -125,10 +125,10 @@ consume `okf-core`.
 - **Static Analysis**: Before pushing or requesting automated code review, run the full lint suite to preempt mechanical findings:
   ```sh
   just lint
-  # or without just:
+  # or without just (requires venv activated or using venv binaries directly):
   python -m ruff check .github/scripts/
   python -m mypy .github/scripts/ --ignore-missing-imports
-  actionlint .github/workflows/*.yml
+  .venv/bin/actionlint .github/workflows/*.yml
   ```
   `ruff` checks Python style and common bugs in `.github/scripts/`; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[test]` deps and run in CI.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
@@ -136,5 +136,5 @@ consume `okf-core`.
   ```sh
   just ci
   # or without just:
-  black --check src tests && python -m ruff check .github/scripts/ && python -m mypy .github/scripts/ --ignore-missing-imports && actionlint .github/workflows/*.yml && pytest
+  black --check src tests && python -m ruff check .github/scripts/ && python -m mypy .github/scripts/ --ignore-missing-imports && .venv/bin/actionlint .github/workflows/*.yml && pytest
   ```

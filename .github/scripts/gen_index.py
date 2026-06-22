@@ -140,7 +140,12 @@ def main(dist_dir: str, output_dir: str) -> None:
         f.name: _sha256(f) for f in dist.iterdir() if _is_package_asset(f.name)
     }
 
-    # Merge with hashes stored on gh-pages (avoids re-downloading old releases)
+    # Merge with hashes stored on gh-pages (avoids re-downloading old releases).
+    # new_hashes takes precedence so the current release is always fresh.
+    # Known limitation: if a historical release asset is replaced with different
+    # content under the same filename, its stored hash becomes stale. This is
+    # unlikely for versioned packages (filenames include the version number) and
+    # is an acceptable trade-off given the cost of re-downloading all assets.
     hashes = _load_stored_hashes(repo, token)
     hashes.update(new_hashes)
 

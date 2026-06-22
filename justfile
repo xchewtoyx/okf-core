@@ -35,7 +35,7 @@ test: _require-venv
 lint: _require-venv
     {{python}} -m ruff check .github/scripts/
     {{python}} -m mypy .github/scripts/ --ignore-missing-imports
-    actionlint .github/workflows/*.yml
+    .venv/bin/actionlint .github/workflows/*.yml
 
 # Run check + lint + test (mirrors CI)
 ci: check lint test
