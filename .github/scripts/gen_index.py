@@ -3,10 +3,13 @@
 
 Usage: gen_index.py <dist-dir> <output-dir>
 
-Reads newly built artifacts from <dist-dir>, fetches all published releases
-from the GitHub API to collect historical download URLs, merges SHA-256 hashes
-(new from disk, historical from hashes.json on gh-pages), and writes a PEP 503
-simple index into <output-dir>.
+Reads newly built artifacts from <dist-dir>, computes their SHA-256 hashes,
+and fetches all published releases from the GitHub API to collect download URLs.
+SHA-256 hashes are persisted in hashes.json on gh-pages so they accumulate
+across runs — newly built artifacts are always hashed from disk, while
+artifacts from previous runs rely on the stored hashes.json. Artifacts whose
+hash is not yet known (e.g. releases that predate this workflow) are linked
+without a sha256 fragment, which is valid per PEP 503.
 
 Required environment variables:
   GITHUB_TOKEN  - token with contents:read permission
@@ -85,8 +88,11 @@ def _root_index_html() -> str:
 
 
 def _package_index_html(links: list[tuple[str, str, str]]) -> str:
+    def _href(url: str, sha256: str) -> str:
+        return f"{url}#sha256={sha256}" if sha256 else url
+
     entries = "\n".join(
-        f'    <a href="{url}#sha256={sha256}">{name}</a>'
+        f'    <a href="{_href(url, sha256)}">{name}</a>'
         for name, url, sha256 in sorted(links)
     )
     return (
