@@ -86,7 +86,7 @@ def _sha256(path: Path) -> str:
 
 def _is_package_asset(name: str) -> bool:
     normalized = name.lower().replace("-", "_")
-    return normalized.startswith(_PACKAGE_PREFIX) and (
+    return normalized.startswith(_PACKAGE_PREFIX + "_") and (
         normalized.endswith(".whl") or normalized.endswith(".tar.gz")
     )
 

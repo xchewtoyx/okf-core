@@ -47,6 +47,7 @@ def test_is_package_asset_accepts_valid(name: str) -> None:
         "README.md",
         "okf_core-0.1.0.tar.bz2",
         "source.tar.gz",  # no package prefix
+        "okf_coreutils-0.1.0-py3-none-any.whl",  # prefix match but different package
     ],
 )
 def test_is_package_asset_rejects_non_package(name: str) -> None:
