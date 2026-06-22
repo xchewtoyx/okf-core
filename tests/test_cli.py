@@ -104,6 +104,26 @@ def test_scan_reports_malformed_documents_in_problems(tmp_path: Path) -> None:
     assert "broken.md" in data["problems"][0]["path"]
 
 
+def test_scan_date_frontmatter_serializes_to_json(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    # PyYAML parses bare YYYY-MM-DD values as datetime.date, which json.dumps
+    # cannot serialize without help from _to_serializable.
+    (tmp_path / "dated.md").write_text(
+        "---\ntype: concept\ntitle: Dated\ntimestamp: 2024-01-01\n---\nBody\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["scan", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert len(data["concepts"]) == 1
+    assert data["concepts"][0]["frontmatter"]["timestamp"] == "2024-01-01"
+
+
 def test_scan_bundle_option_selects_named_bundle(tmp_path: Path) -> None:
     alt_root = tmp_path / "alt"
     config_path = tmp_path / "okf-core.toml"

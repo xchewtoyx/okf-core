@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 import json
 import sys
 from collections.abc import Mapping
@@ -23,8 +24,10 @@ def _to_serializable(obj: Any) -> Any:
     """Recursively convert frozen manifest structures to JSON-serializable types."""
     if isinstance(obj, Mapping):
         return {k: _to_serializable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple)):
+    if isinstance(obj, (list, tuple, set, frozenset)):
         return [_to_serializable(v) for v in obj]
+    if isinstance(obj, (datetime.date, datetime.datetime)):
+        return obj.isoformat()
     return obj
 
 
