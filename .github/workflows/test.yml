@@ -30,7 +30,7 @@ jobs:
           python -m mypy .github/scripts/ --ignore-missing-imports
 
       - name: Lint workflows (actionlint)
-        run: actionlint .github/workflows/
+        run: actionlint .github/workflows/*.yml
 
       - name: Run tests
         run: pytest

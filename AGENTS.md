@@ -128,7 +128,7 @@ consume `okf-core`.
   # or without just:
   python -m ruff check .github/scripts/
   python -m mypy .github/scripts/ --ignore-missing-imports
-  actionlint .github/workflows/
+  actionlint .github/workflows/*.yml
   ```
   `ruff` checks Python style and common bugs in `.github/scripts/`; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[test]` deps and run in CI.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
@@ -136,5 +136,5 @@ consume `okf-core`.
   ```sh
   just ci
   # or without just:
-  black --check src tests && python -m ruff check .github/scripts/ && python -m mypy .github/scripts/ --ignore-missing-imports && actionlint .github/workflows/ && pytest
+  black --check src tests && python -m ruff check .github/scripts/ && python -m mypy .github/scripts/ --ignore-missing-imports && actionlint .github/workflows/*.yml && pytest
   ```
