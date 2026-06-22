@@ -230,6 +230,71 @@ workflow agent using its own model access. It receives the absolute subdirectory
 path and should return a description string or `None`.  `okf-core` itself never
 makes model API calls.
 
+### CLI
+
+Install the package to register the `okf` command:
+
+```sh
+pip install -e .
+```
+
+All commands load `okf-core.toml` by searching upward from the current working
+directory. Use `--config PATH` to specify a config file explicitly and
+`--bundle NAME` to select a named bundle (default: `default`).
+
+Commands emit machine-readable JSON on stdout and a one-line human-readable
+summary on stderr. Exit codes: `0` success, `1` errors or validation failures,
+`2` config or usage error.
+
+#### `okf scan`
+
+Scans a bundle and emits a manifest:
+
+```sh
+okf scan [--config PATH] [--bundle NAME]
+```
+
+Output: `{"bundle": "...", "concepts": [...], "problems": [...]}`
+
+Each concept entry includes `concept_id`, `path`, `size`, `sha256`, and
+`frontmatter`. Scan problems (parse errors, etc.) are non-fatal and appear in
+`problems` with `path`, `kind`, and `message` fields; exit code is always `0`.
+
+#### `okf validate`
+
+Validates all concept documents against the configured profile:
+
+```sh
+okf validate [--config PATH] [--bundle NAME]
+```
+
+Output: `{"bundle": "...", "findings": {"path": [{"severity": "...", "message": "...", "field": "..."}]}}`
+
+Only paths with findings appear as keys. Exits `1` if any error-severity
+findings are present; exits `0` if there are only warnings or no findings.
+
+#### `okf index`
+
+Generates `index.md` for a directory within a bundle:
+
+```sh
+okf index [--config PATH] [--bundle NAME] [--directory PATH]
+```
+
+`--directory` defaults to the bundle root. Scans the bundle, collects concepts
+and immediate subdirectories for the target directory, calls `generate_index()`,
+and writes `index.md` to that directory.
+
+Output: `{"path": "...", "entries": N, "problems": [...], "scan_problems": [...]}`
+
+`entries` is the number of entries actually written (candidates minus skipped).
+`problems` lists index-level skipped entries (e.g. missing `type` field).
+`scan_problems` lists parse/read failures for files in the target directory that
+were silently omitted from the index.
+
+Exits `1` if any entries were skipped or any scan problems occurred in the target
+directory; exits `0` on clean generation.
+
 ## Planned Operations
 
 The planned library and CLI surface is grouped around deterministic operations.

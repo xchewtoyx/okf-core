@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from hashlib import sha256
@@ -150,4 +151,6 @@ def _freeze_value(value: Any) -> Any:
         return tuple(_freeze_value(item) for item in value)
     if isinstance(value, set):
         return frozenset(_freeze_value(item) for item in value)
+    if isinstance(value, (datetime.date, datetime.datetime)):
+        return value.isoformat()
     return value
