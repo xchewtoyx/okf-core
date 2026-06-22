@@ -30,6 +30,7 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 PACKAGE_NAME = "okf-core"
+_PACKAGE_PREFIX = PACKAGE_NAME.replace("-", "_").lower()
 
 
 def _api(path: str, token: str) -> object:
@@ -39,6 +40,7 @@ def _api(path: str, token: str) -> object:
             "Authorization": f"Bearer {token}",
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
+            "User-Agent": "okf-core/gen_index.py",
         },
     )
     with urlopen(req, timeout=30) as resp:
@@ -79,7 +81,10 @@ def _sha256(path: Path) -> str:
 
 
 def _is_package_asset(name: str) -> bool:
-    return name.endswith(".whl") or name.endswith(".tar.gz")
+    normalized = name.lower().replace("-", "_")
+    return normalized.startswith(_PACKAGE_PREFIX) and (
+        name.endswith(".whl") or name.endswith(".tar.gz")
+    )
 
 
 def _root_index_html() -> str:
