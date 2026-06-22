@@ -1,4 +1,4 @@
-"""Tests for .github/scripts/gen_index.py pure helper functions."""
+"""Tests for .github/scripts/gen_index.py — helper functions and main() integration."""
 
 from __future__ import annotations
 
