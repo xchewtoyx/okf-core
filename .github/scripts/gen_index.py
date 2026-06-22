@@ -65,7 +65,10 @@ def _load_stored_hashes(repo: str, token: str) -> dict[str, str]:
     try:
         data = _api(f"/repos/{repo}/contents/hashes.json?ref=gh-pages", token)
         content = base64.b64decode(data["content"]).decode("utf-8")
-        return json.loads(content)
+        stored = json.loads(content)
+        if not isinstance(stored, dict):
+            raise RuntimeError(f"hashes.json is not a JSON object: {stored!r}")
+        return stored
     except HTTPError as exc:
         if exc.code == 404:
             return {}
@@ -157,6 +160,7 @@ def main(dist_dir: str, output_dir: str) -> None:
     simple = out / "simple"
     pkg = simple / PACKAGE_NAME
     pkg.mkdir(parents=True, exist_ok=True)
+    (out / ".nojekyll").touch()
 
     (simple / "index.html").write_text(_root_index_html(), encoding="utf-8")
     (pkg / "index.html").write_text(_package_index_html(links), encoding="utf-8")
