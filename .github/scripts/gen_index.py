@@ -13,7 +13,7 @@ without a sha256 fragment, which is valid per PEP 503.
 
 Environment variables (GH_TOKEN or GITHUB_TOKEN must be set):
   GH_TOKEN      - GitHub token with contents:read permission (takes precedence)
-  GITHUB_TOKEN  - fallback if GH_TOKEN is unset (set automatically in GitHub Actions)
+  GITHUB_TOKEN  - fallback if GH_TOKEN is unset
   GH_REPO       - owner/repo slug (e.g. xchewtoyx/okf-core)
 """
 
@@ -116,8 +116,12 @@ def _package_index_html(links: list[tuple[str, str, str]]) -> str:
 
 
 def main(dist_dir: str, output_dir: str) -> None:
-    token = os.environ.get("GH_TOKEN") or os.environ["GITHUB_TOKEN"]
-    repo = os.environ["GH_REPO"]
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN")
+    if not token:
+        sys.exit("Error: GH_TOKEN or GITHUB_TOKEN environment variable must be set")
+    repo = os.environ.get("GH_REPO")
+    if not repo:
+        sys.exit("Error: GH_REPO environment variable must be set")
 
     dist = Path(dist_dir)
     out = Path(output_dir)
