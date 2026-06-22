@@ -175,6 +175,23 @@ def test_scan_bundle_deduplicates_repeated_include_matches(tmp_path: Path) -> No
     assert [entry.concept_id for entry in manifest.concepts] == ["topic"]
 
 
+def test_scan_bundle_normalizes_date_frontmatter_to_iso_string(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    path = root / "dated.md"
+    path.parent.mkdir(parents=True)
+    # PyYAML parses bare YYYY-MM-DD values as datetime.date; _freeze_value must
+    # convert them to ISO-8601 strings so callers never receive raw date objects.
+    path.write_text(
+        "---\ntype: concept\ntitle: Dated\ntimestamp: 2024-01-01\n---\nBody\n",
+        encoding="utf-8",
+    )
+
+    entry = scan_bundle(_bundle("docs", root)).concepts[0]
+
+    assert entry.frontmatter["timestamp"] == "2024-01-01"
+    assert isinstance(entry.frontmatter["timestamp"], str)
+
+
 def test_scan_bundle_returns_empty_manifest_for_missing_bundle_root(
     tmp_path: Path,
 ) -> None:
