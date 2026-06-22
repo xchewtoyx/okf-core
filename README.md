@@ -23,11 +23,12 @@ The target pattern is semi-opaque:
 
 ## Status
 
-This repository is in early MVP development. Configuration loading, concept
-document parsing, configurable concept ID/path resolution, bundle manifest
-scanning, and index file parsing and generation are implemented; the other OKF
-operations described below are the planned public shape of the project and are
-not implemented yet.
+v0.1.0 is released. Configuration loading, concept document parsing,
+configurable concept ID/path resolution, bundle manifest scanning, index file
+parsing and generation, base and profile-based validation, and the `okf` CLI
+(scan, validate, index) are all implemented. The operations described under
+"Planned Operations" below are the intended shape of future releases and are not
+yet implemented.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
