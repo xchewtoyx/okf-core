@@ -15,6 +15,9 @@ Environment variables (GH_TOKEN or GITHUB_TOKEN must be set):
   GH_TOKEN      - GitHub token with contents:read permission (takes precedence)
   GITHUB_TOKEN  - fallback if GH_TOKEN is unset
   GH_REPO       - owner/repo slug (e.g. xchewtoyx/okf-core)
+
+Dependencies: stdlib + packaging (available as a transitive dep of build and pip;
+always present in the workflow environment after `pip install build`).
 """
 
 from __future__ import annotations
