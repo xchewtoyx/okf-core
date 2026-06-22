@@ -12,7 +12,7 @@ hash is not yet known (e.g. releases that predate this workflow) are linked
 without a sha256 fragment, which is valid per PEP 503.
 
 Required environment variables:
-  GITHUB_TOKEN  - token with contents:read permission
+  GH_TOKEN      - token with contents:read permission (GITHUB_TOKEN accepted as fallback)
   GH_REPO       - owner/repo slug (e.g. xchewtoyx/okf-core)
 """
 
@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import html
 import json
 import os
 import sys
@@ -48,6 +49,8 @@ def _get_all_releases(repo: str, token: str) -> list[dict]:
     page = 1
     while True:
         batch = _api(f"/repos/{repo}/releases?per_page=100&page={page}", token)
+        if not isinstance(batch, list):
+            raise RuntimeError(f"Unexpected API response (expected list): {batch!r}")
         releases.extend(batch)
         if len(batch) < 100:
             break
@@ -92,7 +95,7 @@ def _package_index_html(links: list[tuple[str, str, str]]) -> str:
         return f"{url}#sha256={sha256}" if sha256 else url
 
     entries = "\n".join(
-        f'    <a href="{_href(url, sha256)}">{name}</a>'
+        f'    <a href="{html.escape(_href(url, sha256))}">{html.escape(name)}</a>'
         for name, url, sha256 in sorted(links)
     )
     return (
@@ -108,7 +111,7 @@ def _package_index_html(links: list[tuple[str, str, str]]) -> str:
 
 
 def main(dist_dir: str, output_dir: str) -> None:
-    token = os.environ["GITHUB_TOKEN"]
+    token = os.environ.get("GH_TOKEN") or os.environ["GITHUB_TOKEN"]
     repo = os.environ["GH_REPO"]
 
     dist = Path(dist_dir)
