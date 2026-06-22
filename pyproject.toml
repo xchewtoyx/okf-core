@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "okf-core"
-version = "0.0.0"
+version = "0.1.0"
 description = "Reusable Python toolkit for working with Open Knowledge Format bundles."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ authors = [
   { name = "Russell Heilling", email = "russell@linx.net" },
 ]
 classifiers = [
-  "Development Status :: 1 - Planning",
+  "Development Status :: 3 - Alpha",
   "Intended Audience :: Developers",
   "License :: OSI Approved :: Apache Software License",
   "Programming Language :: Python :: 3",
