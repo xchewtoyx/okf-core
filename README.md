@@ -35,6 +35,32 @@ request. Documentation must distinguish implemented behavior from planned
 behavior, and README edits should be reviewed as a whole after patching so the
 document stays internally consistent.
 
+## Installation
+
+`okf-core` is distributed via a self-hosted PEP 503 simple index on GitHub
+Pages. It is not published on PyPI.
+
+**pip:**
+
+```sh
+pip install okf-core --index-url https://xchewtoyx.github.io/okf-core/simple/
+```
+
+**uv** (`pyproject.toml`):
+
+```toml
+[[tool.uv.index]]
+url = "https://xchewtoyx.github.io/okf-core/simple/"
+```
+
+Then add `okf-core` to your dependencies as usual.
+
+**Development install** (from a local clone):
+
+```sh
+python -m pip install -e ".[test]"
+```
+
 ## Current Capabilities
 
 `okf-core` currently provides an installable Python package with typed project
@@ -57,12 +83,6 @@ config = load_config()
 document = parse_concept_document("---\ntype: concept\n---\nBody\n")
 path = concept_id_to_path("topics/example", config.bundles["default"])
 manifest = scan_bundle(config.bundles["default"])
-```
-
-Install the package for local development and tests with:
-
-```sh
-python -m pip install -e ".[test]"
 ```
 
 Run the test suite with:
