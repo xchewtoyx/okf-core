@@ -86,9 +86,13 @@ def _sha256(path: Path) -> str:
 
 def _is_package_asset(name: str) -> bool:
     normalized = name.lower().replace("-", "_")
-    return normalized.startswith(_PACKAGE_PREFIX + "_") and (
-        normalized.endswith(".whl") or normalized.endswith(".tar.gz")
-    )
+    if not (normalized.endswith(".whl") or normalized.endswith(".tar.gz")):
+        return False
+    parts = normalized.split("_")
+    for i, part in enumerate(parts):
+        if i > 0 and part and part[0].isdigit():
+            return "_".join(parts[:i]) == _PACKAGE_PREFIX
+    return False
 
 
 def _root_index_html() -> str:
