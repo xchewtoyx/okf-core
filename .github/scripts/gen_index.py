@@ -153,7 +153,7 @@ def main(dist_dir: str, output_dir: str) -> None:
             name = asset["name"]
             if not _is_package_asset(name):
                 continue
-            url = f"https://github.com/{repo}/releases/download/{tag}/{name}"
+            url = asset["browser_download_url"]
             links.append((name, url, hashes.get(name, "")))
 
     # Write output
