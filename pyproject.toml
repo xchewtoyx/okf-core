@@ -36,6 +36,9 @@ test = [
   "pytest-cov",
   "coverage",
   "black >= 24, < 27",
+  "ruff",
+  "mypy",
+  "actionlint-py",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -122,9 +122,19 @@ consume `okf-core`.
   # or without just:
   black src tests
   ```
-- Use `just ci` to run the full check + test suite that mirrors what CI requires:
+- **Static Analysis**: Before pushing or requesting automated code review, run the full lint suite to preempt mechanical findings:
+  ```sh
+  just lint
+  # or without just:
+  python -m ruff check .github/scripts/
+  python -m mypy .github/scripts/ --ignore-missing-imports
+  actionlint .github/workflows/
+  ```
+  `ruff` checks Python style and common bugs in `.github/scripts/`; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[test]` deps and run in CI.
+- **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
+- Use `just ci` to run the full check + lint + test suite that mirrors what CI requires:
   ```sh
   just ci
   # or without just:
-  black --check src tests && pytest
+  black --check src tests && python -m ruff check .github/scripts/ && python -m mypy .github/scripts/ --ignore-missing-imports && actionlint .github/workflows/ && pytest
   ```
