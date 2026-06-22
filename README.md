@@ -258,7 +258,7 @@ Output: `{"bundle": "...", "concepts": [...], "problems": [...]}`
 
 Each concept entry includes `concept_id`, `path`, `size`, `sha256`, and
 `frontmatter`. Scan problems (parse errors, etc.) are non-fatal and appear in
-`problems`; exit code is always `0`.
+`problems` with `path`, `kind`, and `message` fields; exit code is always `0`.
 
 #### `okf validate`
 
@@ -285,10 +285,15 @@ okf index [--config PATH] [--bundle NAME] [--directory PATH]
 and immediate subdirectories for the target directory, calls `generate_index()`,
 and writes `index.md` to that directory.
 
-Output: `{"path": "...", "entries": N, "problems": [...]}`
+Output: `{"path": "...", "entries": N, "problems": [...], "scan_problems": [...]}`
 
-Exits `1` if any entries were skipped due to problems (e.g. missing `type`
-field); exits `0` on clean generation.
+`entries` is the number of entries actually written (candidates minus skipped).
+`problems` lists index-level skipped entries (e.g. missing `type` field).
+`scan_problems` lists parse/read failures for files in the target directory that
+were silently omitted from the index.
+
+Exits `1` if any entries were skipped or any scan problems occurred in the target
+directory; exits `0` on clean generation.
 
 ## Planned Operations
 

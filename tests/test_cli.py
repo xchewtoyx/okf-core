@@ -327,6 +327,44 @@ def test_index_skipped_entries_exit_1(tmp_path: Path) -> None:
     assert len(data["problems"]) == 1
 
 
+def test_index_entries_count_excludes_skipped(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "valid.md", title="Valid")
+    (tmp_path / "no_type.md").write_text(
+        "---\ntitle: No Type\n---\nBody\n", encoding="utf-8"
+    )
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    data = json.loads(result.stdout)
+    assert data["entries"] == 1
+    assert len(data["problems"]) == 1
+
+
+def test_index_scan_problems_exit_1(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "valid.md", title="Valid")
+    (tmp_path / "broken.md").write_text(
+        "---\ntype: [invalid\n---\nBody\n", encoding="utf-8"
+    )
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    data = json.loads(result.stdout)
+    assert data["entries"] == 1
+    assert data["problems"] == []
+    assert len(data["scan_problems"]) == 1
+    assert "broken.md" in data["scan_problems"][0]["path"]
+
+
 def test_index_directory_option_generates_for_subdirectory(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(

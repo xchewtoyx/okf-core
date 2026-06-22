@@ -85,7 +85,8 @@ def scan(config_path: str | None, bundle_name: str) -> None:
             for c in manifest.concepts
         ],
         "problems": [
-            {"path": str(p.path), "message": p.message} for p in manifest.problems
+            {"path": str(p.path), "kind": p.kind, "message": p.message}
+            for p in manifest.problems
         ],
     }
     click.echo(json.dumps(result, indent=2))
@@ -191,7 +192,17 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
         except ValueError:
             pass
 
+    scan_problems_in_dir = []
+    for p in manifest.problems:
+        try:
+            p.path.relative_to(target_dir)
+            scan_problems_in_dir.append(p)
+        except ValueError:
+            pass
+
     generated = generate_index(target_dir, direct_entries, sorted(subdirs))
+
+    entries_written = len(direct_entries) - len(generated.problems)
 
     index_path = target_dir / "index.md"
     index_path.parent.mkdir(parents=True, exist_ok=True)
@@ -199,17 +210,22 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
 
     result = {
         "path": str(index_path),
-        "entries": len(direct_entries),
+        "entries": entries_written,
         "problems": [
             {"concept_id": p.concept_id, "message": p.message}
             for p in generated.problems
+        ],
+        "scan_problems": [
+            {"path": str(p.path), "kind": p.kind, "message": p.message}
+            for p in scan_problems_in_dir
         ],
     }
     click.echo(json.dumps(result, indent=2))
     click.echo(
         f"Wrote index.md for bundle {bundle.name!r}: "
-        f"{len(direct_entries)} entries, {len(generated.problems)} skipped",
+        f"{entries_written} entries, {len(generated.problems)} skipped, "
+        f"{len(scan_problems_in_dir)} scan errors",
         err=True,
     )
-    if generated.problems:
+    if generated.problems or scan_problems_in_dir:
         sys.exit(1)
