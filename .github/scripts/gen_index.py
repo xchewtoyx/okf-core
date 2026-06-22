@@ -26,6 +26,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
@@ -33,7 +34,7 @@ PACKAGE_NAME = "okf-core"
 _PACKAGE_PREFIX = PACKAGE_NAME.replace("-", "_").lower()
 
 
-def _api(path: str, token: str) -> object:
+def _api(path: str, token: str) -> Any:
     req = Request(
         f"https://api.github.com{path}",
         headers={
@@ -148,7 +149,6 @@ def main(dist_dir: str, output_dir: str) -> None:
     for release in _get_all_releases(repo, token):
         if release.get("draft") or release.get("prerelease"):
             continue
-        tag = release["tag_name"]
         for asset in release.get("assets", []):
             name = asset["name"]
             if not _is_package_asset(name):
