@@ -276,13 +276,23 @@ def test_main_skips_prerelease_and_draft(tmp_path: Path) -> None:
                 "draft": True,
                 "prerelease": False,
                 "tag_name": "v0.1.0-draft",
-                "assets": [{"name": "okf_core-0.1.0-py3-none-any.whl", "browser_download_url": "https://example.com/d.whl"}],
+                "assets": [
+                    {
+                        "name": "okf_core-0.1.0-py3-none-any.whl",
+                        "browser_download_url": "https://example.com/d.whl",
+                    }
+                ],
             },
             {
                 "draft": False,
                 "prerelease": True,
                 "tag_name": "v0.2.0a1",
-                "assets": [{"name": "okf_core-0.2.0a1-py3-none-any.whl", "browser_download_url": "https://example.com/p.whl"}],
+                "assets": [
+                    {
+                        "name": "okf_core-0.2.0a1-py3-none-any.whl",
+                        "browser_download_url": "https://example.com/p.whl",
+                    }
+                ],
             },
         ]
 
