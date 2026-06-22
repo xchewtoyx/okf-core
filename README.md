@@ -43,7 +43,7 @@ Pages. It is not published on PyPI.
 **pip:**
 
 ```sh
-pip install okf-core --index-url https://xchewtoyx.github.io/okf-core/simple/
+pip install okf-core --extra-index-url https://xchewtoyx.github.io/okf-core/simple/
 ```
 
 **uv** (`pyproject.toml`):

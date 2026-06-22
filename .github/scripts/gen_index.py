@@ -30,8 +30,10 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
+
 PACKAGE_NAME = "okf-core"
-_PACKAGE_PREFIX = PACKAGE_NAME.replace("-", "_").lower()
+_CANONICAL_NAME = canonicalize_name(PACKAGE_NAME)
 
 
 def _api(path: str, token: str) -> Any:
@@ -85,14 +87,17 @@ def _sha256(path: Path) -> str:
 
 
 def _is_package_asset(name: str) -> bool:
-    normalized = name.lower().replace("-", "_")
-    if not (normalized.endswith(".whl") or normalized.endswith(".tar.gz")):
+    lower = name.lower()
+    try:
+        if lower.endswith(".whl"):
+            dist, *_ = parse_wheel_filename(lower)
+        elif lower.endswith(".tar.gz"):
+            dist, _ = parse_sdist_filename(lower)
+        else:
+            return False
+        return canonicalize_name(dist) == _CANONICAL_NAME
+    except Exception:
         return False
-    parts = normalized.split("_")
-    for i, part in enumerate(parts):
-        if i > 0 and part and part[0].isdigit():
-            return "_".join(parts[:i]) == _PACKAGE_PREFIX
-    return False
 
 
 def _root_index_html() -> str:
