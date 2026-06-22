@@ -11,8 +11,9 @@ artifacts from previous runs rely on the stored hashes.json. Artifacts whose
 hash is not yet known (e.g. releases that predate this workflow) are linked
 without a sha256 fragment, which is valid per PEP 503.
 
-Required environment variables:
-  GH_TOKEN      - token with contents:read permission (GITHUB_TOKEN accepted as fallback)
+Environment variables (GH_TOKEN or GITHUB_TOKEN must be set):
+  GH_TOKEN      - GitHub token with contents:read permission (takes precedence)
+  GITHUB_TOKEN  - fallback if GH_TOKEN is unset (set automatically in GitHub Actions)
   GH_REPO       - owner/repo slug (e.g. xchewtoyx/okf-core)
 """
 
@@ -40,7 +41,7 @@ def _api(path: str, token: str) -> object:
             "X-GitHub-Api-Version": "2022-11-28",
         },
     )
-    with urlopen(req) as resp:
+    with urlopen(req, timeout=30) as resp:
         return json.loads(resp.read())
 
 
@@ -70,7 +71,11 @@ def _load_stored_hashes(repo: str, token: str) -> dict[str, str]:
 
 
 def _sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _is_package_asset(name: str) -> bool:
