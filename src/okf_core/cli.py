@@ -82,8 +82,7 @@ def scan(config_path: str | None, bundle_name: str) -> None:
             for c in manifest.concepts
         ],
         "problems": [
-            {"path": str(p.path), "message": p.message}
-            for p in manifest.problems
+            {"path": str(p.path), "message": p.message} for p in manifest.problems
         ],
     }
     click.echo(json.dumps(result, indent=2))
@@ -160,12 +159,12 @@ def validate(config_path: str | None, bundle_name: str) -> None:
     metavar="PATH",
     help="Directory to generate index for (default: bundle root).",
 )
-def index_cmd(
-    config_path: str | None, bundle_name: str, directory: str | None
-) -> None:
+def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) -> None:
     """Generate index.md for a bundle directory."""
     _, bundle = _load(config_path, bundle_name)
-    target_dir = Path(directory).resolve() if directory is not None else bundle.bundle_root
+    target_dir = (
+        Path(directory).resolve() if directory is not None else bundle.bundle_root
+    )
 
     try:
         target_dir.relative_to(bundle.bundle_root)
@@ -178,9 +177,7 @@ def index_cmd(
 
     manifest = scan_bundle(bundle)
 
-    direct_entries = [
-        c for c in manifest.concepts if c.path.parent == target_dir
-    ]
+    direct_entries = [c for c in manifest.concepts if c.path.parent == target_dir]
 
     subdirs: set[Path] = set()
     for c in manifest.concepts:
