@@ -135,6 +135,17 @@ def test_package_index_html_sorted() -> None:
     assert pos_0_1 < pos_0_2
 
 
+def test_package_index_html_sorted_by_pep440_version() -> None:
+    # 0.9.0 < 0.10.0 by PEP 440 but "0.10.0" < "0.9.0" lexicographically
+    links = [
+        ("okf_core-0.10.0-py3-none-any.whl", "https://example.com/c.whl", ""),
+        ("okf_core-0.9.0-py3-none-any.whl", "https://example.com/b.whl", ""),
+        ("okf_core-0.1.0-py3-none-any.whl", "https://example.com/a.whl", ""),
+    ]
+    html = gen_index._package_index_html(links)
+    assert html.index("0.1.0") < html.index("0.9.0") < html.index("0.10.0")
+
+
 # ---------------------------------------------------------------------------
 # _get_all_releases (patch.object to avoid real network calls)
 # ---------------------------------------------------------------------------

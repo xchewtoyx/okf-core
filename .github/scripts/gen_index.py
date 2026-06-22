@@ -40,6 +40,7 @@ from packaging.utils import (
     parse_sdist_filename,
     parse_wheel_filename,
 )
+from packaging.version import Version
 
 PACKAGE_NAME = "okf-core"
 _CANONICAL_NAME = canonicalize_name(PACKAGE_NAME)
@@ -122,13 +123,27 @@ def _root_index_html() -> str:
     )
 
 
+def _asset_version(name: str) -> Version:
+    lower = name.lower()
+    try:
+        if lower.endswith(".whl"):
+            _, ver, *_ = parse_wheel_filename(lower)
+            return ver
+        if lower.endswith(".tar.gz"):
+            _, ver = parse_sdist_filename(lower)
+            return ver
+    except (InvalidWheelFilename, InvalidSdistFilename):
+        pass
+    return Version("0")
+
+
 def _package_index_html(links: list[tuple[str, str, str]]) -> str:
     def _href(url: str, sha256: str) -> str:
         return f"{url}#sha256={sha256}" if sha256 else url
 
     entries = "\n".join(
         f'    <a href="{html.escape(_href(url, sha256))}">{html.escape(name)}</a>'
-        for name, url, sha256 in sorted(links)
+        for name, url, sha256 in sorted(links, key=lambda t: (_asset_version(t[0]), t[0]))
     )
     return (
         "<!DOCTYPE html>\n"
