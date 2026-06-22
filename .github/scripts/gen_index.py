@@ -33,7 +33,13 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from packaging.utils import canonicalize_name, parse_sdist_filename, parse_wheel_filename
+from packaging.utils import (
+    InvalidSdistFilename,
+    InvalidWheelFilename,
+    canonicalize_name,
+    parse_sdist_filename,
+    parse_wheel_filename,
+)
 
 PACKAGE_NAME = "okf-core"
 _CANONICAL_NAME = canonicalize_name(PACKAGE_NAME)
@@ -98,9 +104,9 @@ def _is_package_asset(name: str) -> bool:
             dist, _ = parse_sdist_filename(lower)
         else:
             return False
-        return canonicalize_name(dist) == _CANONICAL_NAME
-    except Exception:
+    except (InvalidWheelFilename, InvalidSdistFilename):
         return False
+    return dist == _CANONICAL_NAME
 
 
 def _root_index_html() -> str:

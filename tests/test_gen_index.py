@@ -6,6 +6,7 @@ import base64
 import hashlib
 import importlib.util
 import json
+import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
@@ -196,6 +197,15 @@ def test_load_stored_hashes_raises_on_non_dict() -> None:
             gen_index._load_stored_hashes("owner/repo", "tok")
 
 
+def test_load_stored_hashes_reraises_non_404_http_error() -> None:
+    def raise_500(path: str, token: str) -> Any:
+        raise HTTPError(url="", code=500, msg="Server Error", hdrs=None, fp=None)  # type: ignore[arg-type]
+
+    with patch.object(gen_index, "_api", raise_500):
+        with pytest.raises(HTTPError):
+            gen_index._load_stored_hashes("owner/repo", "tok")
+
+
 # ---------------------------------------------------------------------------
 # main (integration — no network)
 # ---------------------------------------------------------------------------
@@ -225,8 +235,6 @@ def test_main_writes_index_files(tmp_path: Path) -> None:
             }
         ]
 
-    import os
-
     with patch.object(gen_index, "_api", fake_api):
         env = {"GH_TOKEN": "fake", "GH_REPO": "owner/repo"}
         with patch.dict(os.environ, env):
@@ -239,3 +247,48 @@ def test_main_writes_index_files(tmp_path: Path) -> None:
     assert "#sha256=" in pkg_index
     hashes = json.loads((out / "hashes.json").read_text())
     assert "okf_core-0.1.0-py3-none-any.whl" in hashes
+
+
+def test_main_exits_when_token_missing(tmp_path: Path) -> None:
+    env = {"GH_REPO": "owner/repo"}
+    with patch.dict(os.environ, env, clear=True):
+        with pytest.raises(SystemExit):
+            gen_index.main(str(tmp_path), str(tmp_path / "out"))
+
+
+def test_main_exits_when_repo_missing(tmp_path: Path) -> None:
+    env = {"GH_TOKEN": "fake"}
+    with patch.dict(os.environ, env, clear=True):
+        with pytest.raises(SystemExit):
+            gen_index.main(str(tmp_path), str(tmp_path / "out"))
+
+
+def test_main_skips_prerelease_and_draft(tmp_path: Path) -> None:
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    out = tmp_path / "pages"
+
+    def fake_api(path: str, token: str) -> Any:
+        if "contents/hashes.json" in path:
+            raise HTTPError(url="", code=404, msg="Not Found", hdrs=None, fp=None)  # type: ignore[arg-type]
+        return [
+            {
+                "draft": True,
+                "prerelease": False,
+                "tag_name": "v0.1.0-draft",
+                "assets": [{"name": "okf_core-0.1.0-py3-none-any.whl", "browser_download_url": "https://example.com/d.whl"}],
+            },
+            {
+                "draft": False,
+                "prerelease": True,
+                "tag_name": "v0.2.0a1",
+                "assets": [{"name": "okf_core-0.2.0a1-py3-none-any.whl", "browser_download_url": "https://example.com/p.whl"}],
+            },
+        ]
+
+    with patch.object(gen_index, "_api", fake_api):
+        with patch.dict(os.environ, {"GH_TOKEN": "fake", "GH_REPO": "owner/repo"}):
+            gen_index.main(str(dist), str(out))
+
+    pkg_index = (out / "simple" / "okf-core" / "index.html").read_text()
+    assert "<a " not in pkg_index
