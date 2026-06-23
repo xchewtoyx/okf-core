@@ -57,6 +57,12 @@ from okf_core.listing import (
     ListingProblem,
     list_concepts,
 )
+from okf_core.context import (
+    ContextEntry,
+    ContextPack,
+    ContextPackProblem,
+    build_context_pack,
+)
 from okf_core.validation import validate_bundle
 
 __version__ = "0.1.1"
@@ -73,6 +79,9 @@ __all__ = [
     "ConceptPathError",
     "BundleGraph",
     "ConceptLink",
+    "ContextEntry",
+    "ContextPack",
+    "ContextPackProblem",
     "DocumentParseError",
     "GraphProblem",
     "MarkdownLink",
@@ -90,6 +99,7 @@ __all__ = [
     "ParsedIndex",
     "backlinks_to",
     "build_bundle_graph",
+    "build_context_pack",
     "discover_config",
     "extract_markdown_links",
     "generate_index",
