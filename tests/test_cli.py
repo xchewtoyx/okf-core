@@ -35,6 +35,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "validate" in result.stdout
     assert "index" in result.stdout
     assert "graph" in result.stdout
+    assert "list-concepts" in result.stdout
 
 
 def test_scan_help_exits_zero() -> None:
@@ -43,6 +44,10 @@ def test_scan_help_exits_zero() -> None:
 
 def test_validate_help_exits_zero() -> None:
     assert _runner().invoke(cli, ["validate", "--help"]).exit_code == 0
+
+
+def test_list_concepts_help_exits_zero() -> None:
+    assert _runner().invoke(cli, ["list-concepts", "--help"]).exit_code == 0
 
 
 def test_index_help_exits_zero() -> None:
@@ -274,6 +279,88 @@ def test_validate_config_error_exits_2(tmp_path: Path) -> None:
     config_path.write_text("[defaults]\nunknown = true\n", encoding="utf-8")
 
     result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+
+    assert result.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# okf list-concepts
+# ---------------------------------------------------------------------------
+
+
+def test_list_concepts_emits_seed_discovery_json(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[defaults]
+bundle_root = "{tmp_path}"
+listing_fields = ["activity"]
+""".strip(),
+        encoding="utf-8",
+    )
+    (tmp_path / "triage.md").write_text(
+        "---\ntype: Playbook\ntitle: Triage\nactivity: [debug, repair]\n---\nBody\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["list-concepts", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["bundle"] == "default"
+    assert data["concepts"][0]["concept_id"] == "triage"
+    assert data["concepts"][0]["type"] == "Playbook"
+    assert data["concepts"][0]["fields"] == {"activity": ["debug", "repair"]}
+    assert data["concepts"][0]["frontmatter"]["activity"] == ["debug", "repair"]
+    assert data["concepts"][0]["outbound_link_count"] is None
+    assert data["problems"] == []
+
+
+def test_list_concepts_reports_invalid_types_without_failing(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "bad.md").write_text("---\ntitle: Bad\n---\nBody\n", encoding="utf-8")
+
+    result = _runner().invoke(cli, ["list-concepts", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concepts"] == []
+    assert data["problems"][0]["concept_id"] == "bad"
+    assert data["problems"][0]["kind"] == "missing-type"
+
+
+def test_list_concepts_with_graph_counts(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n",
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "b.md", title="B")
+
+    result = _runner().invoke(
+        cli, ["list-concepts", "--config", str(config_path), "--with-graph-counts"]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    by_id = {concept["concept_id"]: concept for concept in data["concepts"]}
+    assert by_id["a"]["outbound_link_count"] == 1
+    assert by_id["a"]["inbound_link_count"] == 0
+    assert by_id["b"]["outbound_link_count"] == 0
+    assert by_id["b"]["inbound_link_count"] == 1
+
+
+def test_list_concepts_config_error_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "bad.toml"
+    config_path.write_text("[defaults]\nunknown = true\n", encoding="utf-8")
+
+    result = _runner().invoke(cli, ["list-concepts", "--config", str(config_path)])
 
     assert result.exit_code == 2
 

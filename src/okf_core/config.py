@@ -52,6 +52,7 @@ class ProjectDefaults(BaseModel):
     reserved_filenames: tuple[str, ...] = ("index.md", "log.md")
     concept_path_strategy: str = "relative-path"
     index_cache: Path = Path(".okf-cache")
+    listing_fields: tuple[str, ...] = ()
 
 
 class BundleConfig(BaseModel):
@@ -66,6 +67,7 @@ class BundleConfig(BaseModel):
     reserved_filenames: tuple[str, ...]
     concept_path_strategy: str
     index_cache: Path
+    listing_fields: tuple[str, ...] = ()
     profile: str | None = None
 
     @field_validator("bundle_root", "index_cache", mode="after")
@@ -107,6 +109,7 @@ class ConfigOverrides(BaseModel):
     reserved_filenames: tuple[str, ...] | None = None
     concept_path_strategy: str | None = None
     index_cache: Path | None = None
+    listing_fields: tuple[str, ...] | None = None
 
 
 class _BundleInput(BaseModel):
@@ -118,6 +121,7 @@ class _BundleInput(BaseModel):
     reserved_filenames: tuple[str, ...] | None = None
     concept_path_strategy: str | None = None
     index_cache: Path | None = None
+    listing_fields: tuple[str, ...] | None = None
     profile: str | None = None
 
 
@@ -281,6 +285,7 @@ def _resolve_bundles(
                 reserved_filenames=defaults.reserved_filenames,
                 concept_path_strategy=defaults.concept_path_strategy,
                 index_cache=defaults.index_cache,
+                listing_fields=defaults.listing_fields,
             )
         }
 
@@ -327,6 +332,11 @@ def _resolve_bundle(
         raw_bundle.index_cache,
         defaults.index_cache,
     )
+    listing_fields = _select_config_value(
+        overrides.listing_fields,
+        raw_bundle.listing_fields,
+        defaults.listing_fields,
+    )
 
     return BundleConfig(
         name=name,
@@ -336,6 +346,7 @@ def _resolve_bundle(
         reserved_filenames=reserved_filenames,
         concept_path_strategy=concept_path_strategy,
         index_cache=_normalize_path(index_cache, project_root),
+        listing_fields=listing_fields,
         profile=raw_bundle.profile,
     )
 

@@ -16,6 +16,7 @@ from okf_core import (
     backlinks_to,
     build_bundle_graph,
     generate_index,
+    list_concepts,
     links_from,
     load_config,
     neighborhood,
@@ -142,6 +143,51 @@ def validate(config_path: str | None, bundle_name: str) -> None:
     )
     if error_count:
         sys.exit(1)
+
+
+@cli.command("list-concepts")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--with-graph-counts",
+    is_flag=True,
+    help="Include resolved inbound/outbound concept-link counts.",
+)
+def list_concepts_cmd(
+    config_path: str | None,
+    bundle_name: str,
+    with_graph_counts: bool,
+) -> None:
+    """List addressable concepts for seed discovery."""
+    _, bundle = _load(config_path, bundle_name)
+    manifest = scan_bundle(bundle)
+    graph = build_bundle_graph(bundle, manifest=manifest) if with_graph_counts else None
+    listing = list_concepts(bundle, manifest=manifest, graph=graph)
+
+    result = {
+        "bundle": listing.bundle_name,
+        "concepts": [_concept_listing_dict(concept) for concept in listing.concepts],
+        "problems": [_listing_problem_dict(problem) for problem in listing.problems],
+    }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(
+        f"Listed bundle {bundle.name!r}: {len(listing.concepts)} concepts, "
+        f"{len(listing.problems)} problems",
+        err=True,
+    )
 
 
 @cli.command("graph")
@@ -342,6 +388,29 @@ def _link_dict(link: Any) -> dict[str, Any]:
 
 
 def _graph_problem_dict(problem: Any) -> dict[str, Any]:
+    return {
+        "concept_id": problem.concept_id,
+        "path": str(problem.path),
+        "kind": problem.kind,
+        "message": problem.message,
+    }
+
+
+def _concept_listing_dict(concept: Any) -> dict[str, Any]:
+    return {
+        "concept_id": concept.concept_id,
+        "path": str(concept.path),
+        "type": concept.type,
+        "title": concept.title,
+        "description": concept.description,
+        "fields": concept.fields,
+        "frontmatter": concept.frontmatter,
+        "outbound_link_count": concept.outbound_link_count,
+        "inbound_link_count": concept.inbound_link_count,
+    }
+
+
+def _listing_problem_dict(problem: Any) -> dict[str, Any]:
     return {
         "concept_id": problem.concept_id,
         "path": str(problem.path),

@@ -250,6 +250,7 @@ include = ["topics/**/*.md"]        # Overridden (relative to bundle_root)
 reserved_filenames = ["home.md"]    # Overridden
 concept_path_strategy = "slug"      # Overridden
 index_cache = ".cache/product"      # Overridden
+listing_fields = ["activity"]       # Overridden
 # Note: exclude is inherited from [defaults]
 """.strip(),
         encoding="utf-8",
@@ -265,6 +266,26 @@ index_cache = ".cache/product"      # Overridden
     assert bundle.reserved_filenames == ("home.md",)
     assert bundle.concept_path_strategy == "slug"
     assert bundle.index_cache == tmp_path / ".cache" / "product"
+    assert bundle.listing_fields == ("activity",)
+
+
+def test_listing_fields_inherit_from_defaults(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+listing_fields = ["activity", "owner"]
+
+[bundles.docs]
+bundle_root = "docs"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path=config_path)
+
+    assert config.defaults.listing_fields == ("activity", "owner")
+    assert config.bundles["docs"].listing_fields == ("activity", "owner")
 
 
 def test_explicit_empty_bundle_values_are_honored_from_toml(tmp_path: Path) -> None:
@@ -274,11 +295,13 @@ def test_explicit_empty_bundle_values_are_honored_from_toml(tmp_path: Path) -> N
 [defaults]
 include = ["**/*.md"]
 reserved_filenames = ["index.md"]
+listing_fields = ["activity"]
 
 [bundles.docs]
 include = []
 exclude = []
 reserved_filenames = []
+listing_fields = []
 """.strip(),
         encoding="utf-8",
     )
@@ -289,6 +312,7 @@ reserved_filenames = []
     assert bundle.include == ()
     assert bundle.exclude == ()
     assert bundle.reserved_filenames == ()
+    assert bundle.listing_fields == ()
 
 
 @pytest.mark.parametrize(
@@ -335,6 +359,7 @@ exclude = ["file-exclude/**"]
 reserved_filenames = ["file.md"]
 concept_path_strategy = "file-strategy"
 index_cache = ".file-cache"
+listing_fields = ["file"]
 """.strip(),
         encoding="utf-8",
     )
@@ -348,6 +373,7 @@ index_cache = ".file-cache"
             reserved_filenames=("api.md",),
             concept_path_strategy="api-strategy",
             index_cache=Path(".api-cache"),
+            listing_fields=("api",),
         ),
     )
 
@@ -357,6 +383,7 @@ index_cache = ".file-cache"
     assert config.defaults.reserved_filenames == ("api.md",)
     assert config.defaults.concept_path_strategy == "api-strategy"
     assert config.defaults.index_cache == tmp_path / ".api-cache"
+    assert config.defaults.listing_fields == ("api",)
     assert config.bundles["default"].bundle_root == tmp_path / "from-api"
 
 
@@ -376,6 +403,7 @@ exclude = ["file-exclude/**"]
 reserved_filenames = ["file.md"]
 concept_path_strategy = "file-strategy"
 index_cache = ".file-cache"
+listing_fields = ["file"]
 """.strip(),
         encoding="utf-8",
     )
@@ -389,6 +417,7 @@ index_cache = ".file-cache"
             "reserved_filenames": ["api.md"],
             "concept_path_strategy": "api-strategy",
             "index_cache": ".api-cache",
+            "listing_fields": ["api"],
         },
     )
 
@@ -400,6 +429,7 @@ index_cache = ".file-cache"
     assert bundle.reserved_filenames == ("api.md",)
     assert bundle.concept_path_strategy == "api-strategy"
     assert bundle.index_cache == tmp_path / ".api-cache"
+    assert bundle.listing_fields == ("api",)
 
 
 def test_explicit_empty_bundle_values_are_honored_from_python_overrides(
@@ -411,23 +441,31 @@ def test_explicit_empty_bundle_values_are_honored_from_python_overrides(
 [defaults]
 include = ["**/*.md"]
 reserved_filenames = ["index.md"]
+listing_fields = ["activity"]
 
 [bundles.docs]
 include = ["file/**/*.md"]
 reserved_filenames = ["file.md"]
+listing_fields = ["owner"]
 """.strip(),
         encoding="utf-8",
     )
 
     config = load_config(
         config_path=config_path,
-        overrides={"include": [], "exclude": [], "reserved_filenames": []},
+        overrides={
+            "include": [],
+            "exclude": [],
+            "reserved_filenames": [],
+            "listing_fields": [],
+        },
     )
     bundle = config.bundles["docs"]
 
     assert bundle.include == ()
     assert bundle.exclude == ()
     assert bundle.reserved_filenames == ()
+    assert bundle.listing_fields == ()
 
 
 def test_missing_profile_reference_raises_config_error(tmp_path: Path) -> None:

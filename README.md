@@ -124,6 +124,7 @@ Supported `[defaults]` keys are:
 - `reserved_filenames`
 - `concept_path_strategy`
 - `index_cache`
+- `listing_fields`
 
 Supported `[taxonomy]` keys are `known_types` and `allowed_types`.
 
@@ -146,6 +147,7 @@ exclude = []
 reserved_filenames = ["index.md", "log.md"]
 concept_path_strategy = "relative-path"
 index_cache = ".okf-cache"
+listing_fields = []
 ```
 
 If no bundles are declared, `okf-core` exposes one resolved bundle named
@@ -209,6 +211,38 @@ hierarchy level.
 Malformed documents and other per-file scan failures are reported as structured
 manifest problems instead of aborting the full scan, allowing callers to inspect
 valid concepts and problems from the same scan result.
+
+### Bundle Listings
+
+`list_concepts()` returns a deterministic, machine-readable catalog of valid
+concept documents that callers can use for task-based seed discovery before
+building context packs. It is the structured counterpart to `index.md`
+progressive disclosure: `index.md` remains a human- and agent-readable browsing
+surface, while bundle listings expose concept IDs and frontmatter for filtering
+without requiring search infrastructure.
+
+Concept listing entries include the concept ID, path, non-empty string `type`,
+normalised `title` and `description` values, preserved full frontmatter, and a
+`fields` mapping containing any configured `listing_fields` that are present in
+frontmatter. Producer-defined fields such as `activity` are preserved and can be
+promoted through config, but they are not part of base OKF and are never
+required when no config is present. Unknown valid `type` values are accepted per
+OKF's permissive consumption model. Missing, blank, or non-string `type` values
+are reported as `ListingProblem` objects instead of silently omitted.
+
+Callers may pass an existing `BundleManifest` to avoid scanning twice. Callers
+may also pass a `BundleGraph` to populate resolved inbound and outbound link
+counts for discovery; otherwise link counts are `None`.
+
+```python
+from okf_core import list_concepts, load_config
+
+config = load_config()
+bundle = config.bundles["default"]
+listing = list_concepts(bundle)
+# listing.concepts  — seed candidates with concept IDs and frontmatter
+# listing.problems  — tuple of ListingProblem for skipped or malformed entries
+```
 
 ### Index Files
 
@@ -340,6 +374,22 @@ Output: `{"bundle": "...", "findings": {"path": [{"severity": "...", "message": 
 Only paths with findings appear as keys. Exits `1` if any error-severity
 findings are present; exits `0` if there are only warnings or no findings.
 
+#### `okf list-concepts`
+
+Lists addressable concept documents for seed discovery:
+
+```sh
+okf list-concepts [--config PATH] [--bundle NAME] [--with-graph-counts]
+```
+
+Output: `{"bundle": "...", "concepts": [...], "problems": [...]}`
+
+Each concept entry includes `concept_id`, `path`, `type`, `title`,
+`description`, promoted `fields`, preserved `frontmatter`, and optional
+`outbound_link_count` / `inbound_link_count`. Counts are `null` unless
+`--with-graph-counts` is supplied. Listing problems are non-fatal and include
+`concept_id`, `path`, `kind`, and `message`.
+
 #### `okf index`
 
 Generates `index.md` for a directory within a bundle:
@@ -398,7 +448,7 @@ No operation should require this package to own an LLM API token.
 
 - Build and refresh a local SQLite index.
 - Search title, description, frontmatter, and body text with lexical search.
-- Produce context packs from a query or seed concepts within a token budget.
+- Produce context packs from explicit seed concepts within a token budget.
 
 ### Write Operations
 
