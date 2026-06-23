@@ -109,8 +109,8 @@ def test_scan_date_frontmatter_serializes_to_json(tmp_path: Path) -> None:
     config_path.write_text(
         f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
     )
-    # PyYAML parses bare YYYY-MM-DD values as datetime.date, which json.dumps
-    # cannot serialize without help from _to_serializable.
+    # PyYAML parses bare YYYY-MM-DD values as datetime.date;
+    # _freeze_value converts them to ISO strings, verified here end-to-end.
     (tmp_path / "dated.md").write_text(
         "---\ntype: concept\ntitle: Dated\ntimestamp: 2024-01-01\n---\nBody\n",
         encoding="utf-8",

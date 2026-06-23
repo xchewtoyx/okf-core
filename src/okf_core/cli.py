@@ -20,15 +20,15 @@ from okf_core import (
 )
 
 
-def _to_serializable(obj: Any) -> Any:
-    """Recursively convert frozen manifest structures to JSON-serializable types."""
-    if isinstance(obj, Mapping):
-        return {k: _to_serializable(v) for k, v in obj.items()}
-    if isinstance(obj, (list, tuple, set, frozenset)):
-        return [_to_serializable(v) for v in obj]
-    if isinstance(obj, (datetime.date, datetime.datetime)):
-        return obj.isoformat()
-    return obj
+class _Encoder(json.JSONEncoder):
+    def default(self, obj: Any) -> Any:
+        if isinstance(obj, Mapping):
+            return dict(obj)
+        if isinstance(obj, (set, frozenset)):
+            return sorted(obj, key=str)
+        if isinstance(obj, (datetime.date, datetime.datetime)):
+            return obj.isoformat()
+        return super().default(obj)
 
 
 def _load(config_path: str | None, bundle_name: str) -> tuple[Any, Any]:
@@ -80,7 +80,7 @@ def scan(config_path: str | None, bundle_name: str) -> None:
                 "path": str(c.path),
                 "size": c.size,
                 "sha256": c.sha256,
-                "frontmatter": _to_serializable(c.frontmatter),
+                "frontmatter": c.frontmatter,
             }
             for c in manifest.concepts
         ],
@@ -89,7 +89,7 @@ def scan(config_path: str | None, bundle_name: str) -> None:
             for p in manifest.problems
         ],
     }
-    click.echo(json.dumps(result, indent=2))
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
     click.echo(
         f"Scanned bundle {bundle.name!r}: {len(manifest.concepts)} concepts, "
         f"{len(manifest.problems)} problems",
@@ -131,7 +131,7 @@ def validate(config_path: str | None, bundle_name: str) -> None:
             else:
                 warning_count += 1
     result: dict[str, Any] = {"bundle": bundle.name, "findings": findings_dict}
-    click.echo(json.dumps(result, indent=2))
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
     click.echo(
         f"Validated bundle {bundle.name!r}: {error_count} errors, {warning_count} warnings",
         err=True,
@@ -220,7 +220,7 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
             for p in scan_problems_in_dir
         ],
     }
-    click.echo(json.dumps(result, indent=2))
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
     click.echo(
         f"Wrote index.md for bundle {bundle.name!r}: "
         f"{entries_written} entries, {len(generated.problems)} skipped, "
