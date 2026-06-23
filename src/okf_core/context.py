@@ -148,6 +148,10 @@ def build_context_pack(
         distance, reason = discovered[concept_id]
         entry_meta = concept_index[concept_id]
 
+        if budget_exhausted:
+            omitted.append(concept_id)
+            continue
+
         try:
             content = entry_meta.path.read_text(encoding="utf-8")
         except OSError as exc:
@@ -164,9 +168,7 @@ def build_context_pack(
 
         char_count = len(content)
 
-        if budget_exhausted or (
-            budget_chars is not None and total_chars + char_count > budget_chars
-        ):
+        if budget_chars is not None and total_chars + char_count > budget_chars:
             omitted.append(concept_id)
             budget_exhausted = True
             continue

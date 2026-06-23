@@ -450,6 +450,13 @@ def test_parse_subdirectory_link() -> None:
     assert parsed.sections[0].entries[0].link == "sub/"
 
 
+def test_parse_entry_with_inline_code_title_round_trips() -> None:
+    content = "# Section\n\n* [`foo`](a.md)\n"
+    parsed = parse_index(content)
+    assert parsed.sections[0].entries[0].title == "`foo`"
+    assert parsed.sections[0].entries[0].link == "a.md"
+
+
 def test_parse_list_item_with_multiple_links_is_skipped() -> None:
     content = "# Section\n\n* [A](a.md) and [B](b.md)\n* [C](c.md)\n"
     parsed = parse_index(content)
