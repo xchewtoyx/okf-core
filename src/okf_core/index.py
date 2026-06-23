@@ -298,8 +298,10 @@ def _entry_from_inline_token(token: object) -> IndexEntry | None:
             title_parts.append(
                 f"`{child.content}`" if child.type == "code_inline" else child.content
             )
-        elif not in_link and href is not None and child.type == "text":
-            after_link.append(child.content)
+        elif not in_link and href is not None and child.type in ("text", "code_inline"):
+            after_link.append(
+                f"`{child.content}`" if child.type == "code_inline" else child.content
+            )
 
     if not href or not title_parts:
         return None
