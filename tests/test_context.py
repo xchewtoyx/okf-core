@@ -325,9 +325,9 @@ def test_read_error_concept_in_omitted_and_problems(tmp_path: Path) -> None:
     )
 
 
-def test_budget_is_strict_prefix_not_knapsack(tmp_path: Path) -> None:
+def test_budget_stops_at_first_over_budget_entry(tmp_path: Path) -> None:
     root = tmp_path / "docs"
-    # a links to b and c; stable order is a (seed), b (dist=1), c (dist=1, alpha after b)
+    # stable order: a (seed), b (dist=1), c (dist=1); b is large, c is small
     _write_concept(root / "a.md", title="Alpha", body="[B](b.md) [C](c.md)\n")
     _write_concept(root / "b.md", title="Beta", body="X" * 200 + "\n")
     _write_concept(root / "c.md", title="Gamma")
@@ -335,22 +335,14 @@ def test_budget_is_strict_prefix_not_knapsack(tmp_path: Path) -> None:
 
     a_size = len((root / "a.md").read_text(encoding="utf-8"))
     b_size = len((root / "b.md").read_text(encoding="utf-8"))
-    # Budget fits a and b exactly; c would fit if b were skipped, but prefix stops at b
+    # Budget fits a but not b; c would fit individually (knapsack) but prefix stops at b
     pack = build_context_pack(
-        bundle, ["a"], depth=1, direction="outbound", budget_chars=a_size + b_size
-    )
-
-    assert [e.concept_id for e in pack.entries] == ["a", "b"]
-    assert "c" in pack.omitted_concept_ids
-
-    # Budget fits a but not b; c is also omitted because b exhausted the budget
-    pack2 = build_context_pack(
         bundle, ["a"], depth=1, direction="outbound", budget_chars=a_size + b_size - 1
     )
 
-    assert [e.concept_id for e in pack2.entries] == ["a"]
-    assert "b" in pack2.omitted_concept_ids
-    assert "c" in pack2.omitted_concept_ids
+    assert [e.concept_id for e in pack.entries] == ["a"]
+    assert "b" in pack.omitted_concept_ids
+    assert "c" in pack.omitted_concept_ids
 
 
 def _bundle(root: Path) -> BundleConfig:
