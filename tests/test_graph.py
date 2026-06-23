@@ -125,6 +125,28 @@ def test_graph_ignores_reserved_files_and_external_targets(tmp_path: Path) -> No
     assert [concept.concept_id for concept in graph.concepts] == ["a"]
 
 
+def test_graph_reports_parse_problems_with_parse_error_kind(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    path = root / "broken.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("---\ntype: [invalid\n---\nBody\n", encoding="utf-8")
+    graph = build_bundle_graph(_bundle(root))
+
+    assert graph.problems[0].path == path
+    assert graph.problems[0].kind == "parse-error"
+
+
+def test_graph_reports_decode_problems_with_decode_error_kind(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    path = root / "broken.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff")
+    graph = build_bundle_graph(_bundle(root))
+
+    assert graph.problems[0].path == path
+    assert graph.problems[0].kind == "decode-error"
+
+
 def test_neighborhood_is_depth_limited_and_bidirectional(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", body="[B](b.md)")
@@ -143,6 +165,15 @@ def test_neighborhood_rejects_negative_depth(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="depth"):
         neighborhood(graph, "a", depth=-1)
+
+
+def test_neighborhood_rejects_unknown_concept(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md")
+    graph = build_bundle_graph(_bundle(root))
+
+    with pytest.raises(ValueError, match="missing"):
+        neighborhood(graph, "missing")
 
 
 def _bundle(root: Path) -> BundleConfig:

@@ -264,7 +264,9 @@ inline code, and images are ignored.
 `build_bundle_graph(bundle, manifest=None)` scans concept bodies and returns a
 `BundleGraph` with resolved directed concept links, broken internal concept
 links, and non-fatal graph problems. Callers may pass an existing
-`BundleManifest` to avoid scanning twice.
+`BundleManifest` to avoid scanning twice. Graph problems use the same scan-style
+kind values for document failures, such as `read-error`, `decode-error`, and
+`parse-error`.
 
 Internal OKF concept links resolve according to OKF v0.1 rules:
 
@@ -282,7 +284,8 @@ not fatal errors because OKF consumers must tolerate broken cross-links.
 `links_from(graph, concept_id)`, `backlinks_to(graph, concept_id)`, and
 `neighborhood(graph, concept_id, depth=1)` provide deterministic traversal over
 resolved links. Neighborhood traversal treats links as bidirectional for
-discovery while preserving directed edges in the underlying graph.
+discovery while preserving directed edges in the underlying graph. It raises
+`ValueError` for unknown concept IDs or negative depths.
 
 ```python
 from okf_core import backlinks_to, build_bundle_graph, links_from, load_config

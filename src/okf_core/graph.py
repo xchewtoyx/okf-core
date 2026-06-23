@@ -18,6 +18,8 @@ from okf_core.paths import (
     path_to_concept_id,
 )
 
+_MARKDOWN = MarkdownIt("commonmark")
+
 
 @dataclass(frozen=True)
 class MarkdownLink:
@@ -63,8 +65,7 @@ class BundleGraph:
 def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
     """Extract standard non-image Markdown links from a Markdown string."""
 
-    parser = MarkdownIt("commonmark")
-    tokens = parser.parse(markdown)
+    tokens = _MARKDOWN.parse(markdown)
     links: list[MarkdownLink] = []
 
     for token in tokens:
@@ -109,16 +110,18 @@ def build_bundle_graph(
 
     for entry in resolved_manifest.concepts:
         try:
-            document = parse_concept_document(entry.path.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError, DocumentParseError) as exc:
-            problems.append(
-                GraphProblem(
-                    concept_id=entry.concept_id,
-                    path=entry.path,
-                    kind="read-error",
-                    message=str(exc),
-                )
-            )
+            markdown = entry.path.read_text(encoding="utf-8")
+        except OSError as exc:
+            problems.append(_graph_problem(entry, "read-error", exc))
+            continue
+        except UnicodeDecodeError as exc:
+            problems.append(_graph_problem(entry, "decode-error", exc))
+            continue
+
+        try:
+            document = parse_concept_document(markdown)
+        except DocumentParseError as exc:
+            problems.append(_graph_problem(entry, "parse-error", exc))
             continue
 
         for markdown_link in extract_markdown_links(document.body):
@@ -162,6 +165,8 @@ def neighborhood(
 
     if depth < 0:
         raise ValueError("depth must be greater than or equal to 0")
+    if concept_id not in {concept.concept_id for concept in graph.concepts}:
+        raise ValueError(f"Concept {concept_id!r} is not in graph")
 
     adjacency: dict[str, set[str]] = {}
     for link in graph.links:
@@ -194,6 +199,19 @@ def _collect_link_text(children: list[object]) -> str:
         if child_type in {"text", "code_inline"}:
             parts.append(getattr(child, "content", ""))
     return "".join(parts)
+
+
+def _graph_problem(
+    entry: ConceptManifestEntry,
+    kind: str,
+    exc: Exception,
+) -> GraphProblem:
+    return GraphProblem(
+        concept_id=entry.concept_id,
+        path=entry.path,
+        kind=kind,
+        message=str(exc),
+    )
 
 
 def _resolve_concept_link(
