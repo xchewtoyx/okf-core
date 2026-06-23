@@ -13,8 +13,12 @@ import click
 
 from okf_core import (
     ConfigError,
+    backlinks_to,
+    build_bundle_graph,
     generate_index,
+    links_from,
     load_config,
+    neighborhood,
     scan_bundle,
     validate_bundle,
 )
@@ -140,6 +144,101 @@ def validate(config_path: str | None, bundle_name: str) -> None:
         sys.exit(1)
 
 
+@cli.command("graph")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--concept",
+    "concept_id",
+    default=None,
+    metavar="CONCEPT_ID",
+    help="Emit graph details for one concept.",
+)
+@click.option(
+    "--depth",
+    "depth",
+    default=1,
+    show_default=True,
+    type=click.IntRange(min=0),
+    metavar="N",
+    help="Neighborhood depth when --concept is used.",
+)
+@click.option(
+    "--broken",
+    "broken_only",
+    is_flag=True,
+    help="Emit only broken internal concept links.",
+)
+def graph_cmd(
+    config_path: str | None,
+    bundle_name: str,
+    concept_id: str | None,
+    depth: int,
+    broken_only: bool,
+) -> None:
+    """Inspect Markdown links and graph traversal for a bundle."""
+    _, bundle = _load(config_path, bundle_name)
+    graph = build_bundle_graph(bundle)
+    concept_ids = {concept.concept_id for concept in graph.concepts}
+
+    if concept_id is not None and concept_id not in concept_ids:
+        click.echo(
+            f"Concept {concept_id!r} not found in bundle {bundle.name!r}", err=True
+        )
+        sys.exit(2)
+
+    if broken_only:
+        result: dict[str, Any] = {
+            "bundle": bundle.name,
+            "broken_links": [_link_dict(link) for link in graph.broken_links],
+            "problems": [_graph_problem_dict(problem) for problem in graph.problems],
+        }
+    elif concept_id is not None:
+        result = {
+            "bundle": bundle.name,
+            "concept_id": concept_id,
+            "outbound_links": [
+                _link_dict(link) for link in links_from(graph, concept_id)
+            ],
+            "backlinks": [_link_dict(link) for link in backlinks_to(graph, concept_id)],
+            "neighborhood": list(neighborhood(graph, concept_id, depth)),
+            "broken_links": [
+                _link_dict(link)
+                for link in graph.broken_links
+                if link.source_concept_id == concept_id
+            ],
+            "problems": [_graph_problem_dict(problem) for problem in graph.problems],
+        }
+    else:
+        result = {
+            "bundle": bundle.name,
+            "concepts": [concept.concept_id for concept in graph.concepts],
+            "links": [_link_dict(link) for link in graph.links],
+            "broken_links": [_link_dict(link) for link in graph.broken_links],
+            "problems": [_graph_problem_dict(problem) for problem in graph.problems],
+        }
+
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(
+        f"Built graph for bundle {bundle.name!r}: {len(graph.concepts)} concepts, "
+        f"{len(graph.links)} links, {len(graph.broken_links)} broken",
+        err=True,
+    )
+
+
 @cli.command("index")
 @click.option(
     "--config",
@@ -229,3 +328,23 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
     )
     if generated.problems or scan_problems_in_dir:
         sys.exit(1)
+
+
+def _link_dict(link: Any) -> dict[str, Any]:
+    return {
+        "source_concept_id": link.source_concept_id,
+        "source_path": str(link.source_path),
+        "text": link.text,
+        "target": link.target,
+        "target_path": str(link.target_path),
+        "target_concept_id": link.target_concept_id,
+    }
+
+
+def _graph_problem_dict(problem: Any) -> dict[str, Any]:
+    return {
+        "concept_id": problem.concept_id,
+        "path": str(problem.path),
+        "kind": problem.kind,
+        "message": problem.message,
+    }
