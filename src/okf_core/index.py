@@ -7,13 +7,11 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from markdown_it import MarkdownIt
+
 from okf_core.manifest import ConceptManifestEntry
 
-# Matches * [title](link) or * [title](link) - description.
-# Title and link may contain backslash-escaped ] and ) respectively.
-_ENTRY_RE = re.compile(
-    r"^\* \[(?P<title>(?:[^\]\\]|\\.)+)\]\((?P<link>(?:[^)\\]|\\.)+)\)(?:\s+-\s+(?P<desc>.+))?$"
-)
+_MARKDOWN = MarkdownIt("commonmark")
 
 
 @dataclass(frozen=True)
@@ -65,42 +63,40 @@ class ParsedIndex:
 def parse_index(content: str) -> ParsedIndex:
     """Parse an index.md body into structured sections and entries.
 
-    Only lines under a ``# Heading`` are captured as entries; list items that
-    appear before the first heading are ignored.  Lines that are not headings
-    or well-formed ``* [title](link)`` entries are also ignored.
+    Only entries under a ``# Heading`` are captured; list items that appear
+    before the first heading are ignored.  Non-link list items are skipped.
     """
+    tokens = _MARKDOWN.parse(content)
     sections: list[IndexSection] = []
     current_heading: str | None = None
     current_entries: list[IndexEntry] = []
-
-    for line in content.splitlines():
-        if line.startswith("# "):
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token.type == "heading_open" and token.tag == "h1":
             if current_heading is not None:
                 sections.append(
                     IndexSection(
-                        heading=current_heading,
-                        entries=tuple(current_entries),
+                        heading=current_heading, entries=tuple(current_entries)
                     )
                 )
-            current_heading = line[2:].strip()
+            i += 1
+            if i < len(tokens) and tokens[i].type == "inline":
+                current_heading = tokens[i].content
             current_entries = []
-        elif line.startswith("* "):
-            m = _ENTRY_RE.match(line)
-            if m:
-                current_entries.append(
-                    IndexEntry(
-                        title=_md_unescape(m.group("title")),
-                        link=_md_unescape(m.group("link")),
-                        description=m.group("desc"),
-                    )
-                )
+        elif token.type == "bullet_list_open":
+            i += 1
+            while i < len(tokens) and tokens[i].type != "bullet_list_close":
+                if tokens[i].type == "inline" and current_heading is not None:
+                    entry = _entry_from_inline_token(tokens[i])
+                    if entry is not None:
+                        current_entries.append(entry)
+                i += 1
+        i += 1
 
     if current_heading is not None:
         sections.append(
-            IndexSection(
-                heading=current_heading,
-                entries=tuple(current_entries),
-            )
+            IndexSection(heading=current_heading, entries=tuple(current_entries))
         )
 
     return ParsedIndex(sections=tuple(sections))
@@ -256,12 +252,39 @@ def _normalize_inline(s: str) -> str:
 
 def _md_escape(s: str) -> str:
     """Escape backslash then markdown link delimiters so output round-trips."""
-    return s.replace("\\", "\\\\").replace("]", "\\]").replace(")", "\\)")
+    return (
+        s.replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace(")", "\\)")
+    )
 
 
-def _md_unescape(s: str) -> str:
-    """Reverse _md_escape: decode any \\X sequence to X."""
-    return re.sub(r"\\(.)", r"\1", s)
+def _entry_from_inline_token(token: object) -> IndexEntry | None:
+    """Extract title, href, and optional description from a list-item inline token."""
+    children = getattr(token, "children", None) or []
+    title_parts: list[str] = []
+    after_link: list[str] = []
+    href: str | None = None
+    in_link = False
+
+    for child in children:
+        if child.type == "link_open":
+            href = child.attrGet("href") or ""
+            in_link = True
+        elif child.type == "link_close":
+            in_link = False
+        elif in_link and child.type in ("text", "code_inline"):
+            title_parts.append(child.content)
+        elif not in_link and href is not None and child.type == "text":
+            after_link.append(child.content)
+
+    if href is None or not title_parts:
+        return None
+
+    suffix = "".join(after_link)
+    description = suffix[3:].rstrip() if suffix.startswith(" - ") else None
+    return IndexEntry(title="".join(title_parts), link=href, description=description)
 
 
 def _render_entry(entry: IndexEntry) -> str:

@@ -71,7 +71,9 @@ def test_direction_both_includes_outbound_and_backlink(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "center.md", title="Center", body="See [Out](out.md).\n")
     _write_concept(root / "out.md", title="Out")
-    _write_concept(root / "incoming.md", title="Incoming", body="See [center](center.md).\n")
+    _write_concept(
+        root / "incoming.md", title="Incoming", body="See [center](center.md).\n"
+    )
 
     pack = build_context_pack(_bundle(root), ["center"], depth=1, direction="both")
 
@@ -86,7 +88,9 @@ def test_direction_outbound_excludes_backlinks(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "center.md", title="Center", body="See [Out](out.md).\n")
     _write_concept(root / "out.md", title="Out")
-    _write_concept(root / "incoming.md", title="Incoming", body="See [center](center.md).\n")
+    _write_concept(
+        root / "incoming.md", title="Incoming", body="See [center](center.md).\n"
+    )
 
     pack = build_context_pack(_bundle(root), ["center"], depth=1, direction="outbound")
 
@@ -100,7 +104,9 @@ def test_direction_inbound_excludes_outbound(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "center.md", title="Center", body="See [Out](out.md).\n")
     _write_concept(root / "out.md", title="Out")
-    _write_concept(root / "incoming.md", title="Incoming", body="See [center](center.md).\n")
+    _write_concept(
+        root / "incoming.md", title="Incoming", body="See [center](center.md).\n"
+    )
 
     pack = build_context_pack(_bundle(root), ["center"], depth=1, direction="inbound")
 
@@ -176,7 +182,9 @@ def test_stable_ordering_seeds_before_expanded_same_result_on_repeat(
     pack1 = build_context_pack(bundle, ["s1", "s2"], depth=1, direction="outbound")
     pack2 = build_context_pack(bundle, ["s1", "s2"], depth=1, direction="outbound")
 
-    assert [e.concept_id for e in pack1.entries] == [e.concept_id for e in pack2.entries]
+    assert [e.concept_id for e in pack1.entries] == [
+        e.concept_id for e in pack2.entries
+    ]
     assert pack1.entries[0].concept_id == "s1"
     assert pack1.entries[1].concept_id == "s2"
 
@@ -282,6 +290,39 @@ def test_bundle_name_propagated(tmp_path: Path) -> None:
     pack = build_context_pack(_bundle(root), ["a"])
 
     assert pack.bundle_name == "docs"
+
+
+def test_multiline_title_normalized_to_single_line(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "a.md"
+    path.write_text(
+        "---\ntype: concept\ntitle: |\n  Foo\n  Bar\n---\nBody.\n", encoding="utf-8"
+    )
+
+    pack = build_context_pack(_bundle(root), ["a"])
+
+    assert pack.entries[0].title == "Foo Bar"
+
+
+def test_read_error_concept_in_omitted_and_problems(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "seed.md", title="Seed", body="[Missing](missing.md)\n")
+    _write_concept(root / "missing.md", title="Missing")
+    bundle = _bundle(root)
+
+    # Build graph while both files exist, then remove missing.md so the read fails
+    graph = build_bundle_graph(bundle)
+    (root / "missing.md").unlink()
+
+    pack = build_context_pack(
+        bundle, ["seed"], depth=1, direction="outbound", graph=graph
+    )
+
+    assert "missing" in pack.omitted_concept_ids
+    assert any(
+        p.kind == "read-error" and p.concept_id == "missing" for p in pack.problems
+    )
 
 
 def _bundle(root: Path) -> BundleConfig:

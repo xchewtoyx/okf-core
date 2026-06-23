@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,7 +21,7 @@ class ContextEntry:
     path: Path
     title: str | None
     content: str
-    selection_reason: str  # "seed", "outbound-link", "backlink"
+    selection_reason: Literal["seed", "outbound-link", "backlink"]
     graph_distance: int
     char_count: int
 
@@ -63,7 +64,12 @@ def build_context_pack(
     count is used as a proxy for token count.
 
     Problems are returned for unknown seeds and file-read errors.  Budget
-    omissions are reported via ``omitted_concept_ids``, not ``problems``.
+    omissions and read errors are reported via ``omitted_concept_ids``;
+    read errors are also reported in ``problems``.
+
+    Note: concept files are read once here for content and were already read
+    during graph construction to extract links.  Eliminating this double-read
+    requires caching content on ``ConceptManifestEntry`` — tracked in #43.
     """
     if depth < 0:
         raise ValueError("depth must be greater than or equal to 0")
@@ -91,24 +97,43 @@ def build_context_pack(
             valid_seeds.append(seed_id)
 
     # BFS traversal from seeds; track (distance, selection_reason) per concept
-    discovered: dict[str, tuple[int, str]] = {}
+    discovered: dict[str, tuple[int, Literal["seed", "outbound-link", "backlink"]]] = {}
     seed_order: dict[str, int] = {}
     for i, seed_id in enumerate(valid_seeds):
         if seed_id not in discovered:
             discovered[seed_id] = (0, "seed")
             seed_order[seed_id] = i
 
+    outbound_adj: dict[str, list[str]] = {}
+    inbound_adj: dict[str, list[str]] = {}
+    for link in resolved_graph.links:
+        if link.target_concept_id is not None:
+            outbound_adj.setdefault(link.source_concept_id, []).append(
+                link.target_concept_id
+            )
+            inbound_adj.setdefault(link.target_concept_id, []).append(
+                link.source_concept_id
+            )
+
     frontier: list[str] = list(valid_seeds)
     for d in range(1, depth + 1):
         next_frontier: list[str] = []
         for current_id in frontier:
-            for neighbor_id, reason in _neighbors(resolved_graph, current_id, direction):
-                if neighbor_id not in discovered:
-                    discovered[neighbor_id] = (d, reason)
-                    next_frontier.append(neighbor_id)
-        frontier = sorted(set(next_frontier))
+            if direction != "inbound":
+                for nid in outbound_adj.get(current_id, []):
+                    if nid not in discovered:
+                        discovered[nid] = (d, "outbound-link")
+                        next_frontier.append(nid)
+            if direction != "outbound":
+                for nid in inbound_adj.get(current_id, []):
+                    if nid not in discovered:
+                        discovered[nid] = (d, "backlink")
+                        next_frontier.append(nid)
+        frontier = sorted(next_frontier)
 
-    ordered_ids = sorted(discovered.keys(), key=lambda cid: _sort_key(cid, discovered, seed_order))
+    ordered_ids = sorted(
+        discovered.keys(), key=lambda cid: _sort_key(cid, discovered, seed_order)
+    )
 
     entries: list[ContextEntry] = []
     omitted: list[str] = []
@@ -129,6 +154,7 @@ def build_context_pack(
                     path=entry_meta.path,
                 )
             )
+            omitted.append(concept_id)
             continue
 
         char_count = len(content)
@@ -161,7 +187,7 @@ def build_context_pack(
 
 def _sort_key(
     concept_id: str,
-    discovered: dict[str, tuple[int, str]],
+    discovered: dict[str, tuple[int, Literal["seed", "outbound-link", "backlink"]]],
     seed_order: dict[str, int],
 ) -> tuple[int, int, str]:
     distance, reason = discovered[concept_id]
@@ -172,25 +198,9 @@ def _sort_key(
     return (distance, 0, concept_id)
 
 
-def _neighbors(
-    graph: BundleGraph,
-    concept_id: str,
-    direction: Literal["outbound", "inbound", "both"],
-) -> list[tuple[str, str]]:
-    """Return (neighbor_concept_id, selection_reason) pairs for graph expansion."""
-    result: list[tuple[str, str]] = []
-    for link in graph.links:
-        if direction in ("outbound", "both") and link.source_concept_id == concept_id:
-            if link.target_concept_id is not None:
-                result.append((link.target_concept_id, "outbound-link"))
-        if direction in ("inbound", "both") and link.target_concept_id == concept_id:
-            result.append((link.source_concept_id, "backlink"))
-    return result
-
-
 def _extract_title(entry: ConceptManifestEntry) -> str | None:
     raw = entry.frontmatter.get("title")
     if raw is None:
         return None
-    title = str(raw).strip()
+    title = re.sub(r"[\r\n]+", " ", str(raw)).strip()
     return title if title else None

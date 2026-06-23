@@ -298,12 +298,11 @@ def test_generate_empty_string_title_falls_back_to_stem(tmp_path: Path) -> None:
 
 
 def test_generate_title_with_closing_bracket_is_escaped(tmp_path: Path) -> None:
-    # ] terminates the markdown link title; must be escaped
+    # Both [ and ] are escaped so the generated markdown is valid CommonMark
     e = _entry(tmp_path / "a.md", tmp_path, title="Foo [Bar]", description=None)
     result = generate_index(tmp_path, [e])
     assert result.problems == ()
-    # [ does not need escaping (only ] terminates the title group)
-    assert "* [Foo [Bar\\]](a.md)" in result.body
+    assert "* [Foo \\[Bar\\]](a.md)" in result.body
 
 
 def test_generate_link_with_closing_paren_is_escaped(tmp_path: Path) -> None:
