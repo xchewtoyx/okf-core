@@ -85,28 +85,25 @@ def parse_index(content: str) -> ParsedIndex:
                 current_heading = tokens[i].content
             current_entries = []
         elif token.type == "bullet_list_open":
-            list_depth = 1
+            list_level = token.level
             item_captured = False
             i += 1
-            while i < len(tokens) and list_depth > 0:
-                if tokens[i].type in ("bullet_list_open", "ordered_list_open"):
-                    list_depth += 1
-                elif tokens[i].type in ("bullet_list_close", "ordered_list_close"):
-                    list_depth -= 1
-                    if list_depth == 0:
-                        break  # leave i on list_close; outer i += 1 advances past it
-                elif list_depth == 1:
-                    if tokens[i].type == "list_item_open":
-                        item_captured = False
-                    elif (
-                        tokens[i].type == "inline"
-                        and not item_captured
-                        and current_heading is not None
-                    ):
-                        entry = _entry_from_inline_token(tokens[i])
-                        if entry is not None:
-                            current_entries.append(entry)
-                        item_captured = True
+            while i < len(tokens):
+                t = tokens[i]
+                if t.level == list_level and t.nesting == -1:
+                    break  # any list close at this level; outer i += 1 advances past it
+                if t.level == list_level + 1 and t.type == "list_item_open":
+                    item_captured = False
+                elif (
+                    t.type == "inline"
+                    and list_level < t.level <= list_level + 3
+                    and not item_captured
+                    and current_heading is not None
+                ):
+                    entry = _entry_from_inline_token(t)
+                    if entry is not None:
+                        current_entries.append(entry)
+                    item_captured = True
                 i += 1
         i += 1
 
