@@ -85,9 +85,20 @@ def parse_index(content: str) -> ParsedIndex:
                 current_heading = tokens[i].content
             current_entries = []
         elif token.type == "bullet_list_open":
+            list_depth = 1
             i += 1
-            while i < len(tokens) and tokens[i].type != "bullet_list_close":
-                if tokens[i].type == "inline" and current_heading is not None:
+            while i < len(tokens) and list_depth > 0:
+                if tokens[i].type == "bullet_list_open":
+                    list_depth += 1
+                elif tokens[i].type == "bullet_list_close":
+                    list_depth -= 1
+                    if list_depth == 0:
+                        break  # leave i on bullet_list_close; outer i += 1 advances past it
+                elif (
+                    list_depth == 1
+                    and tokens[i].type == "inline"
+                    and current_heading is not None
+                ):
                     entry = _entry_from_inline_token(tokens[i])
                     if entry is not None:
                         current_entries.append(entry)
@@ -279,7 +290,7 @@ def _entry_from_inline_token(token: object) -> IndexEntry | None:
         elif not in_link and href is not None and child.type == "text":
             after_link.append(child.content)
 
-    if href is None or not title_parts:
+    if not href or not title_parts:
         return None
 
     suffix = "".join(after_link)
