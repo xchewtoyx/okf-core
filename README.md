@@ -23,16 +23,45 @@ The target pattern is semi-opaque:
 
 ## Status
 
-This repository is in early MVP development. Configuration loading, concept
-document parsing, configurable concept ID/path resolution, bundle manifest
-scanning, and index file parsing and generation are implemented; the other OKF
-operations described below are the planned public shape of the project and are
-not implemented yet.
+v0.1.0 is released. Configuration loading, concept document parsing,
+configurable concept ID/path resolution, bundle manifest scanning, index file
+parsing and generation, base and profile-based validation, and the `okf` CLI
+(scan, validate, index) are all implemented. The operations described under
+"Planned Operations" below are the intended shape of future releases and are not
+yet implemented.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
 behavior, and README edits should be reviewed as a whole after patching so the
 document stays internally consistent.
+
+## Installation
+
+`okf-core` is distributed via a self-hosted PEP 503 simple index on GitHub
+Pages. It is not published on PyPI.
+
+**pip:**
+
+```sh
+pip install okf-core \
+  --index-url https://xchewtoyx.github.io/okf-core/simple/ \
+  --extra-index-url https://pypi.org/simple/
+```
+
+**uv** (`pyproject.toml`):
+
+```toml
+[[tool.uv.index]]
+url = "https://xchewtoyx.github.io/okf-core/simple/"
+```
+
+Then add `okf-core` to your dependencies as usual.
+
+**Development install** (from a local clone):
+
+```sh
+python -m pip install -e ".[test]"
+```
 
 ## Current Capabilities
 
@@ -56,12 +85,6 @@ config = load_config()
 document = parse_concept_document("---\ntype: concept\n---\nBody\n")
 path = concept_id_to_path("topics/example", config.bundles["default"])
 manifest = scan_bundle(config.bundles["default"])
-```
-
-Install the package for local development and tests with:
-
-```sh
-python -m pip install -e ".[test]"
 ```
 
 Run the test suite with:

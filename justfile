@@ -31,5 +31,11 @@ check: _require-venv
 test: _require-venv
     {{python}} -m pytest
 
-# Run check + test (mirrors CI)
-ci: check test
+# Run ruff, mypy, and actionlint static analysis
+lint: _require-venv
+    {{python}} -m ruff check .github/scripts/
+    {{python}} -m mypy .github/scripts/ --ignore-missing-imports
+    .venv/bin/actionlint .github/workflows/*.yml
+
+# Run check + lint + test (mirrors CI)
+ci: check lint test
