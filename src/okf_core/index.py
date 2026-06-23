@@ -12,6 +12,7 @@ from markdown_it import MarkdownIt
 from okf_core.manifest import ConceptManifestEntry
 
 _MARKDOWN = MarkdownIt("commonmark")
+_DESC_SEP = re.compile(r"^\s+-\s+")
 
 
 @dataclass(frozen=True)
@@ -273,6 +274,20 @@ def _md_escape(s: str) -> str:
     )
 
 
+def _inline_content(child: object) -> str | None:
+    """Return the Markdown source for a single inline child token, or None to skip."""
+    t = getattr(child, "type", "")
+    if t == "text":
+        return getattr(child, "content", "")
+    if t == "code_inline":
+        return f"`{getattr(child, 'content', '')}`"
+    if t in ("softbreak", "hardbreak"):
+        return " "
+    # Delimiter tokens (strong_open/close, em_open/close, s_open/close, etc.)
+    markup = getattr(child, "markup", "")
+    return markup if markup else None
+
+
 def _entry_from_inline_token(token: object) -> IndexEntry | None:
     """Extract title, href, and optional description from a list-item inline token."""
     children = getattr(token, "children", None) or []
@@ -301,14 +316,14 @@ def _entry_from_inline_token(token: object) -> IndexEntry | None:
             elif desc_link_href is not None:
                 after_link.append(f"[{''.join(desc_link_parts)}]({desc_link_href})")
                 desc_link_href = None
-        elif child.type in ("text", "code_inline"):
-            content = (
-                f"`{child.content}`" if child.type == "code_inline" else child.content
-            )
+        else:
+            content = _inline_content(child)
+            if content is None:
+                continue
             if in_link:
                 title_parts.append(content)
             elif desc_link_href is not None:
-                desc_link_parts.append(child.content)
+                desc_link_parts.append(content)
             elif href is not None:
                 after_link.append(content)
 
@@ -316,10 +331,11 @@ def _entry_from_inline_token(token: object) -> IndexEntry | None:
         return None
 
     suffix = "".join(after_link)
+    m = _DESC_SEP.match(suffix)
     # A second link outside the title is only valid inside a " - description" suffix
-    if has_desc_link and not suffix.startswith(" - "):
+    if has_desc_link and not m:
         return None
-    description = suffix[3:].rstrip() if suffix.startswith(" - ") else None
+    description = suffix[m.end() :].rstrip() if m else None
     return IndexEntry(title="".join(title_parts), link=href, description=description)
 
 

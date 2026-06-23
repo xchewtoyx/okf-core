@@ -489,6 +489,20 @@ def test_parse_list_item_with_link_in_description_is_captured() -> None:
     assert entry.description == "see [B](b.md)"
 
 
+def test_parse_entry_with_bold_title_round_trips() -> None:
+    content = "# Section\n\n* [**Bold Title**](path.md)\n"
+    parsed = parse_index(content)
+    assert parsed.sections[0].entries[0].title == "**Bold Title**"
+
+
+def test_parse_description_with_loose_separator_spacing() -> None:
+    content = "# Section\n\n* [A](a.md)  -   desc\n"
+    parsed = parse_index(content)
+    entry = parsed.sections[0].entries[0]
+    assert entry.link == "a.md"
+    assert entry.description == "desc"
+
+
 def test_parse_only_first_inline_per_list_item_used() -> None:
     # A list item with two paragraphs produces two inline tokens; only the first matters
     content = "# Section\n\n* [A](a.md)\n\n  [B](b.md)\n\n* [C](c.md)\n"
