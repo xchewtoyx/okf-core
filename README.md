@@ -23,7 +23,7 @@ The target pattern is semi-opaque:
 
 ## Status
 
-v0.1.0 is released. Configuration loading, concept document parsing,
+v0.1.1 is released. Configuration loading, concept document parsing,
 configurable concept ID/path resolution, bundle manifest scanning, index file
 parsing and generation, base and profile-based validation, and the `okf` CLI
 (scan, validate, index) are all implemented. The operations described under

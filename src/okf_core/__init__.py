@@ -42,7 +42,7 @@ from okf_core.index import (
 )
 from okf_core.validation import validate_bundle
 
-__version__ = "0.0.0"
+__version__ = "0.1.1"
 
 __all__ = [
     "BundleConfig",
