@@ -97,6 +97,18 @@ def test_graph_reports_unresolvable_markdown_paths_as_broken(tmp_path: Path) -> 
     assert graph.broken_links[0].target_concept_id is None
 
 
+def test_graph_reports_outside_reserved_filename_as_broken(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [outside reserved](../index.md).")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert graph.links == ()
+    assert len(graph.broken_links) == 1
+    assert graph.broken_links[0].target == "../index.md"
+    assert graph.broken_links[0].target_concept_id is None
+
+
 def test_graph_ignores_reserved_files_and_external_targets(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(
