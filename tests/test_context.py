@@ -336,13 +336,17 @@ def test_budget_is_strict_prefix_not_knapsack(tmp_path: Path) -> None:
     a_size = len((root / "a.md").read_text(encoding="utf-8"))
     b_size = len((root / "b.md").read_text(encoding="utf-8"))
     # Budget fits a and b exactly; c would fit if b were skipped, but prefix stops at b
-    pack = build_context_pack(bundle, ["a"], depth=1, direction="outbound", budget_chars=a_size + b_size)
+    pack = build_context_pack(
+        bundle, ["a"], depth=1, direction="outbound", budget_chars=a_size + b_size
+    )
 
     assert [e.concept_id for e in pack.entries] == ["a", "b"]
     assert "c" in pack.omitted_concept_ids
 
     # Budget fits a but not b; c is also omitted because b exhausted the budget
-    pack2 = build_context_pack(bundle, ["a"], depth=1, direction="outbound", budget_chars=a_size + b_size - 1)
+    pack2 = build_context_pack(
+        bundle, ["a"], depth=1, direction="outbound", budget_chars=a_size + b_size - 1
+    )
 
     assert [e.concept_id for e in pack2.entries] == ["a"]
     assert "b" in pack2.omitted_concept_ids
