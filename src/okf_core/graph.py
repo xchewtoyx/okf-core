@@ -218,14 +218,11 @@ def _resolve_concept_link(
     else:
         target_path = (source.path.parent / parsed.path).resolve(strict=False)
 
-    if _is_within_bundle_root(target_path, bundle) and is_reserved_concept_path(
-        target_path, bundle
-    ):
-        return None
-
     try:
         target_concept_id = path_to_concept_id(target_path, bundle)
     except ConceptPathError:
+        if _is_ignored_reserved_path(target_path, bundle):
+            return None
         target_concept_id = None
 
     return ConceptLink(
@@ -247,7 +244,9 @@ def _link_sort_key(link: ConceptLink) -> tuple[str, str, str, str]:
     )
 
 
-def _is_within_bundle_root(path: Path, bundle: BundleConfig) -> bool:
+def _is_ignored_reserved_path(path: Path, bundle: BundleConfig) -> bool:
+    if not is_reserved_concept_path(path, bundle):
+        return False
     try:
         path.relative_to(bundle.bundle_root.resolve(strict=False))
     except ValueError:
