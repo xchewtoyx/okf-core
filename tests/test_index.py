@@ -480,6 +480,15 @@ def test_parse_list_item_with_multiple_links_is_skipped() -> None:
     assert parsed.sections[0].entries[0].link == "c.md"
 
 
+def test_parse_list_item_with_link_in_description_is_captured() -> None:
+    content = "# Section\n\n* [A](a.md) - see [B](b.md)\n"
+    parsed = parse_index(content)
+    assert len(parsed.sections[0].entries) == 1
+    entry = parsed.sections[0].entries[0]
+    assert entry.link == "a.md"
+    assert entry.description == "see [B](b.md)"
+
+
 def test_parse_only_first_inline_per_list_item_used() -> None:
     # A list item with two paragraphs produces two inline tokens; only the first matters
     content = "# Section\n\n* [A](a.md)\n\n  [B](b.md)\n\n* [C](c.md)\n"

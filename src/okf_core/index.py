@@ -280,30 +280,45 @@ def _entry_from_inline_token(token: object) -> IndexEntry | None:
     after_link: list[str] = []
     href: str | None = None
     in_link = False
-    link_count = 0
+    desc_link_href: str | None = None
+    desc_link_parts: list[str] = []
+    has_desc_link = False
 
     for child in children:
         if child.type == "link_open":
-            link_count += 1
-            if link_count > 1:
-                return None  # multiple links: ambiguous, skip
-            href = child.attrGet("href") or ""
-            in_link = True
+            if in_link:
+                return None  # nested link inside title: ambiguous, skip
+            if href is None:
+                href = child.attrGet("href") or ""
+                in_link = True
+            else:
+                has_desc_link = True
+                desc_link_href = child.attrGet("href") or ""
+                desc_link_parts = []
         elif child.type == "link_close":
-            in_link = False
-        elif in_link and child.type in ("text", "code_inline"):
-            title_parts.append(
+            if in_link:
+                in_link = False
+            elif desc_link_href is not None:
+                after_link.append(f"[{''.join(desc_link_parts)}]({desc_link_href})")
+                desc_link_href = None
+        elif child.type in ("text", "code_inline"):
+            content = (
                 f"`{child.content}`" if child.type == "code_inline" else child.content
             )
-        elif not in_link and href is not None and child.type in ("text", "code_inline"):
-            after_link.append(
-                f"`{child.content}`" if child.type == "code_inline" else child.content
-            )
+            if in_link:
+                title_parts.append(content)
+            elif desc_link_href is not None:
+                desc_link_parts.append(child.content)
+            elif href is not None:
+                after_link.append(content)
 
     if not href or not title_parts:
         return None
 
     suffix = "".join(after_link)
+    # A second link outside the title is only valid inside a " - description" suffix
+    if has_desc_link and not suffix.startswith(" - "):
+        return None
     description = suffix[3:].rstrip() if suffix.startswith(" - ") else None
     return IndexEntry(title="".join(title_parts), link=href, description=description)
 
