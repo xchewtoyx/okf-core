@@ -450,6 +450,24 @@ def test_parse_subdirectory_link() -> None:
     assert parsed.sections[0].entries[0].link == "sub/"
 
 
+def test_parse_list_item_with_multiple_links_is_skipped() -> None:
+    content = "# Section\n\n* [A](a.md) and [B](b.md)\n* [C](c.md)\n"
+    parsed = parse_index(content)
+    # multi-link item is rejected; only the clean single-link item survives
+    assert len(parsed.sections[0].entries) == 1
+    assert parsed.sections[0].entries[0].link == "c.md"
+
+
+def test_parse_only_first_inline_per_list_item_used() -> None:
+    # A list item with two paragraphs produces two inline tokens; only the first matters
+    content = "# Section\n\n* [A](a.md)\n\n  [B](b.md)\n\n* [C](c.md)\n"
+    parsed = parse_index(content)
+    ids = [e.link for e in parsed.sections[0].entries]
+    assert "a.md" in ids
+    assert "b.md" not in ids
+    assert "c.md" in ids
+
+
 # ---------------------------------------------------------------------------
 # Round-trip test
 # ---------------------------------------------------------------------------

@@ -60,8 +60,10 @@ def build_context_pack(
 
     Seeds appear first in the returned entries, in the order they were
     provided.  Graph-expanded concepts follow, ordered by distance then
-    concept ID.  Budget trimming is deterministic but approximate: character
-    count is used as a proxy for token count.
+    concept ID.  Budget trimming is a stable prefix: entries are added in
+    order until adding the next would exceed ``budget_chars``, at which point
+    all remaining concepts (including any that would individually fit) are
+    omitted.  Character count is used as a proxy for token count.
 
     Problems are returned for unknown seeds and file-read errors.  Budget
     omissions and read errors are reported via ``omitted_concept_ids``;
@@ -140,6 +142,7 @@ def build_context_pack(
     entries: list[ContextEntry] = []
     omitted: list[str] = []
     total_chars = 0
+    budget_exhausted = False
 
     for concept_id in ordered_ids:
         distance, reason = discovered[concept_id]
@@ -161,8 +164,11 @@ def build_context_pack(
 
         char_count = len(content)
 
-        if budget_chars is not None and total_chars + char_count > budget_chars:
+        if budget_exhausted or (
+            budget_chars is not None and total_chars + char_count > budget_chars
+        ):
             omitted.append(concept_id)
+            budget_exhausted = True
             continue
 
         entries.append(

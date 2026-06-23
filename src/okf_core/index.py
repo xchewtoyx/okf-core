@@ -86,6 +86,7 @@ def parse_index(content: str) -> ParsedIndex:
             current_entries = []
         elif token.type == "bullet_list_open":
             list_depth = 1
+            item_captured = False
             i += 1
             while i < len(tokens) and list_depth > 0:
                 if tokens[i].type == "bullet_list_open":
@@ -94,14 +95,18 @@ def parse_index(content: str) -> ParsedIndex:
                     list_depth -= 1
                     if list_depth == 0:
                         break  # leave i on bullet_list_close; outer i += 1 advances past it
-                elif (
-                    list_depth == 1
-                    and tokens[i].type == "inline"
-                    and current_heading is not None
-                ):
-                    entry = _entry_from_inline_token(tokens[i])
-                    if entry is not None:
-                        current_entries.append(entry)
+                elif list_depth == 1:
+                    if tokens[i].type == "list_item_open":
+                        item_captured = False
+                    elif (
+                        tokens[i].type == "inline"
+                        and not item_captured
+                        and current_heading is not None
+                    ):
+                        entry = _entry_from_inline_token(tokens[i])
+                        if entry is not None:
+                            current_entries.append(entry)
+                        item_captured = True
                 i += 1
         i += 1
 
@@ -278,9 +283,13 @@ def _entry_from_inline_token(token: object) -> IndexEntry | None:
     after_link: list[str] = []
     href: str | None = None
     in_link = False
+    link_count = 0
 
     for child in children:
         if child.type == "link_open":
+            link_count += 1
+            if link_count > 1:
+                return None  # multiple links: ambiguous, skip
             href = child.attrGet("href") or ""
             in_link = True
         elif child.type == "link_close":
