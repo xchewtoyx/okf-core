@@ -25,10 +25,10 @@ The target pattern is semi-opaque:
 
 v0.1.1 is released. Configuration loading, concept document parsing,
 configurable concept ID/path resolution, bundle manifest scanning, index file
-parsing and generation, base and profile-based validation, and the `okf` CLI
-(scan, validate, index) are all implemented. The operations described under
-"Planned Operations" below are the intended shape of future releases and are not
-yet implemented.
+parsing and generation, base and profile-based validation, Markdown link graph
+traversal, and the `okf` CLI (scan, validate, index, graph) are all
+implemented. The remaining operations described under "Planned Operations"
+below are the intended shape of future releases and are not yet implemented.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
@@ -67,14 +67,15 @@ python -m pip install -e ".[test]"
 
 `okf-core` currently provides an installable Python package with typed project
 configuration loading, structural concept document parsing, deterministic
-concept ID/path resolution, and bundle manifest scanning for the configured bundle
-root (one per bundle). Public behavior is intended to reduce to the OKF v0.1 base
-specification; `okf-core` configuration conveniences are optional and should not
-change OKF concepts such as bundles, concept IDs, reserved files, or
-frontmatter tolerance.
+concept ID/path resolution, bundle manifest scanning for the configured bundle
+root (one per bundle), and deterministic Markdown link graph traversal. Public
+behavior is intended to reduce to the OKF v0.1 base specification; `okf-core`
+configuration conveniences are optional and should not change OKF concepts such
+as bundles, concept IDs, reserved files, links, or frontmatter tolerance.
 
 ```python
 from okf_core import (
+    build_bundle_graph,
     concept_id_to_path,
     load_config,
     parse_concept_document,
@@ -85,6 +86,7 @@ config = load_config()
 document = parse_concept_document("---\ntype: concept\n---\nBody\n")
 path = concept_id_to_path("topics/example", config.bundles["default"])
 manifest = scan_bundle(config.bundles["default"])
+graph = build_bundle_graph(config.bundles["default"], manifest)
 ```
 
 Run the test suite with:
@@ -227,8 +229,8 @@ normalisation applies to `description` and to strings returned by
 `describe_directory`: absent, `None`, or empty/whitespace-only values omit
 the entry suffix; falsy-but-non-empty values are preserved. The function
 returns a `GeneratedIndex` dataclass with `.body` and `.problems` fields;
-writing the file to disk is the caller's responsibility (the CLI `okf index`
-command will own that step once implemented).
+writing the file to disk is the caller's responsibility for library use. The
+CLI `okf index` command owns that write step for command-line use.
 
 ```python
 from okf_core import generate_index, scan_bundle, load_config
@@ -252,6 +254,48 @@ for callers that want to supply directory-level descriptions — for example, a
 workflow agent using its own model access. It receives the absolute subdirectory
 path and should return a description string or `None`.  `okf-core` itself never
 makes model API calls.
+
+### Graph Operations
+
+`extract_markdown_links()` extracts standard non-image Markdown links from a
+Markdown body. It uses a CommonMark-compatible parser so links in fenced code,
+inline code, and images are ignored.
+
+`build_bundle_graph(bundle, manifest=None)` scans concept bodies and returns a
+`BundleGraph` with resolved directed concept links, broken internal concept
+links, and non-fatal graph problems. Callers may pass an existing
+`BundleManifest` to avoid scanning twice. Graph problems use the same scan-style
+kind values for document failures, such as `read-error`, `decode-error`, and
+`parse-error`.
+
+Internal OKF concept links resolve according to OKF v0.1 rules:
+
+- `/path/to/concept.md` resolves relative to the configured bundle root.
+- `./concept.md` and `../concept.md` resolve relative to the source concept's
+  directory.
+- URL fragments and query strings are preserved in the raw target and ignored
+  for path resolution.
+
+External URLs, fragment-only links, `mailto:` links, non-Markdown assets, and
+configured reserved filenames such as `index.md` and `log.md` are not concept
+edges. Missing internal concept targets are reported in `broken_links`; they are
+not fatal errors because OKF consumers must tolerate broken cross-links.
+
+`links_from(graph, concept_id)`, `backlinks_to(graph, concept_id)`, and
+`neighborhood(graph, concept_id, depth=1)` provide deterministic traversal over
+resolved links. Neighborhood traversal treats links as bidirectional for
+discovery while preserving directed edges in the underlying graph. It raises
+`ValueError` for unknown concept IDs or negative depths.
+
+```python
+from okf_core import backlinks_to, build_bundle_graph, links_from, load_config
+
+config = load_config()
+bundle = config.bundles["default"]
+graph = build_bundle_graph(bundle)
+outbound = links_from(graph, "topics/example")
+inbound = backlinks_to(graph, "topics/example")
+```
 
 ### CLI
 
@@ -318,6 +362,24 @@ were silently omitted from the index.
 Exits `1` if any entries were skipped or any scan problems occurred in the target
 directory; exits `0` on clean generation.
 
+#### `okf graph`
+
+Builds a deterministic graph from Markdown links in concept bodies:
+
+```sh
+okf graph [--config PATH] [--bundle NAME]
+okf graph [--config PATH] [--bundle NAME] --concept CONCEPT_ID [--depth N]
+okf graph [--config PATH] [--bundle NAME] --broken
+```
+
+Full output includes `concepts`, resolved `links`, `broken_links`, and
+`problems`. `--concept` emits outbound links, backlinks, broken links from that
+concept, and a depth-limited `neighborhood`. `--broken` emits only broken
+internal concept links and graph problems.
+
+Broken links do not make the command fail. Unknown bundles, unknown concept IDs,
+invalid depth values, and config errors exit `2`.
+
 ## Planned Operations
 
 The planned library and CLI surface is grouped around deterministic operations.
@@ -337,12 +399,6 @@ No operation should require this package to own an LLM API token.
 - Build and refresh a local SQLite index.
 - Search title, description, frontmatter, and body text with lexical search.
 - Produce context packs from a query or seed concepts within a token budget.
-
-### Graph Operations
-
-- Extract Markdown links.
-- Resolve links according to configured bundle root ownership.
-- Compute links from a concept, backlinks, neighborhoods, and broken links.
 
 ### Write Operations
 

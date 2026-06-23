@@ -34,6 +34,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "scan" in result.stdout
     assert "validate" in result.stdout
     assert "index" in result.stdout
+    assert "graph" in result.stdout
 
 
 def test_scan_help_exits_zero() -> None:
@@ -46,6 +47,10 @@ def test_validate_help_exits_zero() -> None:
 
 def test_index_help_exits_zero() -> None:
     assert _runner().invoke(cli, ["index", "--help"]).exit_code == 0
+
+
+def test_graph_help_exits_zero() -> None:
+    assert _runner().invoke(cli, ["graph", "--help"]).exit_code == 0
 
 
 # ---------------------------------------------------------------------------
@@ -271,6 +276,113 @@ def test_validate_config_error_exits_2(tmp_path: Path) -> None:
     result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
 
     assert result.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# okf graph
+# ---------------------------------------------------------------------------
+
+
+def test_graph_emits_full_graph_json(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="A")
+    _write_concept(tmp_path / "b.md", title="B")
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["graph", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["bundle"] == "default"
+    assert data["concepts"] == ["a", "b"]
+    assert data["links"][0]["source_concept_id"] == "a"
+    assert data["links"][0]["target_concept_id"] == "b"
+    assert data["broken_links"] == []
+
+
+def test_graph_concept_output_includes_backlinks_and_neighborhood(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "b.md").write_text(
+        "---\ntype: concept\ntitle: B\n---\nSee [C](c.md).\n",
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "c.md", title="C")
+
+    result = _runner().invoke(
+        cli, ["graph", "--config", str(config_path), "--concept", "b", "--depth", "1"]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concept_id"] == "b"
+    assert [link["target_concept_id"] for link in data["outbound_links"]] == ["c"]
+    assert [link["source_concept_id"] for link in data["backlinks"]] == ["a"]
+    assert data["neighborhood"] == ["a", "b", "c"]
+
+
+def test_graph_broken_only_output(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [missing](missing.md).\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["graph", "--config", str(config_path), "--broken"])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert len(data["broken_links"]) == 1
+    assert data["broken_links"][0]["target_concept_id"] == "missing"
+
+
+def test_graph_unknown_concept_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="A")
+
+    result = _runner().invoke(
+        cli, ["graph", "--config", str(config_path), "--concept", "missing"]
+    )
+
+    assert result.exit_code == 2
+
+
+def test_graph_scan_problems_appear_in_json(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "valid.md", title="Valid")
+    (tmp_path / "broken.md").write_text(
+        "---\ntype: [invalid\n---\nBody\n", encoding="utf-8"
+    )
+
+    result = _runner().invoke(cli, ["graph", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert len(data["problems"]) == 1
+    assert data["problems"][0]["kind"] == "parse-error"
 
 
 # ---------------------------------------------------------------------------
