@@ -23,6 +23,7 @@ classifiers = [
 ]
 dependencies = [
   "click >= 8, < 9",
+  "markdown-it-py >= 3, < 5",
   "pydantic >= 2, < 3",
   "PyYAML >= 6, < 7",
 ]
