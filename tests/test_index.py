@@ -463,6 +463,15 @@ def test_parse_entry_with_inline_code_description_round_trips() -> None:
     assert parsed.sections[0].entries[0].description == "use `foo`"
 
 
+def test_parse_nested_ordered_list_items_not_captured() -> None:
+    content = "# Section\n\n* [A](a.md)\n  1. [Nested](n.md)\n* [B](b.md)\n"
+    parsed = parse_index(content)
+    links = [e.link for e in parsed.sections[0].entries]
+    assert "a.md" in links
+    assert "b.md" in links
+    assert "n.md" not in links
+
+
 def test_parse_list_item_with_multiple_links_is_skipped() -> None:
     content = "# Section\n\n* [A](a.md) and [B](b.md)\n* [C](c.md)\n"
     parsed = parse_index(content)

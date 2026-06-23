@@ -154,7 +154,7 @@ def build_context_pack(
 
         try:
             content = entry_meta.path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             problems.append(
                 ContextPackProblem(
                     kind="read-error",

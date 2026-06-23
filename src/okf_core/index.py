@@ -89,12 +89,12 @@ def parse_index(content: str) -> ParsedIndex:
             item_captured = False
             i += 1
             while i < len(tokens) and list_depth > 0:
-                if tokens[i].type == "bullet_list_open":
+                if tokens[i].type in ("bullet_list_open", "ordered_list_open"):
                     list_depth += 1
-                elif tokens[i].type == "bullet_list_close":
+                elif tokens[i].type in ("bullet_list_close", "ordered_list_close"):
                     list_depth -= 1
                     if list_depth == 0:
-                        break  # leave i on bullet_list_close; outer i += 1 advances past it
+                        break  # leave i on list_close; outer i += 1 advances past it
                 elif list_depth == 1:
                     if tokens[i].type == "list_item_open":
                         item_captured = False

@@ -305,6 +305,23 @@ def test_multiline_title_normalized_to_single_line(tmp_path: Path) -> None:
     assert pack.entries[0].title == "Foo Bar"
 
 
+def test_unicode_decode_error_concept_in_omitted_and_problems(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "seed.md", title="Seed", body="[Bad](bad.md)\n")
+    _write_concept(root / "bad.md", title="Bad")
+    bundle = _bundle(root)
+    graph = build_bundle_graph(bundle)
+    # Overwrite with non-UTF-8 bytes after graph is built
+    (root / "bad.md").write_bytes(b"\xff\xfe invalid utf-8")
+
+    pack = build_context_pack(
+        bundle, ["seed"], depth=1, direction="outbound", graph=graph
+    )
+
+    assert "bad" in pack.omitted_concept_ids
+    assert any(p.kind == "read-error" and p.concept_id == "bad" for p in pack.problems)
+
+
 def test_read_error_concept_in_omitted_and_problems(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "seed.md", title="Seed", body="[Missing](missing.md)\n")
