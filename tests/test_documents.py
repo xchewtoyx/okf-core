@@ -356,3 +356,29 @@ def test_system_types_bypass_taxonomy_validation_only_with_flag() -> None:
     assert len(findings_normal) == 1
     assert findings_normal[0].severity == "error"
     assert "not allowed by this profile" in findings_normal[0].message
+
+
+def test_directory_metadata_bypasses_profile_field_rules() -> None:
+    from okf_core import ProfileConfig
+
+    # Profile requires 'status' and defines no optional fields
+    profile = ProfileConfig(required_frontmatter=("status",))
+
+    doc = ConceptDocument(
+        frontmatter={"type": "_directory", "custom_extra_field": "val"}
+    )
+
+    # 1. With is_directory_meta=True, required fields and unknown fields are bypassed
+    findings_bypass = validate_concept_document_with_profile(
+        doc, profile, is_directory_meta=True
+    )
+    assert findings_bypass == ()
+
+    # 2. With is_directory_meta=False, status is missing (error) and custom_extra_field is unknown (warning)
+    findings_normal = validate_concept_document_with_profile(
+        doc, profile, is_directory_meta=False
+    )
+    assert len(findings_normal) == 2
+    severities = {f.severity for f in findings_normal}
+    assert "error" in severities
+    assert "warning" in severities

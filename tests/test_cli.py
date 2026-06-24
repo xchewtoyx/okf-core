@@ -1150,7 +1150,8 @@ def test_index_malformed_directory_metadata_exits_1(tmp_path: Path) -> None:
     )
     subdir = tmp_path / "sub"
     subdir.mkdir()
-    _write_concept(subdir / "a.md", title="Alpha")
+    _write_concept(tmp_path / "a.md", title="Alpha")
+    _write_concept(subdir / "b.md", title="Beta")
     (subdir / "_directory.yml").write_text(
         """
 {invalid json
@@ -1164,3 +1165,4 @@ def test_index_malformed_directory_metadata_exits_1(tmp_path: Path) -> None:
     data = json.loads(result.stdout)
     assert len(data["problems"]) == 1
     assert "failed to parse _meta file" in data["problems"][0]["message"]
+    assert data["entries"] == 1

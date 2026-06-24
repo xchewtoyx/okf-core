@@ -139,46 +139,55 @@ def validate_concept_document_with_profile(
                     )
 
     # Check required fields
-    for field_name in profile.required_frontmatter:
-        if field_name == "type":
-            continue
-        if (
-            field_name not in document.frontmatter
-            or document.frontmatter[field_name] is None
-        ):
-            findings.append(
-                ValidationFinding(
-                    severity="error",
-                    message=f"Missing required frontmatter field: {field_name}",
-                    field=field_name,
+    if not is_directory_meta:
+        for field_name in profile.required_frontmatter:
+            if field_name == "type":
+                continue
+            if (
+                field_name not in document.frontmatter
+                or document.frontmatter[field_name] is None
+            ):
+                findings.append(
+                    ValidationFinding(
+                        severity="error",
+                        message=f"Missing required frontmatter field: {field_name}",
+                        field=field_name,
+                    )
                 )
-            )
-        elif (
-            isinstance(document.frontmatter[field_name], str)
-            and not document.frontmatter[field_name].strip()
-        ):
-            findings.append(
-                ValidationFinding(
-                    severity="error",
-                    message=f"Required frontmatter field '{field_name}' must be a non-empty string",
-                    field=field_name,
+            elif (
+                isinstance(document.frontmatter[field_name], str)
+                and not document.frontmatter[field_name].strip()
+            ):
+                findings.append(
+                    ValidationFinding(
+                        severity="error",
+                        message=f"Required frontmatter field '{field_name}' must be a non-empty string",
+                        field=field_name,
+                    )
                 )
-            )
 
     # Check unknown / undocumented fields
-    standard_fields = {"type", "title", "description", "resource", "tags", "timestamp"}
-    defined_fields = standard_fields.union(profile.required_frontmatter).union(
-        profile.optional_frontmatter
-    )
-    for field_name in document.frontmatter:
-        if field_name not in defined_fields:
-            findings.append(
-                ValidationFinding(
-                    severity="warning",
-                    message=f"Unknown frontmatter field: {field_name}",
-                    field=field_name,
+    if not is_directory_meta:
+        standard_fields = {
+            "type",
+            "title",
+            "description",
+            "resource",
+            "tags",
+            "timestamp",
+        }
+        defined_fields = standard_fields.union(profile.required_frontmatter).union(
+            profile.optional_frontmatter
+        )
+        for field_name in document.frontmatter:
+            if field_name not in defined_fields:
+                findings.append(
+                    ValidationFinding(
+                        severity="warning",
+                        message=f"Unknown frontmatter field: {field_name}",
+                        field=field_name,
+                    )
                 )
-            )
 
     return tuple(findings)
 

@@ -471,7 +471,8 @@ def index_cmd(
         project_taxonomy=project_taxonomy,
     )
 
-    entries_written = len(direct_entries) - len(generated.problems)
+    skipped_entries = sum(1 for p in generated.problems if p.concept_id)
+    entries_written = len(direct_entries) - skipped_entries
 
     index_path = target_dir / "index.md"
     body = render_index_document(
@@ -496,7 +497,7 @@ def index_cmd(
     click.echo(json.dumps(result, cls=_Encoder, indent=2))
     click.echo(
         f"Wrote index.md for bundle {bundle.name!r}: "
-        f"{entries_written} entries, {len(generated.problems)} skipped, "
+        f"{entries_written} entries, {len(generated.problems)} problems, "
         f"{len(scan_problems_in_dir)} scan errors",
         err=True,
     )
