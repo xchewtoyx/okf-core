@@ -53,6 +53,7 @@ class ProjectDefaults(BaseModel):
     concept_path_strategy: str = "relative-path"
     index_cache: Path = Path(".okf-cache")
     listing_fields: tuple[str, ...] = ()
+    directory_metadata_file: str = "_directory.yml"
 
 
 class BundleConfig(BaseModel):
@@ -69,6 +70,7 @@ class BundleConfig(BaseModel):
     index_cache: Path
     listing_fields: tuple[str, ...] = ()
     profile: str | None = None
+    directory_metadata_file: str = "_directory.yml"
 
     @field_validator("bundle_root", "index_cache", mode="after")
     @classmethod
@@ -110,6 +112,7 @@ class ConfigOverrides(BaseModel):
     concept_path_strategy: str | None = None
     index_cache: Path | None = None
     listing_fields: tuple[str, ...] | None = None
+    directory_metadata_file: str | None = None
 
 
 class _BundleInput(BaseModel):
@@ -123,6 +126,7 @@ class _BundleInput(BaseModel):
     index_cache: Path | None = None
     listing_fields: tuple[str, ...] | None = None
     profile: str | None = None
+    directory_metadata_file: str | None = None
 
 
 class _ConfigFile(BaseModel):
@@ -286,6 +290,7 @@ def _resolve_bundles(
                 concept_path_strategy=defaults.concept_path_strategy,
                 index_cache=defaults.index_cache,
                 listing_fields=defaults.listing_fields,
+                directory_metadata_file=defaults.directory_metadata_file,
             )
         }
 
@@ -337,6 +342,11 @@ def _resolve_bundle(
         raw_bundle.listing_fields,
         defaults.listing_fields,
     )
+    directory_metadata_file = _select_config_value(
+        overrides.directory_metadata_file,
+        raw_bundle.directory_metadata_file,
+        defaults.directory_metadata_file,
+    )
 
     return BundleConfig(
         name=name,
@@ -348,6 +358,7 @@ def _resolve_bundle(
         index_cache=_normalize_path(index_cache, project_root),
         listing_fields=listing_fields,
         profile=raw_bundle.profile,
+        directory_metadata_file=directory_metadata_file,
     )
 
 

@@ -333,3 +333,26 @@ def test_concept_document_frontmatter_can_be_updated_before_serializing() -> Non
     assert serialize_concept_document(document) == (
         "---\ntype: concept\nstatus: draft\n---\nBody\n"
     )
+
+
+def test_system_types_bypass_taxonomy_validation_only_with_flag() -> None:
+    from okf_core import ProfileConfig, TaxonomyConfig
+
+    project_taxonomy = TaxonomyConfig(allowed_types=("concept",))
+    profile = ProfileConfig(taxonomy=TaxonomyConfig(allowed_types=("concept",)))
+
+    doc_system = ConceptDocument(frontmatter={"type": "_directory"})
+
+    # 1. With is_directory_meta=True, allowed_types check is bypassed.
+    findings_bypass = validate_concept_document_with_profile(
+        doc_system, profile, project_taxonomy, is_directory_meta=True
+    )
+    assert findings_bypass == ()
+
+    # 2. With is_directory_meta=False, allowed_types check is NOT bypassed.
+    findings_normal = validate_concept_document_with_profile(
+        doc_system, profile, project_taxonomy, is_directory_meta=False
+    )
+    assert len(findings_normal) == 1
+    assert findings_normal[0].severity == "error"
+    assert "not allowed by this profile" in findings_normal[0].message

@@ -93,6 +93,8 @@ def validate_concept_document_with_profile(
     document: ConceptDocument,
     profile: ProfileConfig,
     project_taxonomy: TaxonomyConfig | None = None,
+    *,
+    is_directory_meta: bool = False,
 ) -> tuple[ValidationFinding, ...]:
     """Validate a concept document against base OKF rules and a custom profile."""
     findings = list(validate_concept_document(document))
@@ -102,36 +104,39 @@ def validate_concept_document_with_profile(
     if isinstance(concept_type, str) and concept_type.strip():
         concept_type_str = concept_type.strip()
 
-        allowed_types = ()
-        if profile.taxonomy.allowed_types:
-            allowed_types = profile.taxonomy.allowed_types
-        elif project_taxonomy is not None and project_taxonomy.allowed_types:
-            allowed_types = project_taxonomy.allowed_types
+        is_system_type = is_directory_meta and concept_type_str.startswith("_")
 
-        known_types = ()
-        if profile.taxonomy.known_types:
-            known_types = profile.taxonomy.known_types
-        elif project_taxonomy is not None and project_taxonomy.known_types:
-            known_types = project_taxonomy.known_types
+        if not is_system_type:
+            allowed_types = ()
+            if profile.taxonomy.allowed_types:
+                allowed_types = profile.taxonomy.allowed_types
+            elif project_taxonomy is not None and project_taxonomy.allowed_types:
+                allowed_types = project_taxonomy.allowed_types
 
-        if allowed_types:
-            if concept_type_str not in allowed_types:
-                findings.append(
-                    ValidationFinding(
-                        severity="error",
-                        message=f"Concept type '{concept_type_str}' is not allowed by this profile",
-                        field="type",
+            known_types = ()
+            if profile.taxonomy.known_types:
+                known_types = profile.taxonomy.known_types
+            elif project_taxonomy is not None and project_taxonomy.known_types:
+                known_types = project_taxonomy.known_types
+
+            if allowed_types:
+                if concept_type_str not in allowed_types:
+                    findings.append(
+                        ValidationFinding(
+                            severity="error",
+                            message=f"Concept type '{concept_type_str}' is not allowed by this profile",
+                            field="type",
+                        )
                     )
-                )
-        elif known_types:
-            if concept_type_str not in known_types:
-                findings.append(
-                    ValidationFinding(
-                        severity="warning",
-                        message=f"Concept type '{concept_type_str}' is not recognized as a known type",
-                        field="type",
+            elif known_types:
+                if concept_type_str not in known_types:
+                    findings.append(
+                        ValidationFinding(
+                            severity="warning",
+                            message=f"Concept type '{concept_type_str}' is not recognized as a known type",
+                            field="type",
+                        )
                     )
-                )
 
     # Check required fields
     for field_name in profile.required_frontmatter:

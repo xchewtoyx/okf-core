@@ -6,12 +6,23 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
+import yaml
 from markdown_it import MarkdownIt
 
+from okf_core.documents import (
+    ConceptDocument,
+    validate_concept_document,
+    validate_concept_document_with_profile,
+)
 from okf_core.manifest import ConceptManifestEntry
 
+if TYPE_CHECKING:
+    from okf_core.config import ProfileConfig, TaxonomyConfig
+
 _MARKDOWN = MarkdownIt("commonmark")
+
 _DESC_SEP = re.compile(r"^\s+-\s+")
 
 
@@ -142,6 +153,9 @@ def generate_index(
     subdirectories: Sequence[Path] = (),
     *,
     describe_directory: Callable[[Path], str | None] | None = None,
+    directory_metadata_file: str = "_directory.yml",
+    profile: ProfileConfig | None = None,
+    project_taxonomy: TaxonomyConfig | None = None,
 ) -> GeneratedIndex:
     """Generate an index.md body from manifest entries scoped to a directory.
 
@@ -260,15 +274,94 @@ def generate_index(
                     )
                 )
                 continue
+
+            # Locate metadata file with fallback
+            meta_path = resolved_subdir / directory_metadata_file
+            if not meta_path.is_file():
+                if directory_metadata_file.endswith(".yml"):
+                    alt_name = directory_metadata_file[:-4] + ".yaml"
+                    alt_path = resolved_subdir / alt_name
+                    if alt_path.is_file():
+                        meta_path = alt_path
+                elif directory_metadata_file.endswith(".yaml"):
+                    alt_name = directory_metadata_file[:-5] + ".yml"
+                    alt_path = resolved_subdir / alt_name
+                    if alt_path.is_file():
+                        meta_path = alt_path
+
+            meta_data: dict[str, Any] = {}
+            if meta_path.is_file():
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as f:
+                        loaded = yaml.safe_load(f)
+                    if loaded is None:
+                        meta_data = {}
+                    elif not isinstance(loaded, dict):
+                        problems.append(
+                            IndexProblem(
+                                concept_id="",
+                                path=meta_path,
+                                message="invalid _meta file: content must be a YAML mapping",
+                            )
+                        )
+                    else:
+                        meta_data = loaded
+                        doc = ConceptDocument(frontmatter=meta_data, body="")
+                        if profile is not None:
+                            findings = validate_concept_document_with_profile(
+                                doc,
+                                profile,
+                                project_taxonomy,
+                                is_directory_meta=True,
+                            )
+                        else:
+                            findings = validate_concept_document(doc)
+                        for finding in findings:
+                            problems.append(
+                                IndexProblem(
+                                    concept_id="",
+                                    path=meta_path,
+                                    message=(
+                                        f"validation {finding.severity}: [{finding.field}] {finding.message}"
+                                        if finding.field
+                                        else f"validation {finding.severity}: {finding.message}"
+                                    ),
+                                )
+                            )
+                except Exception as exc:
+                    problems.append(
+                        IndexProblem(
+                            concept_id="",
+                            path=meta_path,
+                            message=f"failed to parse _meta file: {exc}",
+                        )
+                    )
+
+            title = rel_path
+            if "title" in meta_data:
+                title_raw = meta_data["title"]
+                if title_raw is not None:
+                    normalized_title = _normalize_inline(str(title_raw))
+                    if normalized_title:
+                        title = normalized_title
+
             desc: str | None = None
-            if describe_directory is not None:
+            if "description" in meta_data:
+                desc_raw = meta_data["description"]
+                if desc_raw is not None:
+                    normalized_desc = _normalize_inline(str(desc_raw))
+                    desc = normalized_desc if normalized_desc else None
+
+            if desc is None and describe_directory is not None:
                 desc_raw = describe_directory(resolved_subdir)
                 if desc_raw is not None:
                     normalized = _normalize_inline(desc_raw)
                     desc = normalized if normalized else None
+
             subdir_entries.append(
-                IndexEntry(title=rel_path, link=rel_path + "/", description=desc)
+                IndexEntry(title=title, link=rel_path + "/", description=desc)
             )
+
         if subdir_entries:
             lines.append("# Subdirectories")
             lines.append("")

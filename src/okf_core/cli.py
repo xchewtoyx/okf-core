@@ -310,7 +310,7 @@ def graph_cmd(
 )
 def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) -> None:
     """Generate index.md for a bundle directory."""
-    _, bundle = _load(config_path, bundle_name)
+    config, bundle = _load(config_path, bundle_name)
     target_dir = (
         Path(directory).resolve() if directory is not None else bundle.bundle_root
     )
@@ -345,7 +345,19 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
         except ValueError:
             pass
 
-    generated = generate_index(target_dir, direct_entries, sorted(subdirs))
+    profile_cfg = (
+        config.profiles.get(bundle.profile) if bundle.profile is not None else None
+    )
+    project_taxonomy = config.taxonomy
+
+    generated = generate_index(
+        target_dir,
+        direct_entries,
+        sorted(subdirs),
+        directory_metadata_file=bundle.directory_metadata_file,
+        profile=profile_cfg,
+        project_taxonomy=project_taxonomy,
+    )
 
     entries_written = len(direct_entries) - len(generated.problems)
 

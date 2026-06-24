@@ -578,3 +578,142 @@ def test_round_trip(tmp_path: Path) -> None:
     second = "\n".join(lines)
 
     assert result.body == second
+
+
+def test_generate_index_reads_meta_yml(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yml").write_text(
+        """
+type: _directory
+title: Custom Title
+description: Custom Description
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert result.problems == ()
+    assert "* [Custom Title](sub/) - Custom Description" in result.body
+
+
+def test_generate_index_reads_meta_yaml(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yaml").write_text(
+        """
+type: _directory
+title: Custom Yaml Title
+description: Custom Yaml Description
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert result.problems == ()
+    assert "* [Custom Yaml Title](sub/) - Custom Yaml Description" in result.body
+
+
+def test_generate_index_yml_takes_precedence(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yml").write_text(
+        """
+type: _directory
+title: Yml Title
+description: Yml Description
+""".strip(),
+        encoding="utf-8",
+    )
+    (subdir / "_directory.yaml").write_text(
+        """
+type: _directory
+title: Yaml Title
+description: Yaml Description
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert result.problems == ()
+    assert "* [Yml Title](sub/) - Yml Description" in result.body
+
+
+def test_generate_index_meta_validation_error(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    # Missing type field
+    (subdir / "_directory.yml").write_text(
+        """
+title: No Type Title
+description: No Type Description
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert len(result.problems) == 1
+    assert "validation error" in result.problems[0].message
+    # Despite validation error, title and description are still extracted
+    assert "* [No Type Title](sub/) - No Type Description" in result.body
+
+
+def test_generate_index_meta_malformed(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yml").write_text(
+        """
+{invalid yaml: [
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert len(result.problems) == 1
+    assert "failed to parse _meta file" in result.problems[0].message
+    # Falls back to default directory name and no description
+    assert "* [sub](sub/)" in result.body
+    assert " - " not in result.body
+
+
+def test_generate_index_meta_fallback_to_callback(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yml").write_text(
+        """
+type: _directory
+title: File Title
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def describe(path: Path) -> str | None:
+        return "Callback Description"
+
+    result = generate_index(
+        tmp_path, [], subdirectories=[subdir], describe_directory=describe
+    )
+    assert result.problems == ()
+    assert "* [File Title](sub/) - Callback Description" in result.body
+
+
+def test_generate_index_custom_metadata_file(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "custom-name.yaml").write_text(
+        """
+type: _directory
+title: Custom Config Title
+description: Custom Config Description
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(
+        tmp_path,
+        [],
+        subdirectories=[subdir],
+        directory_metadata_file="custom-name.yaml",
+    )
+    assert result.problems == ()
+    assert "* [Custom Config Title](sub/) - Custom Config Description" in result.body
