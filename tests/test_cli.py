@@ -60,6 +60,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "index" in result.stdout
     assert "graph" in result.stdout
     assert "list-concepts" in result.stdout
+    assert "context" in result.stdout
 
 
 def test_scan_help_exits_zero() -> None:
@@ -80,6 +81,15 @@ def test_index_help_exits_zero() -> None:
 
 def test_graph_help_exits_zero() -> None:
     assert _runner().invoke(cli, ["graph", "--help"]).exit_code == 0
+
+
+def test_context_help_documents_core_options() -> None:
+    result = _runner().invoke(cli, ["context", "--help"])
+    assert result.exit_code == 0
+    assert "--seed" in result.stdout
+    assert "--depth" in result.stdout
+    assert "--direction" in result.stdout
+    assert "--budget-chars" in result.stdout
 
 
 # ---------------------------------------------------------------------------
@@ -421,6 +431,194 @@ def test_list_concepts_consumes_future_version_bundle_best_effort(
     data = json.loads(result.stdout)
     assert data["concepts"][0]["concept_id"] == "example"
     assert data["problems"] == []
+
+
+# ---------------------------------------------------------------------------
+# okf context
+# ---------------------------------------------------------------------------
+
+
+def test_context_seed_only_emits_json_pack(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "a.md"
+    concept_path.write_text(
+        "---\ntype: concept\ntitle: A\n---\nBody A\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = _runner().invoke(
+        cli,
+        ["context", "--config", str(config_path), "--seed", "a", "--depth", "0"],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["bundle"] == "default"
+    assert data["seeds"] == ["a"]
+    assert data["omitted_concept_ids"] == []
+    assert data["problems"] == []
+    assert len(data["entries"]) == 1
+    entry = data["entries"][0]
+    assert entry["concept_id"] == "a"
+    assert entry["path"] == str(concept_path)
+    assert entry["title"] == "A"
+    assert entry["selection_reason"] == "seed"
+    assert entry["graph_distance"] == 0
+    assert entry["content"] == concept_path.read_text(encoding="utf-8")
+    assert entry["char_count"] == len(entry["content"])
+
+
+def test_context_outbound_expansion(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n",
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "b.md", title="B")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "context",
+            "--config",
+            str(config_path),
+            "--seed",
+            "a",
+            "--direction",
+            "outbound",
+            "--depth",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert [entry["concept_id"] for entry in data["entries"]] == ["a", "b"]
+    assert data["entries"][1]["selection_reason"] == "outbound-link"
+    assert data["entries"][1]["graph_distance"] == 1
+
+
+def test_context_inbound_expansion(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n",
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "b.md", title="B")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "context",
+            "--config",
+            str(config_path),
+            "--seed",
+            "b",
+            "--direction",
+            "inbound",
+            "--depth",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert [entry["concept_id"] for entry in data["entries"]] == ["b", "a"]
+    assert data["entries"][1]["selection_reason"] == "backlink"
+    assert data["entries"][1]["graph_distance"] == 1
+
+
+def test_context_budget_omits_entries_without_failing(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    a_content = "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n"
+    (tmp_path / "a.md").write_text(a_content, encoding="utf-8")
+    _write_concept(tmp_path / "b.md", title="B")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "context",
+            "--config",
+            str(config_path),
+            "--seed",
+            "a",
+            "--direction",
+            "outbound",
+            "--depth",
+            "1",
+            "--budget-chars",
+            str(len(a_content)),
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert [entry["concept_id"] for entry in data["entries"]] == ["a"]
+    assert data["omitted_concept_ids"] == ["b"]
+    assert data["problems"] == []
+
+
+def test_context_unknown_seed_exits_1(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="A")
+
+    result = _runner().invoke(
+        cli, ["context", "--config", str(config_path), "--seed", "missing"]
+    )
+
+    assert result.exit_code == 1
+    data = json.loads(result.stdout)
+    assert data["entries"] == []
+    assert data["seeds"] == []
+    assert data["problems"][0]["kind"] == "unknown-seed"
+    assert data["problems"][0]["concept_id"] == "missing"
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["--seed", "a", "--depth", "-1"],
+        ["--seed", "a", "--direction", "sideways"],
+        ["--seed", "a", "--budget-chars", "-1"],
+    ],
+)
+def test_context_invalid_options_exit_2(tmp_path: Path, args: list[str]) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="A")
+
+    result = _runner().invoke(cli, ["context", "--config", str(config_path), *args])
+
+    assert result.exit_code == 2
+
+
+def test_context_config_error_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "bad.toml"
+    config_path.write_text("[defaults]\nunknown = true\n", encoding="utf-8")
+
+    result = _runner().invoke(
+        cli, ["context", "--config", str(config_path), "--seed", "a"]
+    )
+
+    assert result.exit_code == 2
 
 
 # ---------------------------------------------------------------------------

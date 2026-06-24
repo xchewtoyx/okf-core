@@ -27,7 +27,8 @@ v0.2.0 is released. v0.3.0 is in progress. Configuration loading, concept
 document parsing, configurable concept ID/path resolution, bundle manifest
 scanning, index file parsing and generation, base and profile-based validation,
 Markdown link graph traversal, deterministic bundle listings, seed-based context
-pack assembly, and the `okf` CLI (scan, validate, index, graph, list-concepts)
+pack assembly, and the `okf` CLI (scan, validate, index, graph, list-concepts,
+context)
 are all implemented. The remaining operations described under "Planned
 Operations" below are the intended shape of future releases and are not yet
 implemented.
@@ -439,6 +440,27 @@ Each concept entry includes `concept_id`, `path`, `type`, `title`,
 `outbound_link_count` / `inbound_link_count`. Counts are `null` unless
 `--with-graph-counts` is supplied. Listing problems are non-fatal and include
 `concept_id`, `path`, `kind`, and `message`.
+
+#### `okf context`
+
+Builds a deterministic context pack from one or more seed concept IDs:
+
+```sh
+okf context [--config PATH] [--bundle NAME] --seed CONCEPT_ID [--seed CONCEPT_ID ...] [--depth N] [--direction outbound|inbound|both] [--budget-chars N]
+```
+
+Output: `{"bundle": "...", "seeds": [...], "entries": [...], "omitted_concept_ids": [...], "problems": [...]}`
+
+Each entry includes `concept_id`, `path`, `title`, `selection_reason`,
+`graph_distance`, `char_count`, and raw Markdown `content`. Seeds are
+de-duplicated, kept in input order, and emitted before graph-expanded concepts.
+`--depth` controls graph expansion, `--direction` selects outbound links,
+backlinks, or both, and `--budget-chars` applies the same stable prefix budget
+used by the Python API. Concepts excluded by budget appear in
+`omitted_concept_ids` without making the command fail.
+
+Unknown seeds and read problems appear in `problems` and exit `1`. Invalid
+options, config errors, and unknown bundles exit `2`.
 
 #### `okf index`
 

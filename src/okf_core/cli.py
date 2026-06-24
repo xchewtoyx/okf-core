@@ -7,13 +7,14 @@ import json
 import sys
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, cast
 
 import click
 
 from okf_core import (
     ConfigError,
     backlinks_to,
+    build_context_pack,
     build_bundle_graph,
     declared_okf_version,
     generate_index,
@@ -191,6 +192,88 @@ def list_concepts_cmd(
         f"{len(listing.problems)} problems",
         err=True,
     )
+
+
+@cli.command("context")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--seed",
+    "seed_concept_ids",
+    multiple=True,
+    required=True,
+    metavar="CONCEPT_ID",
+    help="Seed concept ID. Repeat for multiple seeds.",
+)
+@click.option(
+    "--depth",
+    default=1,
+    show_default=True,
+    type=click.IntRange(min=0),
+    metavar="N",
+    help="Graph expansion depth.",
+)
+@click.option(
+    "--direction",
+    default="both",
+    show_default=True,
+    type=click.Choice(["outbound", "inbound", "both"]),
+    help="Graph edge direction to follow.",
+)
+@click.option(
+    "--budget-chars",
+    default=None,
+    type=click.IntRange(min=0),
+    metavar="N",
+    help="Approximate character budget for included content.",
+)
+def context_cmd(
+    config_path: str | None,
+    bundle_name: str,
+    seed_concept_ids: tuple[str, ...],
+    depth: int,
+    direction: str,
+    budget_chars: int | None,
+) -> None:
+    """Build a deterministic context pack from seed concept IDs."""
+    _, bundle = _load(config_path, bundle_name)
+    pack = build_context_pack(
+        bundle,
+        seed_concept_ids,
+        depth=depth,
+        direction=cast(Literal["outbound", "inbound", "both"], direction),
+        budget_chars=budget_chars,
+    )
+
+    result = {
+        "bundle": pack.bundle_name,
+        "seeds": list(pack.seeds),
+        "entries": [_context_entry_dict(entry) for entry in pack.entries],
+        "omitted_concept_ids": list(pack.omitted_concept_ids),
+        "problems": [_context_problem_dict(problem) for problem in pack.problems],
+    }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(
+        f"Built context pack for bundle {bundle.name!r}: "
+        f"{len(pack.entries)} entries, {len(pack.omitted_concept_ids)} omitted, "
+        f"{len(pack.problems)} problems",
+        err=True,
+    )
+    if pack.problems:
+        sys.exit(1)
 
 
 @cli.command("graph")
@@ -465,4 +548,25 @@ def _listing_problem_dict(problem: Any) -> dict[str, Any]:
         "path": str(problem.path),
         "kind": problem.kind,
         "message": problem.message,
+    }
+
+
+def _context_entry_dict(entry: Any) -> dict[str, Any]:
+    return {
+        "concept_id": entry.concept_id,
+        "path": str(entry.path),
+        "title": entry.title,
+        "selection_reason": entry.selection_reason,
+        "graph_distance": entry.graph_distance,
+        "char_count": entry.char_count,
+        "content": entry.content,
+    }
+
+
+def _context_problem_dict(problem: Any) -> dict[str, Any]:
+    return {
+        "kind": problem.kind,
+        "message": problem.message,
+        "concept_id": problem.concept_id,
+        "path": str(problem.path) if problem.path is not None else None,
     }
