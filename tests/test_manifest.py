@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from hashlib import sha256
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
 from okf_core import BundleConfig, scan_bundle
+from okf_core.manifest import ConceptManifestEntry
 
 
 def test_scan_bundle_finds_nested_concepts(tmp_path: Path) -> None:
@@ -73,6 +75,60 @@ def test_scan_bundle_records_hash_mtime_size_and_frontmatter(tmp_path: Path) -> 
         "title": "Topic",
         "extra": "kept",
     }
+    assert entry.content == content
+
+
+def test_scan_bundle_content_uses_scanned_snapshot(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "docs"
+    content = _write_concept(root / "topic.md", title="Topic")
+    entry = scan_bundle(_bundle("docs", root)).concepts[0]
+
+    def fail_read_bytes(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("content should come from the scanned snapshot")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+
+    assert entry.content == content
+    assert entry.content == content
+
+
+def test_manual_manifest_entry_content_lazy_loads_once(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("---\ntype: concept\ntitle: Topic\n---\nBody\n", encoding="utf-8")
+    entry = ConceptManifestEntry(
+        concept_id="topic",
+        path=path,
+        bundle_root=tmp_path,
+        mtime_ns=0,
+        size=0,
+        sha256="",
+        frontmatter=MappingProxyType({"type": "concept"}),
+    )
+    original_read_bytes = Path.read_bytes
+    calls = 0
+
+    def counting_read_bytes(
+        read_path: Path,
+        *args: object,
+        **kwargs: object,
+    ) -> bytes:
+        nonlocal calls
+        calls += 1
+        return original_read_bytes(read_path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
+
+    first = entry.content
+    second = entry.content
+
+    assert first == second
+    assert calls == 1
 
 
 def test_scan_bundle_size_matches_hashed_content_when_stat_size_is_stale(

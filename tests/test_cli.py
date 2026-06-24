@@ -219,7 +219,7 @@ def test_validate_errors_exit_1(tmp_path: Path) -> None:
 def test_validate_warnings_only_exit_zero(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     # Taxonomy warnings only fire when a profile is configured on the bundle.
-    # type: note is not in known_types → warning, not error.
+    # A type of "note" is not in known_types → warning, not error.
     config_path.write_text(
         f"""
 [taxonomy]

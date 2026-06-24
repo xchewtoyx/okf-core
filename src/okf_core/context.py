@@ -69,9 +69,8 @@ def build_context_pack(
     omissions and read errors are reported via ``omitted_concept_ids``;
     read errors are also reported in ``problems``.
 
-    Note: concept files are read once here for content and were already read
-    during graph construction to extract links.  Eliminating this double-read
-    requires caching content on ``ConceptManifestEntry`` — tracked in #43.
+    Concept content comes from ``ConceptManifestEntry.content`` so scanned
+    entries reuse the manifest's raw Markdown snapshot instead of rereading.
     """
     if depth < 0:
         raise ValueError("depth must be greater than or equal to 0")
@@ -155,7 +154,7 @@ def build_context_pack(
             continue
 
         try:
-            content = entry_meta.path.read_text(encoding="utf-8")
+            content = entry_meta.content
         except (OSError, UnicodeDecodeError) as exc:
             problems.append(
                 ContextPackProblem(

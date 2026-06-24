@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import MappingProxyType
 
 import pytest
 
-from okf_core import BundleConfig, build_bundle_graph
-from okf_core.context import ContextPack, build_context_pack
+from okf_core import BundleConfig, BundleGraph, build_bundle_graph
+from okf_core.context import build_context_pack
+from okf_core.manifest import ConceptManifestEntry
 
 
 def test_seed_concept_context_pack(tmp_path: Path) -> None:
@@ -291,6 +293,26 @@ def test_accepts_prebuilt_graph(tmp_path: Path) -> None:
     assert pack.entries[0].concept_id == "a"
 
 
+def test_context_pack_pipeline_uses_cached_content_without_rereading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", title="Alpha", body="See [B](b.md).\n")
+    _write_concept(root / "b.md", title="Beta")
+    bundle = _bundle(root)
+    graph = build_bundle_graph(bundle)
+
+    def fail_read_bytes(*args: object, **kwargs: object) -> bytes:
+        raise AssertionError("context pack should use scan-cached content")
+
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
+
+    pack = build_context_pack(bundle, ["a"], depth=1, direction="outbound", graph=graph)
+
+    assert [entry.concept_id for entry in pack.entries] == ["a", "b"]
+
+
 def test_bundle_name_propagated(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", title="Alpha")
@@ -313,7 +335,9 @@ def test_multiline_title_normalized_to_single_line(tmp_path: Path) -> None:
     assert pack.entries[0].title == "Foo Bar"
 
 
-def test_unicode_decode_error_concept_in_omitted_and_problems(tmp_path: Path) -> None:
+def test_cached_graph_content_is_used_after_file_becomes_invalid(
+    tmp_path: Path,
+) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "seed.md", title="Seed", body="[Bad](bad.md)\n")
     _write_concept(root / "bad.md", title="Bad")
@@ -326,11 +350,12 @@ def test_unicode_decode_error_concept_in_omitted_and_problems(tmp_path: Path) ->
         bundle, ["seed"], depth=1, direction="outbound", graph=graph
     )
 
-    assert "bad" in pack.omitted_concept_ids
-    assert any(p.kind == "read-error" and p.concept_id == "bad" for p in pack.problems)
+    assert "bad" not in pack.omitted_concept_ids
+    assert pack.problems == ()
+    assert any(entry.concept_id == "bad" for entry in pack.entries)
 
 
-def test_read_error_concept_in_omitted_and_problems(tmp_path: Path) -> None:
+def test_cached_graph_content_is_used_after_file_is_deleted(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "seed.md", title="Seed", body="[Missing](missing.md)\n")
     _write_concept(root / "missing.md", title="Missing")
@@ -343,6 +368,39 @@ def test_read_error_concept_in_omitted_and_problems(tmp_path: Path) -> None:
     pack = build_context_pack(
         bundle, ["seed"], depth=1, direction="outbound", graph=graph
     )
+
+    assert "missing" not in pack.omitted_concept_ids
+    assert pack.problems == ()
+    assert any(entry.concept_id == "missing" for entry in pack.entries)
+
+
+def test_uncached_unicode_decode_error_concept_in_omitted_and_problems(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    path = root / "bad.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\xff\xfe invalid utf-8")
+    graph = BundleGraph(
+        bundle_name="docs",
+        concepts=(_uncached_entry("bad", path, root),),
+    )
+
+    pack = build_context_pack(_bundle(root), ["bad"], graph=graph)
+
+    assert "bad" in pack.omitted_concept_ids
+    assert any(p.kind == "read-error" and p.concept_id == "bad" for p in pack.problems)
+
+
+def test_uncached_read_error_concept_in_omitted_and_problems(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    path = root / "missing.md"
+    graph = BundleGraph(
+        bundle_name="docs",
+        concepts=(_uncached_entry("missing", path, root),),
+    )
+
+    pack = build_context_pack(_bundle(root), ["missing"], graph=graph)
 
     assert "missing" in pack.omitted_concept_ids
     assert any(
@@ -392,4 +450,17 @@ def _write_concept(
     path.write_text(
         f"---\ntype: concept\ntitle: {title}\n---\n{body}",
         encoding="utf-8",
+        newline="\n",
+    )
+
+
+def _uncached_entry(concept_id: str, path: Path, root: Path) -> ConceptManifestEntry:
+    return ConceptManifestEntry(
+        concept_id=concept_id,
+        path=path,
+        bundle_root=root,
+        mtime_ns=0,
+        size=0,
+        sha256="",
+        frontmatter=MappingProxyType({"type": "concept"}),
     )
