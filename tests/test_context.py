@@ -448,6 +448,7 @@ def _write_concept(
     path.write_text(
         f"---\ntype: concept\ntitle: {title}\n---\n{body}",
         encoding="utf-8",
+        newline="\n",
     )
 
 
