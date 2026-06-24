@@ -27,13 +27,17 @@ def parse_okf_version(version: str) -> tuple[int, int]:
 def is_supported_okf_version(version: str) -> bool:
     """Return whether this package understands an OKF version."""
 
-    return parse_okf_version(version) <= SUPPORTED_OKF_VERSION
+    try:
+        return parse_okf_version(version) <= SUPPORTED_OKF_VERSION
+    except OkfVersionError:
+        return False
 
 
 def validate_supported_okf_version(version: str) -> str:
     """Validate and return a configured OKF version string."""
 
-    if not is_supported_okf_version(version):
+    parsed_version = parse_okf_version(version)
+    if parsed_version > SUPPORTED_OKF_VERSION:
         supported = ".".join(str(part) for part in SUPPORTED_OKF_VERSION)
         raise OkfVersionError(
             f"OKF version {version!r} is newer than supported version {supported!r}"

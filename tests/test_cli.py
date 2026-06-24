@@ -587,7 +587,9 @@ def test_index_writes_root_okf_version_when_configured(tmp_path: Path) -> None:
     assert "Example" in content
 
 
-def test_index_omits_root_okf_version_when_unset(tmp_path: Path) -> None:
+def test_index_preserves_existing_root_okf_version_when_config_unset(
+    tmp_path: Path,
+) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
         f'[defaults]\nbundle_root = "{tmp_path}"\n',
@@ -602,8 +604,48 @@ def test_index_omits_root_okf_version_when_unset(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     content = (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert content.startswith("---\nokf_version: '0.1'\n---\n")
+    assert "Example" in content
+
+
+def test_index_force_drops_existing_root_okf_version_when_config_unset(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "index.md").write_text(
+        "---\nokf_version: '0.1'\n---\n# Old\n", encoding="utf-8"
+    )
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path), "--force"])
+
+    assert result.exit_code == 0
+    content = (tmp_path / "index.md").read_text(encoding="utf-8")
     assert not content.startswith("---")
     assert "Example" in content
+
+
+def test_index_force_does_not_bypass_unsupported_root_version(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    original = "---\nokf_version: '0.2'\n---\n# Future\n"
+    (tmp_path / "index.md").write_text(original, encoding="utf-8")
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path), "--force"])
+
+    assert result.exit_code == 1
+    assert (tmp_path / "index.md").read_text(encoding="utf-8") == original
+    assert "unsupported bundle root okf_version" in result.stdout
 
 
 def test_index_does_not_write_version_frontmatter_for_subdirectory(

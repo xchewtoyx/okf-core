@@ -15,6 +15,7 @@ from okf_core import (
     ConfigError,
     backlinks_to,
     build_bundle_graph,
+    declared_okf_version,
     generate_index,
     list_concepts,
     links_from,
@@ -310,7 +311,20 @@ def graph_cmd(
     metavar="PATH",
     help="Directory to generate index for (default: bundle root).",
 )
-def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) -> None:
+@click.option(
+    "--force",
+    is_flag=True,
+    help=(
+        "Overwrite root index.md without preserving an existing supported "
+        "okf_version declaration when config omits okf_version."
+    ),
+)
+def index_cmd(
+    config_path: str | None,
+    bundle_name: str,
+    directory: str | None,
+    force: bool,
+) -> None:
     """Generate index.md for a bundle directory."""
     _, bundle = _load(config_path, bundle_name)
     target_dir = (
@@ -367,7 +381,7 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
     index_path = target_dir / "index.md"
     body = render_index_document(
         generated.body,
-        okf_version=bundle.okf_version if target_dir == bundle.bundle_root else None,
+        okf_version=_okf_version_for_index_write(bundle, target_dir, force),
     )
     index_path.parent.mkdir(parents=True, exist_ok=True)
     index_path.write_text(body, encoding="utf-8")
@@ -393,6 +407,22 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
     )
     if generated.problems or scan_problems_in_dir:
         sys.exit(1)
+
+
+def _okf_version_for_index_write(
+    bundle: Any, target_dir: Path, force: bool
+) -> str | None:
+    if target_dir != bundle.bundle_root:
+        return None
+    if bundle.okf_version is not None:
+        return bundle.okf_version
+    if force:
+        return None
+
+    index_path = bundle.bundle_root / "index.md"
+    if not index_path.is_file():
+        return None
+    return declared_okf_version(index_path.read_text(encoding="utf-8"))
 
 
 def _link_dict(link: Any) -> dict[str, Any]:

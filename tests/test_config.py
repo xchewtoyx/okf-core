@@ -6,6 +6,7 @@ import re
 import pytest
 
 from okf_core import ConfigError, ConfigOverrides, discover_config, load_config
+from okf_core import is_supported_okf_version
 
 
 def test_absent_config_uses_built_in_defaults(tmp_path: Path) -> None:
@@ -350,6 +351,10 @@ def test_unsupported_configured_okf_version_raises_config_error(
 
     with pytest.raises(ConfigError, match="newer than supported"):
         load_config(config_path=config_path)
+
+
+def test_is_supported_okf_version_returns_false_for_invalid_input() -> None:
+    assert not is_supported_okf_version("not-a-version")
 
 
 def test_explicit_empty_bundle_values_are_honored_from_toml(tmp_path: Path) -> None:
