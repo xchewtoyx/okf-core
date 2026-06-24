@@ -86,10 +86,10 @@ def test_scan_bundle_content_uses_scanned_snapshot(
     content = _write_concept(root / "topic.md", title="Topic")
     entry = scan_bundle(_bundle("docs", root)).concepts[0]
 
-    def fail_read_text(*args: object, **kwargs: object) -> str:
+    def fail_read_bytes(*args: object, **kwargs: object) -> bytes:
         raise AssertionError("content should come from the scanned snapshot")
 
-    monkeypatch.setattr(Path, "read_text", fail_read_text)
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
 
     assert entry.content == content
     assert entry.content == content

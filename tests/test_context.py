@@ -300,13 +300,15 @@ def test_context_pack_pipeline_uses_cached_content_without_rereading(
     root = tmp_path / "docs"
     _write_concept(root / "a.md", title="Alpha", body="See [B](b.md).\n")
     _write_concept(root / "b.md", title="Beta")
+    bundle = _bundle(root)
+    graph = build_bundle_graph(bundle)
 
-    def fail_read_text(*args: object, **kwargs: object) -> str:
+    def fail_read_bytes(*args: object, **kwargs: object) -> bytes:
         raise AssertionError("context pack should use scan-cached content")
 
-    monkeypatch.setattr(Path, "read_text", fail_read_text)
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
 
-    pack = build_context_pack(_bundle(root), ["a"], depth=1, direction="outbound")
+    pack = build_context_pack(bundle, ["a"], depth=1, direction="outbound", graph=graph)
 
     assert [entry.concept_id for entry in pack.entries] == ["a", "b"]
 

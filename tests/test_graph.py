@@ -158,10 +158,10 @@ def test_graph_uses_manifest_content_without_rereading(
     bundle = _bundle(root)
     manifest = scan_bundle(bundle)
 
-    def fail_read_text(*args: object, **kwargs: object) -> str:
+    def fail_read_bytes(*args: object, **kwargs: object) -> bytes:
         raise AssertionError("graph should use manifest-cached content")
 
-    monkeypatch.setattr(Path, "read_text", fail_read_text)
+    monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
 
     graph = build_bundle_graph(bundle, manifest)
 
