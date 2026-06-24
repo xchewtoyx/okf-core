@@ -2,4 +2,4 @@ import okf_core
 
 
 def test_package_imports() -> None:
-    assert okf_core.__version__ == "0.1.1"
+    assert okf_core.__version__ == "0.2.0"

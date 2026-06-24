@@ -11,8 +11,6 @@ from okf_core.index import (
     GeneratedIndex,
     IndexEntry,
     IndexParseProblem,
-    IndexProblem,
-    IndexSection,
     ParsedIndex,
     generate_index,
     parse_index,

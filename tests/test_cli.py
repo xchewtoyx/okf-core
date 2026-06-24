@@ -8,6 +8,20 @@ from pathlib import Path
 from click.testing import CliRunner
 
 from okf_core.cli import cli
+import pytest
+from typing import Any
+
+
+@pytest.fixture(autouse=True)
+def _patch_toml_write(monkeypatch: pytest.MonkeyPatch) -> None:
+    original_write_text = Path.write_text
+
+    def new_write_text(self: Path, data: str, *args: Any, **kwargs: Any) -> Any:
+        if self.suffix == ".toml":
+            data = data.replace("\\", "/")
+        return original_write_text(self, data, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "write_text", new_write_text)
 
 
 def _runner() -> CliRunner:
@@ -219,7 +233,7 @@ def test_validate_errors_exit_1(tmp_path: Path) -> None:
 def test_validate_warnings_only_exit_zero(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     # Taxonomy warnings only fire when a profile is configured on the bundle.
-    # type: note is not in known_types → warning, not error.
+    # A type of "note" is not in known_types → warning, not error.
     config_path.write_text(
         f"""
 [taxonomy]
