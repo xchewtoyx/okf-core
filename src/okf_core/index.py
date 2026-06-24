@@ -223,6 +223,7 @@ def generate_index(
 
     # Validate directory_metadata_file is a simple filename
     meta_file_path = Path(directory_metadata_file)
+    effective_meta_file = directory_metadata_file
     if meta_file_path.name != directory_metadata_file or meta_file_path.is_absolute():
         problems.append(
             IndexProblem(
@@ -231,7 +232,9 @@ def generate_index(
                 message=f"invalid configuration: directory_metadata_file {directory_metadata_file!r} must be a simple filename, not a path",
             )
         )
-        return GeneratedIndex(body="", problems=tuple(problems))
+        effective_meta_file = (
+            meta_file_path.name if meta_file_path.name else "_directory.yml"
+        )
 
     for entry in entries:
         type_key = entry.frontmatter.get("type")
@@ -310,7 +313,7 @@ def generate_index(
                 continue
 
             # Locate metadata file
-            meta_path = resolved_subdir / directory_metadata_file
+            meta_path = resolved_subdir / effective_meta_file
 
             meta_data: dict[str, Any] = {}
             if meta_path.is_file():

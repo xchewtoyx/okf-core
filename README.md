@@ -194,9 +194,10 @@ body-only Markdown.
 
 `validate_concept_document_with_profile(document, profile, project_taxonomy, *, is_directory_meta=False)` validates a concept document against a specific `ProfileConfig` and optional `TaxonomyConfig`, checking for:
 - Base OKF conformance.
-- Profile-required frontmatter fields (errors if missing).
-- Undocumented custom frontmatter fields (warnings if present but not defined in the profile or standard OKF fields).
+- Profile-required frontmatter fields (errors if missing; skipped if `is_directory_meta=True`).
+- Undocumented custom frontmatter fields (warnings if present but not defined in the profile or standard OKF fields; skipped if `is_directory_meta=True`).
 - Taxonomy type rules (errors if type violates profile/project `allowed_types`, warnings if type violates `known_types`). Note that if `is_directory_meta=True` is provided and the document type starts with an underscore (such as `_directory`), taxonomy checks are bypassed to accommodate local directory metadata without taxonomy configuration changes.
+
 
 
 `validate_bundle(bundle, config)` scans a bundle and validates all of its concept documents against the configured profile, returning a mapping of file paths to their respective validation findings. Any scan or parsing failures are reported as validation errors.

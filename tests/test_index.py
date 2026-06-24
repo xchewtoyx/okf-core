@@ -739,11 +739,18 @@ def test_generate_index_directory_metadata_file_must_be_simple_filename(
     tmp_path: Path,
 ) -> None:
     # Test path segments (like "sub/meta.yml") or absolute paths are rejected
+    # but the index generation still continues.
+    e = _entry(tmp_path / "a.md", tmp_path, concept_id="a", title="Alpha")
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+
     result = generate_index(
         tmp_path,
-        [],
-        subdirectories=[],
+        [e],
+        subdirectories=[subdir],
         directory_metadata_file="sub/meta.yml",
     )
     assert len(result.problems) == 1
     assert "must be a simple filename, not a path" in result.problems[0].message
+    assert "* [Alpha](a.md)" in result.body
+    assert "* [sub](sub/)" in result.body
