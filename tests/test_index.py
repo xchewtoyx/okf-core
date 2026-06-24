@@ -669,7 +669,7 @@ def test_generate_index_meta_malformed(tmp_path: Path) -> None:
 
     result = generate_index(tmp_path, [], subdirectories=[subdir])
     assert len(result.problems) == 1
-    assert "failed to parse _meta file" in result.problems[0].message
+    assert "failed to parse metadata file _directory.yml" in result.problems[0].message
     # Falls back to default directory name and no description
     assert "* [sub](sub/)" in result.body
     assert " - " not in result.body

@@ -1164,5 +1164,7 @@ def test_index_malformed_directory_metadata_exits_1(tmp_path: Path) -> None:
     assert result.exit_code == 1
     data = json.loads(result.stdout)
     assert len(data["problems"]) == 1
-    assert "failed to parse _meta file" in data["problems"][0]["message"]
+    assert (
+        "failed to parse metadata file _directory.yml" in data["problems"][0]["message"]
+    )
     assert data["entries"] == 1

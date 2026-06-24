@@ -312,7 +312,7 @@ def generate_index(
                             IndexProblem(
                                 concept_id="",
                                 path=meta_path,
-                                message="invalid _meta file: content must be a YAML mapping",
+                                message=f"invalid metadata file {meta_path.name}: content must be a YAML mapping",
                             )
                         )
                     else:
@@ -344,7 +344,7 @@ def generate_index(
                         IndexProblem(
                             concept_id="",
                             path=meta_path,
-                            message=f"failed to parse _meta file: {exc}",
+                            message=f"failed to parse metadata file {meta_path.name}: {exc}",
                         )
                     )
 
