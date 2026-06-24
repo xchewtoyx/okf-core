@@ -15,9 +15,7 @@ from okf_core import (
     ConfigError,
     backlinks_to,
     build_bundle_graph,
-    declared_okf_version,
     generate_index,
-    is_supported_okf_version,
     list_concepts,
     links_from,
     load_config,
@@ -26,8 +24,7 @@ from okf_core import (
     scan_bundle,
     validate_bundle,
 )
-from okf_core.documents import DocumentParseError
-from okf_core.versions import OkfVersionError
+from okf_core.write_safety import check_bundle_write_safety
 
 
 class _Encoder(json.JSONEncoder):
@@ -329,6 +326,19 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
         )
         sys.exit(2)
 
+    write_safety_problem = check_bundle_write_safety(bundle)
+    if write_safety_problem is not None:
+        index_path = target_dir / "index.md"
+        result = {
+            "path": str(index_path),
+            "entries": 0,
+            "problems": [{"concept_id": "", "message": write_safety_problem.message}],
+            "scan_problems": [],
+        }
+        click.echo(json.dumps(result, cls=_Encoder, indent=2))
+        click.echo(write_safety_problem.message, err=True)
+        sys.exit(1)
+
     manifest = scan_bundle(bundle)
 
     direct_entries = [c for c in manifest.concepts if c.path.parent == target_dir]
@@ -355,21 +365,6 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
     entries_written = len(direct_entries) - len(generated.problems)
 
     index_path = target_dir / "index.md"
-    if target_dir == bundle.bundle_root and _has_unsupported_index_version(index_path):
-        message = (
-            f"Refusing to rewrite {index_path}: bundle root index.md declares "
-            "an OKF version newer than 0.1"
-        )
-        result = {
-            "path": str(index_path),
-            "entries": 0,
-            "problems": [{"concept_id": "", "message": message}],
-            "scan_problems": [],
-        }
-        click.echo(json.dumps(result, cls=_Encoder, indent=2))
-        click.echo(message, err=True)
-        sys.exit(1)
-
     body = render_index_document(
         generated.body,
         okf_version=bundle.okf_version if target_dir == bundle.bundle_root else None,
@@ -398,21 +393,6 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
     )
     if generated.problems or scan_problems_in_dir:
         sys.exit(1)
-
-
-def _has_unsupported_index_version(index_path: Path) -> bool:
-    if not index_path.is_file():
-        return False
-    try:
-        version = declared_okf_version(index_path.read_text(encoding="utf-8"))
-    except (DocumentParseError, OSError):
-        return False
-    if version is None:
-        return False
-    try:
-        return not is_supported_okf_version(version)
-    except OkfVersionError:
-        return False
 
 
 def _link_dict(link: Any) -> dict[str, Any]:

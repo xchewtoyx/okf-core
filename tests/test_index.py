@@ -18,6 +18,7 @@ from okf_core.index import (
     render_index_document,
 )
 from okf_core.manifest import ConceptManifestEntry
+from okf_core.versions import OkfVersionError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -416,6 +417,20 @@ def test_declared_okf_version_reads_index_frontmatter() -> None:
     content = "---\nokf_version: '0.1'\n---\n# Concept\n"
 
     assert declared_okf_version(content) == "0.1"
+
+
+def test_declared_okf_version_rejects_unquoted_yaml_number() -> None:
+    content = "---\nokf_version: 0.2\n---\n# Concept\n"
+
+    with pytest.raises(OkfVersionError, match="quoted strings"):
+        declared_okf_version(content)
+
+
+def test_declared_okf_version_rejects_non_scalar_value() -> None:
+    content = "---\nokf_version: [0, 2]\n---\n# Concept\n"
+
+    with pytest.raises(OkfVersionError, match="quoted strings"):
+        declared_okf_version(content)
 
 
 def test_declared_okf_version_returns_none_without_frontmatter() -> None:

@@ -39,3 +39,14 @@ def validate_supported_okf_version(version: str) -> str:
             f"OKF version {version!r} is newer than supported version {supported!r}"
         )
     return version
+
+
+def normalize_okf_version_declaration(value: object) -> str:
+    """Normalize a bundle-declared OKF version value from YAML frontmatter."""
+
+    if isinstance(value, str):
+        return value
+    raise OkfVersionError(
+        "OKF version declarations must be quoted strings in root index.md "
+        f"frontmatter, got {type(value).__name__}"
+    )

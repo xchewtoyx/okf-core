@@ -11,11 +11,11 @@ from markdown_it import MarkdownIt
 
 from okf_core.documents import (
     ConceptDocument,
-    DocumentParseError,
     parse_concept_document,
     serialize_concept_document,
 )
 from okf_core.manifest import ConceptManifestEntry
+from okf_core.versions import normalize_okf_version_declaration
 
 _MARKDOWN = MarkdownIt("commonmark")
 _DESC_SEP = re.compile(r"^\s+-\s+")
@@ -91,8 +91,9 @@ def declared_okf_version(content: str) -> str | None:
     """Return an ``index.md`` frontmatter ``okf_version`` declaration, if present."""
 
     document = parse_concept_document(content)
-    version = document.frontmatter.get("okf_version")
-    return version if isinstance(version, str) else None
+    if "okf_version" not in document.frontmatter:
+        return None
+    return normalize_okf_version_declaration(document.frontmatter["okf_version"])
 
 
 def parse_index(content: str) -> ParsedIndex:

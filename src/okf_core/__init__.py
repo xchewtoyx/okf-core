@@ -68,12 +68,14 @@ from okf_core.context import (
 )
 from okf_core.validation import validate_bundle
 from okf_core.versions import is_supported_okf_version, parse_okf_version
+from okf_core.write_safety import BundleWriteSafetyProblem, check_bundle_write_safety
 
 __version__ = "0.2.0"
 
 __all__ = [
     "BundleConfig",
     "BundleManifest",
+    "BundleWriteSafetyProblem",
     "BundleListing",
     "ConfigError",
     "ConfigOverrides",
@@ -113,6 +115,7 @@ __all__ = [
     "parse_index",
     "parse_okf_version",
     "concept_id_to_path",
+    "check_bundle_write_safety",
     "is_reserved_concept_path",
     "load_config",
     "links_from",
