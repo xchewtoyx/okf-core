@@ -538,6 +538,46 @@ def test_context_inbound_expansion(tmp_path: Path) -> None:
     assert data["entries"][1]["graph_distance"] == 1
 
 
+def test_context_both_direction_expands_outbound_and_inbound(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "b.md").write_text(
+        "---\ntype: concept\ntitle: B\n---\nSee [C](c.md).\n",
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "c.md", title="C")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "context",
+            "--config",
+            str(config_path),
+            "--seed",
+            "b",
+            "--direction",
+            "both",
+            "--depth",
+            "1",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert [entry["concept_id"] for entry in data["entries"]] == ["b", "a", "c"]
+    by_id = {entry["concept_id"]: entry for entry in data["entries"]}
+    assert by_id["a"]["selection_reason"] == "backlink"
+    assert by_id["a"]["graph_distance"] == 1
+    assert by_id["c"]["selection_reason"] == "outbound-link"
+    assert by_id["c"]["graph_distance"] == 1
+
+
 def test_context_budget_omits_entries_without_failing(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(

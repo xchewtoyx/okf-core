@@ -454,10 +454,12 @@ Output: `{"bundle": "...", "seeds": [...], "entries": [...], "omitted_concept_id
 Each entry includes `concept_id`, `path`, `title`, `selection_reason`,
 `graph_distance`, `char_count`, and raw Markdown `content`. Seeds are
 de-duplicated, kept in input order, and emitted before graph-expanded concepts.
-`--depth` controls graph expansion, `--direction` selects outbound links,
-backlinks, or both, and `--budget-chars` applies the same stable prefix budget
-used by the Python API. Concepts excluded by budget appear in
-`omitted_concept_ids` without making the command fail.
+The `seeds` field contains only valid resolved seed IDs; unknown seeds appear
+in `problems` and are omitted from `seeds` and `entries`. `--depth` controls
+graph expansion, `--direction` selects outbound links, backlinks, or both, and
+`--budget-chars` applies the same stable prefix budget used by the Python API.
+Concepts excluded by budget appear in `omitted_concept_ids` without making the
+command fail.
 
 Unknown seeds and read problems appear in `problems` and exit `1`. Invalid
 options, config errors, and unknown bundles exit `2`.
