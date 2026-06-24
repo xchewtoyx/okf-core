@@ -110,19 +110,19 @@ def test_manual_manifest_entry_content_lazy_loads_once(
         sha256="",
         frontmatter=MappingProxyType({"type": "concept"}),
     )
-    original_read_text = Path.read_text
+    original_read_bytes = Path.read_bytes
     calls = 0
 
-    def counting_read_text(
+    def counting_read_bytes(
         read_path: Path,
         *args: object,
         **kwargs: object,
-    ) -> str:
+    ) -> bytes:
         nonlocal calls
         calls += 1
-        return original_read_text(read_path, *args, **kwargs)
+        return original_read_bytes(read_path, *args, **kwargs)
 
-    monkeypatch.setattr(Path, "read_text", counting_read_text)
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
 
     first = entry.content
     second = entry.content

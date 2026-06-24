@@ -37,7 +37,7 @@ class ConceptManifestEntry:
         """Return raw Markdown content, reading it once when not scan-cached."""
         content = self._content_cache
         if content is None:
-            content = self.path.read_text(encoding="utf-8")
+            content = self.path.read_bytes().decode("utf-8")
             object.__setattr__(self, "_content_cache", content)
         return content
 
