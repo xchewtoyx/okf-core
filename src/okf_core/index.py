@@ -7,13 +7,12 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
+from markdown_it import MarkdownIt
+
 from okf_core.manifest import ConceptManifestEntry
 
-# Matches * [title](link) or * [title](link) - description.
-# Title and link may contain backslash-escaped ] and ) respectively.
-_ENTRY_RE = re.compile(
-    r"^\* \[(?P<title>(?:[^\]\\]|\\.)+)\]\((?P<link>(?:[^)\\]|\\.)+)\)(?:\s+-\s+(?P<desc>.+))?$"
-)
+_MARKDOWN = MarkdownIt("commonmark")
+_DESC_SEP = re.compile(r"^\s+-\s+")
 
 
 @dataclass(frozen=True)
@@ -56,54 +55,85 @@ class IndexSection:
 
 
 @dataclass(frozen=True)
+class IndexParseProblem:
+    """A non-fatal problem encountered while parsing an index file."""
+
+    heading: str | None
+    line: int | None
+    message: str
+
+
+@dataclass(frozen=True)
 class ParsedIndex:
     """Structured representation of a parsed index.md file."""
 
     sections: tuple[IndexSection, ...]
+    problems: tuple[IndexParseProblem, ...] = ()
 
 
 def parse_index(content: str) -> ParsedIndex:
     """Parse an index.md body into structured sections and entries.
 
-    Only lines under a ``# Heading`` are captured as entries; list items that
-    appear before the first heading are ignored.  Lines that are not headings
-    or well-formed ``* [title](link)`` entries are also ignored.
+    Only entries under a ``# Heading`` are captured; list items that appear
+    before the first heading are ignored.  Malformed list items are skipped and
+    reported as parse problems.
     """
+    tokens = _MARKDOWN.parse(content)
     sections: list[IndexSection] = []
+    problems: list[IndexParseProblem] = []
     current_heading: str | None = None
     current_entries: list[IndexEntry] = []
-
-    for line in content.splitlines():
-        if line.startswith("# "):
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token.type == "heading_open" and token.tag == "h1":
             if current_heading is not None:
                 sections.append(
                     IndexSection(
-                        heading=current_heading,
-                        entries=tuple(current_entries),
+                        heading=current_heading, entries=tuple(current_entries)
                     )
                 )
-            current_heading = line[2:].strip()
+            i += 1
+            if i < len(tokens) and tokens[i].type == "inline":
+                current_heading = tokens[i].content
             current_entries = []
-        elif line.startswith("* "):
-            m = _ENTRY_RE.match(line)
-            if m:
-                current_entries.append(
-                    IndexEntry(
-                        title=_md_unescape(m.group("title")),
-                        link=_md_unescape(m.group("link")),
-                        description=m.group("desc"),
-                    )
-                )
+        elif token.type == "bullet_list_open":
+            list_level = token.level
+            item_captured = False
+            i += 1
+            while i < len(tokens):
+                t = tokens[i]
+                if t.level == list_level and t.nesting == -1:
+                    break  # any list close at this level; outer i += 1 advances past it
+                if t.level == list_level + 1 and t.type == "list_item_open":
+                    item_captured = False
+                elif (
+                    t.type == "inline"
+                    and list_level < t.level <= list_level + 3
+                    and not item_captured
+                    and current_heading is not None
+                ):
+                    entry, message = _entry_from_inline_token(t)
+                    if entry is not None:
+                        current_entries.append(entry)
+                    elif message is not None:
+                        problems.append(
+                            IndexParseProblem(
+                                heading=current_heading,
+                                line=_token_line(t),
+                                message=message,
+                            )
+                        )
+                    item_captured = True
+                i += 1
+        i += 1
 
     if current_heading is not None:
         sections.append(
-            IndexSection(
-                heading=current_heading,
-                entries=tuple(current_entries),
-            )
+            IndexSection(heading=current_heading, entries=tuple(current_entries))
         )
 
-    return ParsedIndex(sections=tuple(sections))
+    return ParsedIndex(sections=tuple(sections), problems=tuple(problems))
 
 
 def generate_index(
@@ -256,12 +286,108 @@ def _normalize_inline(s: str) -> str:
 
 def _md_escape(s: str) -> str:
     """Escape backslash then markdown link delimiters so output round-trips."""
-    return s.replace("\\", "\\\\").replace("]", "\\]").replace(")", "\\)")
+    return (
+        s.replace("\\", "\\\\")
+        .replace("[", "\\[")
+        .replace("]", "\\]")
+        .replace(")", "\\)")
+    )
 
 
-def _md_unescape(s: str) -> str:
-    """Reverse _md_escape: decode any \\X sequence to X."""
-    return re.sub(r"\\(.)", r"\1", s)
+def _inline_content(child: object) -> str | None:
+    """Return the Markdown source for a single inline child token, or None to skip."""
+    t = getattr(child, "type", "")
+    if t == "text":
+        return getattr(child, "content", "")
+    if t == "code_inline":
+        return f"`{getattr(child, 'content', '')}`"
+    if t in ("softbreak", "hardbreak"):
+        return " "
+    # Delimiter tokens (strong_open/close, em_open/close, s_open/close, etc.)
+    markup = getattr(child, "markup", "")
+    return markup if markup else None
+
+
+def _entry_from_inline_token(token: object) -> tuple[IndexEntry | None, str | None]:
+    """Extract title, href, and optional description from a list-item inline token."""
+    children = getattr(token, "children", None) or []
+    title_parts: list[str] = []
+    after_link: list[str] = []
+    href: str | None = None
+    in_link = False
+    desc_link_href: str | None = None
+    desc_link_parts: list[str] = []
+    has_desc_link = False
+
+    for child in children:
+        if child.type == "link_open":
+            if in_link:
+                return (
+                    None,
+                    "skipped malformed index entry: nested links are not supported",
+                )
+            if href is None:
+                if any(part.strip() for part in after_link):
+                    return (
+                        None,
+                        "skipped malformed index entry: entry link must be the first content",
+                    )
+                after_link = []
+                href = child.attrGet("href") or ""
+                in_link = True
+            else:
+                has_desc_link = True
+                desc_link_href = child.attrGet("href") or ""
+                desc_link_parts = []
+        elif child.type == "link_close":
+            if in_link:
+                in_link = False
+            elif desc_link_href is not None:
+                after_link.append(f"[{''.join(desc_link_parts)}]({desc_link_href})")
+                desc_link_href = None
+        else:
+            content = _inline_content(child)
+            if content is None:
+                continue
+            if in_link:
+                title_parts.append(content)
+            elif desc_link_href is not None:
+                desc_link_parts.append(content)
+            elif href is not None:
+                after_link.append(content)
+            else:
+                after_link.append(content)
+
+    if not href:
+        return None, "skipped malformed index entry: missing link target"
+    if not title_parts:
+        return None, "skipped malformed index entry: missing link title"
+
+    suffix = "".join(after_link)
+    m = _DESC_SEP.match(suffix)
+    # A second link outside the title is only valid inside a " - description" suffix
+    if has_desc_link and not m:
+        return (
+            None,
+            "skipped malformed index entry: additional links must be in a description",
+        )
+    if not m and suffix.strip():
+        return (
+            None,
+            "skipped malformed index entry: trailing text must be in a description",
+        )
+    description = suffix[m.end() :].rstrip() if m else None
+    return (
+        IndexEntry(title="".join(title_parts), link=href, description=description),
+        None,
+    )
+
+
+def _token_line(token: object) -> int | None:
+    token_map = getattr(token, "map", None)
+    if not token_map:
+        return None
+    return int(token_map[0]) + 1
 
 
 def _render_entry(entry: IndexEntry) -> str:

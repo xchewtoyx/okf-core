@@ -45,6 +45,7 @@ from okf_core.paths import (
 from okf_core.index import (
     GeneratedIndex,
     IndexEntry,
+    IndexParseProblem,
     IndexProblem,
     IndexSection,
     ParsedIndex,
@@ -56,6 +57,12 @@ from okf_core.listing import (
     ConceptListing,
     ListingProblem,
     list_concepts,
+)
+from okf_core.context import (
+    ContextEntry,
+    ContextPack,
+    ContextPackProblem,
+    build_context_pack,
 )
 from okf_core.validation import validate_bundle
 
@@ -73,6 +80,9 @@ __all__ = [
     "ConceptPathError",
     "BundleGraph",
     "ConceptLink",
+    "ContextEntry",
+    "ContextPack",
+    "ContextPackProblem",
     "DocumentParseError",
     "GraphProblem",
     "MarkdownLink",
@@ -84,12 +94,14 @@ __all__ = [
     "__version__",
     "GeneratedIndex",
     "IndexEntry",
+    "IndexParseProblem",
     "IndexProblem",
     "IndexSection",
     "ListingProblem",
     "ParsedIndex",
     "backlinks_to",
     "build_bundle_graph",
+    "build_context_pack",
     "discover_config",
     "extract_markdown_links",
     "generate_index",

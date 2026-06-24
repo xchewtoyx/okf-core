@@ -23,12 +23,14 @@ The target pattern is semi-opaque:
 
 ## Status
 
-v0.1.1 is released. Configuration loading, concept document parsing,
-configurable concept ID/path resolution, bundle manifest scanning, index file
-parsing and generation, base and profile-based validation, Markdown link graph
-traversal, and the `okf` CLI (scan, validate, index, graph) are all
-implemented. The remaining operations described under "Planned Operations"
-below are the intended shape of future releases and are not yet implemented.
+v0.1.1 is released. v0.2.0 is in progress. Configuration loading, concept
+document parsing, configurable concept ID/path resolution, bundle manifest
+scanning, index file parsing and generation, base and profile-based validation,
+Markdown link graph traversal, deterministic bundle listings, seed-based context
+pack assembly, and the `okf` CLI (scan, validate, index, graph, list-concepts)
+are all implemented. The remaining operations described under "Planned
+Operations" below are the intended shape of future releases and are not yet
+implemented.
 
 When features are implemented, this README should be updated in the same pull
 request. Documentation must distinguish implemented behavior from planned
@@ -278,16 +280,41 @@ result = generate_index(bundle.bundle_root, manifest.concepts)
 ```
 
 `parse_index()` parses an existing `index.md` body into a `ParsedIndex`
-containing `IndexSection` and `IndexEntry` objects. Generated output
-round-trips through `parse_index` without loss; markdown link
-metacharacters (`]` in titles, `)` in links) are escaped on generation
-and unescaped on parsing.
+containing `IndexSection` and `IndexEntry` objects plus a `.problems` tuple for
+malformed list items that were skipped. Generated output round-trips through
+`parse_index` without loss; markdown link metacharacters (`[`, `]` in titles,
+`)` in links) are escaped on generation and unescaped on parsing. Hand-authored
+index entries that do not match the generated/spec entry shape are reported as
+parse problems instead of causing the full index parse to fail.
 
 The `describe_directory` keyword argument to `generate_index()` is a hook point
 for callers that want to supply directory-level descriptions — for example, a
 workflow agent using its own model access. It receives the absolute subdirectory
 path and should return a description string or `None`.  `okf-core` itself never
 makes model API calls.
+
+### Context Packs
+
+`build_context_pack(bundle, seed_concept_ids, *, graph=None, depth=1, direction="both", budget_chars=None)` assembles a deterministic context pack from explicit seed concept IDs. Seeds appear first in the returned entries (in the order provided), followed by graph-expanded concepts ordered by distance then concept ID. `depth` controls how many hops of graph expansion are performed (default `1`); `direction` controls whether outbound links, backlinks, or both are followed (default `"both"`). `budget_chars` sets an approximate character-count budget; entries are added in stable order until the budget is exhausted and any remaining discovered concepts are reported in `omitted_concept_ids`. Pass `budget_chars=None` (the default) to include all discovered concepts.
+
+Each `ContextEntry` in the result includes `concept_id`, `path`, `title`, `content`, `selection_reason` (`"seed"`, `"outbound-link"`, or `"backlink"`), `graph_distance`, and `char_count`. The `ContextPack` result provides `bundle_name`, `seeds` (the de-duplicated valid seed IDs in input order), `entries`, `omitted_concept_ids` (budget- and read-error omissions), and `problems` (unknown seeds and file-read errors).
+
+Pass a pre-built `BundleGraph` as `graph` to avoid building the graph twice.
+
+```python
+from okf_core import build_context_pack, load_config
+
+config = load_config()
+bundle = config.bundles["default"]
+pack = build_context_pack(bundle, ["topics/example"], depth=2, budget_chars=20_000)
+# pack.seeds                — tuple of resolved seed concept IDs
+# pack.entries              — tuple of ContextEntry, seeds first
+# pack.omitted_concept_ids  — concepts discovered but excluded by budget or read error
+# pack.problems             — unknown seeds and file-read errors
+for entry in pack.entries:
+    print(entry.concept_id, entry.selection_reason, entry.graph_distance)
+    # entry.content  — raw file text
+```
 
 ### Graph Operations
 
@@ -448,7 +475,6 @@ No operation should require this package to own an LLM API token.
 
 - Build and refresh a local SQLite index.
 - Search title, description, frontmatter, and body text with lexical search.
-- Produce context packs from explicit seed concepts within a token budget.
 
 ### Write Operations
 

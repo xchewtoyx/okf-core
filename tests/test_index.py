@@ -10,6 +10,7 @@ import pytest
 from okf_core.index import (
     GeneratedIndex,
     IndexEntry,
+    IndexParseProblem,
     IndexProblem,
     IndexSection,
     ParsedIndex,
@@ -298,12 +299,11 @@ def test_generate_empty_string_title_falls_back_to_stem(tmp_path: Path) -> None:
 
 
 def test_generate_title_with_closing_bracket_is_escaped(tmp_path: Path) -> None:
-    # ] terminates the markdown link title; must be escaped
+    # Both [ and ] are escaped so the generated markdown is valid CommonMark
     e = _entry(tmp_path / "a.md", tmp_path, title="Foo [Bar]", description=None)
     result = generate_index(tmp_path, [e])
     assert result.problems == ()
-    # [ does not need escaping (only ] terminates the title group)
-    assert "* [Foo [Bar\\]](a.md)" in result.body
+    assert "* [Foo \\[Bar\\]](a.md)" in result.body
 
 
 def test_generate_link_with_closing_paren_is_escaped(tmp_path: Path) -> None:
@@ -406,6 +406,7 @@ def test_generate_empty_produces_empty_string(tmp_path: Path) -> None:
 def test_parse_conformant_index() -> None:
     content = "# Concepts\n\n* [Alpha](alpha.md) - First\n* [Beta](beta.md)\n"
     parsed = parse_index(content)
+    assert parsed.problems == ()
     assert len(parsed.sections) == 1
     section = parsed.sections[0]
     assert section.heading == "Concepts"
@@ -449,6 +450,90 @@ def test_parse_subdirectory_link() -> None:
     content = "# Subdirectories\n\n* [sub](sub/) - desc\n"
     parsed = parse_index(content)
     assert parsed.sections[0].entries[0].link == "sub/"
+
+
+def test_parse_entry_with_inline_code_title_round_trips() -> None:
+    content = "# Section\n\n* [`foo`](a.md)\n"
+    parsed = parse_index(content)
+    assert parsed.sections[0].entries[0].title == "`foo`"
+    assert parsed.sections[0].entries[0].link == "a.md"
+
+
+def test_parse_entry_with_inline_code_description_round_trips() -> None:
+    content = "# Section\n\n* [A](a.md) - use `foo`\n"
+    parsed = parse_index(content)
+    assert parsed.sections[0].entries[0].description == "use `foo`"
+
+
+def test_parse_nested_ordered_list_items_not_captured() -> None:
+    content = "# Section\n\n* [A](a.md)\n  1. [Nested](n.md)\n* [B](b.md)\n"
+    parsed = parse_index(content)
+    links = [e.link for e in parsed.sections[0].entries]
+    assert "a.md" in links
+    assert "b.md" in links
+    assert "n.md" not in links
+
+
+def test_parse_list_item_with_multiple_links_is_skipped() -> None:
+    content = "# Section\n\n* [A](a.md) and [B](b.md)\n* [C](c.md)\n"
+    parsed = parse_index(content)
+    # multi-link item is rejected; only the clean single-link item survives
+    assert len(parsed.sections[0].entries) == 1
+    assert parsed.sections[0].entries[0].link == "c.md"
+    assert len(parsed.problems) == 1
+    assert "additional links" in parsed.problems[0].message
+
+
+def test_parse_list_item_with_link_in_description_is_captured() -> None:
+    content = "# Section\n\n* [A](a.md) - see [B](b.md)\n"
+    parsed = parse_index(content)
+    assert len(parsed.sections[0].entries) == 1
+    entry = parsed.sections[0].entries[0]
+    assert entry.link == "a.md"
+    assert entry.description == "see [B](b.md)"
+
+
+def test_parse_entry_with_bold_title_round_trips() -> None:
+    content = "# Section\n\n* [**Bold Title**](path.md)\n"
+    parsed = parse_index(content)
+    assert parsed.sections[0].entries[0].title == "**Bold Title**"
+
+
+def test_parse_description_with_loose_separator_spacing() -> None:
+    content = "# Section\n\n* [A](a.md)  -   desc\n"
+    parsed = parse_index(content)
+    entry = parsed.sections[0].entries[0]
+    assert entry.link == "a.md"
+    assert entry.description == "desc"
+
+
+def test_parse_malformed_entry_reports_problem_without_rejecting_index() -> None:
+    content = "# Section\n\n* See [A](a.md)\n* [B](b.md) trailing text\n* [C](c.md)\n"
+    parsed = parse_index(content)
+
+    assert parsed.sections[0].entries == (IndexEntry(title="C", link="c.md"),)
+    assert parsed.problems == (
+        IndexParseProblem(
+            heading="Section",
+            line=3,
+            message="skipped malformed index entry: entry link must be the first content",
+        ),
+        IndexParseProblem(
+            heading="Section",
+            line=4,
+            message="skipped malformed index entry: trailing text must be in a description",
+        ),
+    )
+
+
+def test_parse_only_first_inline_per_list_item_used() -> None:
+    # A list item with two paragraphs produces two inline tokens; only the first matters
+    content = "# Section\n\n* [A](a.md)\n\n  [B](b.md)\n\n* [C](c.md)\n"
+    parsed = parse_index(content)
+    ids = [e.link for e in parsed.sections[0].entries]
+    assert "a.md" in ids
+    assert "b.md" not in ids
+    assert "c.md" in ids
 
 
 # ---------------------------------------------------------------------------
