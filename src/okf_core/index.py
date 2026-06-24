@@ -6,7 +6,7 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from markdown_it import MarkdownIt
@@ -313,6 +313,14 @@ def generate_index(
                                 concept_id="",
                                 path=meta_path,
                                 message=f"invalid metadata file {meta_path.name}: content must be a YAML mapping",
+                            )
+                        )
+                    elif not all(isinstance(k, str) for k in loaded.keys()):
+                        problems.append(
+                            IndexProblem(
+                                concept_id="",
+                                path=meta_path,
+                                message=f"invalid metadata file {meta_path.name}: YAML frontmatter keys must be strings",
                             )
                         )
                     else:

@@ -675,6 +675,23 @@ def test_generate_index_meta_malformed(tmp_path: Path) -> None:
     assert " - " not in result.body
 
 
+def test_generate_index_meta_non_string_keys(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yml").write_text(
+        """
+type: _directory
+123: Numeric Key
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert len(result.problems) == 1
+    assert "YAML frontmatter keys must be strings" in result.problems[0].message
+    assert "* [sub](sub/)" in result.body
+
+
 def test_generate_index_meta_fallback_to_callback(tmp_path: Path) -> None:
     subdir = tmp_path / "sub"
     subdir.mkdir()
