@@ -49,8 +49,10 @@ from okf_core.index import (
     IndexProblem,
     IndexSection,
     ParsedIndex,
+    declared_okf_version,
     generate_index,
     parse_index,
+    render_index_document,
 )
 from okf_core.listing import (
     BundleListing,
@@ -65,6 +67,7 @@ from okf_core.context import (
     build_context_pack,
 )
 from okf_core.validation import validate_bundle
+from okf_core.versions import is_supported_okf_version, parse_okf_version
 
 __version__ = "0.2.0"
 
@@ -103,9 +106,12 @@ __all__ = [
     "build_bundle_graph",
     "build_context_pack",
     "discover_config",
+    "declared_okf_version",
     "extract_markdown_links",
     "generate_index",
+    "is_supported_okf_version",
     "parse_index",
+    "parse_okf_version",
     "concept_id_to_path",
     "is_reserved_concept_path",
     "load_config",
@@ -115,6 +121,7 @@ __all__ = [
     "path_to_concept_id",
     "parse_concept_document",
     "scan_bundle",
+    "render_index_document",
     "serialize_concept_document",
     "validate_concept_document",
     "validate_concept_document_with_profile",

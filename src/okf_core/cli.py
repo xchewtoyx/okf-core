@@ -15,14 +15,19 @@ from okf_core import (
     ConfigError,
     backlinks_to,
     build_bundle_graph,
+    declared_okf_version,
     generate_index,
+    is_supported_okf_version,
     list_concepts,
     links_from,
     load_config,
     neighborhood,
+    render_index_document,
     scan_bundle,
     validate_bundle,
 )
+from okf_core.documents import DocumentParseError
+from okf_core.versions import OkfVersionError
 
 
 class _Encoder(json.JSONEncoder):
@@ -350,8 +355,27 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
     entries_written = len(direct_entries) - len(generated.problems)
 
     index_path = target_dir / "index.md"
+    if target_dir == bundle.bundle_root and _has_unsupported_index_version(index_path):
+        message = (
+            f"Refusing to rewrite {index_path}: bundle root index.md declares "
+            "an OKF version newer than 0.1"
+        )
+        result = {
+            "path": str(index_path),
+            "entries": 0,
+            "problems": [{"concept_id": "", "message": message}],
+            "scan_problems": [],
+        }
+        click.echo(json.dumps(result, cls=_Encoder, indent=2))
+        click.echo(message, err=True)
+        sys.exit(1)
+
+    body = render_index_document(
+        generated.body,
+        okf_version=bundle.okf_version if target_dir == bundle.bundle_root else None,
+    )
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(generated.body, encoding="utf-8")
+    index_path.write_text(body, encoding="utf-8")
 
     result = {
         "path": str(index_path),
@@ -374,6 +398,21 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
     )
     if generated.problems or scan_problems_in_dir:
         sys.exit(1)
+
+
+def _has_unsupported_index_version(index_path: Path) -> bool:
+    if not index_path.is_file():
+        return False
+    try:
+        version = declared_okf_version(index_path.read_text(encoding="utf-8"))
+    except (DocumentParseError, OSError):
+        return False
+    if version is None:
+        return False
+    try:
+        return not is_supported_okf_version(version)
+    except OkfVersionError:
+        return False
 
 
 def _link_dict(link: Any) -> dict[str, Any]:

@@ -12,8 +12,10 @@ from okf_core.index import (
     IndexEntry,
     IndexParseProblem,
     ParsedIndex,
+    declared_okf_version,
     generate_index,
     parse_index,
+    render_index_document,
 )
 from okf_core.manifest import ConceptManifestEntry
 
@@ -394,6 +396,30 @@ def test_generate_empty_produces_empty_string(tmp_path: Path) -> None:
     result = generate_index(tmp_path, [])
     assert result.body == ""
     assert result.problems == ()
+
+
+def test_render_index_document_omits_frontmatter_when_version_unset() -> None:
+    body = "# Concept\n\n* [A](a.md)\n"
+
+    assert render_index_document(body) == body
+
+
+def test_render_index_document_emits_root_version_frontmatter() -> None:
+    body = "# Concept\n\n* [A](a.md)\n"
+
+    assert render_index_document(body, okf_version="0.1") == (
+        "---\nokf_version: '0.1'\n---\n# Concept\n\n* [A](a.md)\n"
+    )
+
+
+def test_declared_okf_version_reads_index_frontmatter() -> None:
+    content = "---\nokf_version: '0.1'\n---\n# Concept\n"
+
+    assert declared_okf_version(content) == "0.1"
+
+
+def test_declared_okf_version_returns_none_without_frontmatter() -> None:
+    assert declared_okf_version("# Concept\n") is None
 
 
 # ---------------------------------------------------------------------------

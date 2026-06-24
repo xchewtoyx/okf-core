@@ -9,6 +9,12 @@ from pathlib import Path
 
 from markdown_it import MarkdownIt
 
+from okf_core.documents import (
+    ConceptDocument,
+    DocumentParseError,
+    parse_concept_document,
+    serialize_concept_document,
+)
 from okf_core.manifest import ConceptManifestEntry
 
 _MARKDOWN = MarkdownIt("commonmark")
@@ -69,6 +75,24 @@ class ParsedIndex:
 
     sections: tuple[IndexSection, ...]
     problems: tuple[IndexParseProblem, ...] = ()
+
+
+def render_index_document(body: str, okf_version: str | None = None) -> str:
+    """Render complete ``index.md`` content with optional root version metadata."""
+
+    if okf_version is None:
+        return body
+    return serialize_concept_document(
+        ConceptDocument(frontmatter={"okf_version": okf_version}, body=body)
+    )
+
+
+def declared_okf_version(content: str) -> str | None:
+    """Return an ``index.md`` frontmatter ``okf_version`` declaration, if present."""
+
+    document = parse_concept_document(content)
+    version = document.frontmatter.get("okf_version")
+    return version if isinstance(version, str) else None
 
 
 def parse_index(content: str) -> ParsedIndex:
