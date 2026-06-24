@@ -30,7 +30,9 @@ class ConceptManifestEntry:
     size: int
     sha256: str
     frontmatter: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
-    _content_cache: str | None = field(default=None, repr=False, compare=False)
+    _content_cache: str | None = field(
+        default=None, init=False, repr=False, compare=False
+    )
 
     @property
     def content(self) -> str:
@@ -138,19 +140,17 @@ def _scan_concept_path(
     except DocumentParseError as exc:
         return None, ManifestProblem(path=path, kind="parse-error", message=str(exc))
 
-    return (
-        ConceptManifestEntry(
-            concept_id=concept_id,
-            path=path,
-            bundle_root=root,
-            mtime_ns=stat.st_mtime_ns,
-            size=len(content),
-            sha256=sha256(content).hexdigest(),
-            frontmatter=_freeze_value(document.frontmatter),
-            _content_cache=markdown,
-        ),
-        None,
+    entry = ConceptManifestEntry(
+        concept_id=concept_id,
+        path=path,
+        bundle_root=root,
+        mtime_ns=stat.st_mtime_ns,
+        size=len(content),
+        sha256=sha256(content).hexdigest(),
+        frontmatter=_freeze_value(document.frontmatter),
     )
+    object.__setattr__(entry, "_content_cache", markdown)
+    return entry, None
 
 
 def _freeze_value(value: Any) -> Any:

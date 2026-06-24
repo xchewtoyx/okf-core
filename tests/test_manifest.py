@@ -92,7 +92,6 @@ def test_scan_bundle_content_uses_scanned_snapshot(
     monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
 
     assert entry.content == content
-    assert entry.content == content
 
 
 def test_manual_manifest_entry_content_lazy_loads_once(
