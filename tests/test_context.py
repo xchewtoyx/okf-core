@@ -8,7 +8,7 @@ from types import MappingProxyType
 import pytest
 
 from okf_core import BundleConfig, BundleGraph, build_bundle_graph
-from okf_core.context import ContextPack, build_context_pack
+from okf_core.context import build_context_pack
 from okf_core.manifest import ConceptManifestEntry
 
 
