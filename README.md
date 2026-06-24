@@ -283,7 +283,7 @@ violation; they are skipped and reported as `IndexProblem` objects in the
 outside `directory` are likewise skipped and reported. Subdirectory entries
 appear in a trailing `Subdirectories` section.
 
-**Local Tool-Specific Enhancement**: `generate_index()` and the `okf index` CLI command support an optional directory metadata sidecar file (by default `_directory.yml`, configurable via `directory_metadata_file`). Since subdirectories are not concepts and do not have an identity in the base OKF spec, this sidecar allows configuring folder-level metadata as a non-spec local tool enhancement. If the file exists (supporting `.yaml` fallback if the name ends with `.yml` and vice versa), it is parsed and validated like a concept document's frontmatter (requiring a `type` field which should be `_directory`). Any validation findings or parsing problems are surfaced in the `problems` list of the returned `GeneratedIndex`.
+**Local Tool-Specific Enhancement**: `generate_index()` and the `okf index` CLI command support an optional directory metadata sidecar file (by default `_directory.yml`, configurable via `directory_metadata_file`). Since subdirectories are not concepts and do not have an identity in the base OKF spec, this sidecar allows configuring folder-level metadata as a non-spec local tool enhancement. If the file exists, it is parsed and validated like a concept document's frontmatter (requiring a `type` field which should be `_directory`). Any validation findings or parsing problems are surfaced in the `problems` list of the returned `GeneratedIndex`.
 
 If the sidecar is valid:
 - Its `title` key overrides the directory name in the trailing `Subdirectories` section (defaults to the relative directory path).

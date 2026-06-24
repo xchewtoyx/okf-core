@@ -638,48 +638,6 @@ description: Custom Description
     assert "* [Custom Title](sub/) - Custom Description" in result.body
 
 
-def test_generate_index_reads_meta_yaml(tmp_path: Path) -> None:
-    subdir = tmp_path / "sub"
-    subdir.mkdir()
-    (subdir / "_directory.yaml").write_text(
-        """
-type: _directory
-title: Custom Yaml Title
-description: Custom Yaml Description
-""".strip(),
-        encoding="utf-8",
-    )
-
-    result = generate_index(tmp_path, [], subdirectories=[subdir])
-    assert result.problems == ()
-    assert "* [Custom Yaml Title](sub/) - Custom Yaml Description" in result.body
-
-
-def test_generate_index_yml_takes_precedence(tmp_path: Path) -> None:
-    subdir = tmp_path / "sub"
-    subdir.mkdir()
-    (subdir / "_directory.yml").write_text(
-        """
-type: _directory
-title: Yml Title
-description: Yml Description
-""".strip(),
-        encoding="utf-8",
-    )
-    (subdir / "_directory.yaml").write_text(
-        """
-type: _directory
-title: Yaml Title
-description: Yaml Description
-""".strip(),
-        encoding="utf-8",
-    )
-
-    result = generate_index(tmp_path, [], subdirectories=[subdir])
-    assert result.problems == ()
-    assert "* [Yml Title](sub/) - Yml Description" in result.body
-
-
 def test_generate_index_meta_validation_error(tmp_path: Path) -> None:
     subdir = tmp_path / "sub"
     subdir.mkdir()

@@ -297,19 +297,8 @@ def generate_index(
                 )
                 continue
 
-            # Locate metadata file with fallback
+            # Locate metadata file
             meta_path = resolved_subdir / directory_metadata_file
-            if not meta_path.is_file():
-                if directory_metadata_file.endswith(".yml"):
-                    alt_name = directory_metadata_file[:-4] + ".yaml"
-                    alt_path = resolved_subdir / alt_name
-                    if alt_path.is_file():
-                        meta_path = alt_path
-                elif directory_metadata_file.endswith(".yaml"):
-                    alt_name = directory_metadata_file[:-5] + ".yml"
-                    alt_path = resolved_subdir / alt_name
-                    if alt_path.is_file():
-                        meta_path = alt_path
 
             meta_data: dict[str, Any] = {}
             if meta_path.is_file():
