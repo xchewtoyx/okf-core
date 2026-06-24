@@ -596,3 +596,23 @@ def test_directory_metadata_file_python_overrides(tmp_path: Path) -> None:
     )
     assert config.defaults.directory_metadata_file == "override-meta.yml"
     assert config.bundles["default"].directory_metadata_file == "override-meta.yml"
+
+
+def test_directory_metadata_file_validation_rejects_paths(tmp_path: Path) -> None:
+    # 1. Defaults path validation
+    config_path1 = tmp_path / "okf-core1.toml"
+    config_path1.write_text(
+        "[defaults]\ndirectory_metadata_file = 'sub/meta.yml'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="must be a simple filename"):
+        load_config(config_path=config_path1)
+
+    # 2. Bundle path validation
+    config_path2 = tmp_path / "okf-core2.toml"
+    config_path2.write_text(
+        "[defaults]\n[bundles.docs]\nbundle_root = 'docs'\ndirectory_metadata_file = 'sub/meta.yml'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="must be a simple filename"):
+        load_config(config_path=config_path2)

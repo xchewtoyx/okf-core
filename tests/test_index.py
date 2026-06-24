@@ -621,7 +621,7 @@ def test_round_trip(tmp_path: Path) -> None:
     assert result.body == second
 
 
-def test_generate_index_reads_meta_yml(tmp_path: Path) -> None:
+def test_generate_index_reads_directory_metadata(tmp_path: Path) -> None:
     subdir = tmp_path / "sub"
     subdir.mkdir()
     (subdir / "_directory.yml").write_text(
@@ -638,7 +638,7 @@ description: Custom Description
     assert "* [Custom Title](sub/) - Custom Description" in result.body
 
 
-def test_generate_index_meta_validation_error(tmp_path: Path) -> None:
+def test_generate_index_directory_metadata_validation_error(tmp_path: Path) -> None:
     subdir = tmp_path / "sub"
     subdir.mkdir()
     # Missing type field
@@ -657,7 +657,7 @@ description: No Type Description
     assert "* [No Type Title](sub/) - No Type Description" in result.body
 
 
-def test_generate_index_meta_malformed(tmp_path: Path) -> None:
+def test_generate_index_directory_metadata_malformed(tmp_path: Path) -> None:
     subdir = tmp_path / "sub"
     subdir.mkdir()
     (subdir / "_directory.yml").write_text(
@@ -675,7 +675,7 @@ def test_generate_index_meta_malformed(tmp_path: Path) -> None:
     assert " - " not in result.body
 
 
-def test_generate_index_meta_non_string_keys(tmp_path: Path) -> None:
+def test_generate_index_directory_metadata_non_string_keys(tmp_path: Path) -> None:
     subdir = tmp_path / "sub"
     subdir.mkdir()
     (subdir / "_directory.yml").write_text(
@@ -692,7 +692,7 @@ type: _directory
     assert "* [sub](sub/)" in result.body
 
 
-def test_generate_index_meta_fallback_to_callback(tmp_path: Path) -> None:
+def test_generate_index_directory_metadata_fallback_to_callback(tmp_path: Path) -> None:
     subdir = tmp_path / "sub"
     subdir.mkdir()
     (subdir / "_directory.yml").write_text(
@@ -733,3 +733,17 @@ description: Custom Config Description
     )
     assert result.problems == ()
     assert "* [Custom Config Title](sub/) - Custom Config Description" in result.body
+
+
+def test_generate_index_directory_metadata_file_must_be_simple_filename(
+    tmp_path: Path,
+) -> None:
+    # Test path segments (like "sub/meta.yml") or absolute paths are rejected
+    result = generate_index(
+        tmp_path,
+        [],
+        subdirectories=[],
+        directory_metadata_file="sub/meta.yml",
+    )
+    assert len(result.problems) == 1
+    assert "must be a simple filename, not a path" in result.problems[0].message

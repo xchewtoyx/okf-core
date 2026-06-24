@@ -63,6 +63,13 @@ class ProjectDefaults(BaseModel):
     def _validate_okf_version(cls, v: str | None) -> str | None:
         return _validate_optional_okf_version(v)
 
+    @field_validator("directory_metadata_file")
+    @classmethod
+    def _validate_metadata_file(cls, v: str) -> str:
+        res = _validate_metadata_filename(v)
+        assert res is not None
+        return res
+
 
 class BundleConfig(BaseModel):
     """Resolved configuration for one OKF bundle."""
@@ -90,6 +97,13 @@ class BundleConfig(BaseModel):
     @classmethod
     def _validate_okf_version(cls, v: str | None) -> str | None:
         return _validate_optional_okf_version(v)
+
+    @field_validator("directory_metadata_file")
+    @classmethod
+    def _validate_metadata_file(cls, v: str) -> str:
+        res = _validate_metadata_filename(v)
+        assert res is not None
+        return res
 
 
 class OkfConfig(BaseModel):
@@ -134,6 +148,11 @@ class ConfigOverrides(BaseModel):
     def _validate_okf_version(cls, v: str | None) -> str | None:
         return _validate_optional_okf_version(v)
 
+    @field_validator("directory_metadata_file")
+    @classmethod
+    def _validate_metadata_file(cls, v: str | None) -> str | None:
+        return _validate_metadata_filename(v)
+
 
 class _BundleInput(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -153,6 +172,11 @@ class _BundleInput(BaseModel):
     @classmethod
     def _validate_okf_version(cls, v: str | None) -> str | None:
         return _validate_optional_okf_version(v)
+
+    @field_validator("directory_metadata_file")
+    @classmethod
+    def _validate_metadata_file(cls, v: str | None) -> str | None:
+        return _validate_metadata_filename(v)
 
 
 class _ConfigFile(BaseModel):
@@ -421,6 +445,16 @@ def _validate_optional_okf_version(version: str | None) -> str | None:
         return validate_supported_okf_version(version)
     except OkfVersionError as exc:
         raise ValueError(str(exc)) from exc
+
+
+def _validate_metadata_filename(v: str | None) -> str | None:
+    if v is not None:
+        p = Path(v)
+        if p.name != v or p.is_absolute():
+            raise ValueError(
+                f"directory_metadata_file {v!r} must be a simple filename, not a path"
+            )
+    return v
 
 
 def _resolve_search_root(start_path: str | Path | None) -> Path:

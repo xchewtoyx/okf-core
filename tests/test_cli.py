@@ -1154,7 +1154,7 @@ def test_index_malformed_directory_metadata_exits_1(tmp_path: Path) -> None:
     _write_concept(subdir / "b.md", title="Beta")
     (subdir / "_directory.yml").write_text(
         """
-{invalid json
+{invalid yaml
 """.strip(),
         encoding="utf-8",
     )
