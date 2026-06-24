@@ -34,7 +34,7 @@ class ConceptManifestEntry:
 
     @property
     def content(self) -> str:
-        """Return raw Markdown content, reading it once when not scan-cached."""
+        """Return raw Markdown content, reading it when not scan-cached."""
         content = self._content_cache
         if content is None:
             content = self.path.read_bytes().decode("utf-8")
