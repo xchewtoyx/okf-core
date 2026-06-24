@@ -10,6 +10,7 @@ import pytest
 from okf_core.index import (
     GeneratedIndex,
     IndexEntry,
+    IndexParseProblem,
     IndexProblem,
     IndexSection,
     ParsedIndex,
@@ -405,6 +406,7 @@ def test_generate_empty_produces_empty_string(tmp_path: Path) -> None:
 def test_parse_conformant_index() -> None:
     content = "# Concepts\n\n* [Alpha](alpha.md) - First\n* [Beta](beta.md)\n"
     parsed = parse_index(content)
+    assert parsed.problems == ()
     assert len(parsed.sections) == 1
     section = parsed.sections[0]
     assert section.heading == "Concepts"
@@ -478,6 +480,8 @@ def test_parse_list_item_with_multiple_links_is_skipped() -> None:
     # multi-link item is rejected; only the clean single-link item survives
     assert len(parsed.sections[0].entries) == 1
     assert parsed.sections[0].entries[0].link == "c.md"
+    assert len(parsed.problems) == 1
+    assert "additional links" in parsed.problems[0].message
 
 
 def test_parse_list_item_with_link_in_description_is_captured() -> None:
@@ -501,6 +505,25 @@ def test_parse_description_with_loose_separator_spacing() -> None:
     entry = parsed.sections[0].entries[0]
     assert entry.link == "a.md"
     assert entry.description == "desc"
+
+
+def test_parse_malformed_entry_reports_problem_without_rejecting_index() -> None:
+    content = "# Section\n\n* See [A](a.md)\n* [B](b.md) trailing text\n* [C](c.md)\n"
+    parsed = parse_index(content)
+
+    assert parsed.sections[0].entries == (IndexEntry(title="C", link="c.md"),)
+    assert parsed.problems == (
+        IndexParseProblem(
+            heading="Section",
+            line=3,
+            message="skipped malformed index entry: entry link must be the first content",
+        ),
+        IndexParseProblem(
+            heading="Section",
+            line=4,
+            message="skipped malformed index entry: trailing text must be in a description",
+        ),
+    )
 
 
 def test_parse_only_first_inline_per_list_item_used() -> None:

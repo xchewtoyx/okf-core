@@ -271,6 +271,14 @@ def test_negative_depth_raises_value_error(tmp_path: Path) -> None:
         build_context_pack(_bundle(root), [], depth=-1)
 
 
+def test_invalid_direction_raises_value_error(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    root.mkdir(parents=True, exist_ok=True)
+
+    with pytest.raises(ValueError, match="direction"):
+        build_context_pack(_bundle(root), [], direction="sideways")  # type: ignore[arg-type]
+
+
 def test_accepts_prebuilt_graph(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", title="Alpha")

@@ -45,6 +45,7 @@ from okf_core.paths import (
 from okf_core.index import (
     GeneratedIndex,
     IndexEntry,
+    IndexParseProblem,
     IndexProblem,
     IndexSection,
     ParsedIndex,
@@ -93,6 +94,7 @@ __all__ = [
     "__version__",
     "GeneratedIndex",
     "IndexEntry",
+    "IndexParseProblem",
     "IndexProblem",
     "IndexSection",
     "ListingProblem",

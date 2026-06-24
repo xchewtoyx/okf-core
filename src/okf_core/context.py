@@ -77,6 +77,8 @@ def build_context_pack(
         raise ValueError("depth must be greater than or equal to 0")
     if budget_chars is not None and budget_chars < 0:
         raise ValueError("budget_chars must be non-negative")
+    if direction not in {"outbound", "inbound", "both"}:
+        raise ValueError("direction must be 'outbound', 'inbound', or 'both'")
 
     resolved_graph = graph if graph is not None else build_bundle_graph(bundle)
     concept_index = {c.concept_id: c for c in resolved_graph.concepts}

@@ -55,20 +55,32 @@ class IndexSection:
 
 
 @dataclass(frozen=True)
+class IndexParseProblem:
+    """A non-fatal problem encountered while parsing an index file."""
+
+    heading: str | None
+    line: int | None
+    message: str
+
+
+@dataclass(frozen=True)
 class ParsedIndex:
     """Structured representation of a parsed index.md file."""
 
     sections: tuple[IndexSection, ...]
+    problems: tuple[IndexParseProblem, ...] = ()
 
 
 def parse_index(content: str) -> ParsedIndex:
     """Parse an index.md body into structured sections and entries.
 
     Only entries under a ``# Heading`` are captured; list items that appear
-    before the first heading are ignored.  Non-link list items are skipped.
+    before the first heading are ignored.  Malformed list items are skipped and
+    reported as parse problems.
     """
     tokens = _MARKDOWN.parse(content)
     sections: list[IndexSection] = []
+    problems: list[IndexParseProblem] = []
     current_heading: str | None = None
     current_entries: list[IndexEntry] = []
     i = 0
@@ -101,9 +113,17 @@ def parse_index(content: str) -> ParsedIndex:
                     and not item_captured
                     and current_heading is not None
                 ):
-                    entry = _entry_from_inline_token(t)
+                    entry, message = _entry_from_inline_token(t)
                     if entry is not None:
                         current_entries.append(entry)
+                    elif message is not None:
+                        problems.append(
+                            IndexParseProblem(
+                                heading=current_heading,
+                                line=_token_line(t),
+                                message=message,
+                            )
+                        )
                     item_captured = True
                 i += 1
         i += 1
@@ -113,7 +133,7 @@ def parse_index(content: str) -> ParsedIndex:
             IndexSection(heading=current_heading, entries=tuple(current_entries))
         )
 
-    return ParsedIndex(sections=tuple(sections))
+    return ParsedIndex(sections=tuple(sections), problems=tuple(problems))
 
 
 def generate_index(
@@ -288,7 +308,7 @@ def _inline_content(child: object) -> str | None:
     return markup if markup else None
 
 
-def _entry_from_inline_token(token: object) -> IndexEntry | None:
+def _entry_from_inline_token(token: object) -> tuple[IndexEntry | None, str | None]:
     """Extract title, href, and optional description from a list-item inline token."""
     children = getattr(token, "children", None) or []
     title_parts: list[str] = []
@@ -302,8 +322,17 @@ def _entry_from_inline_token(token: object) -> IndexEntry | None:
     for child in children:
         if child.type == "link_open":
             if in_link:
-                return None  # nested link inside title: ambiguous, skip
+                return (
+                    None,
+                    "skipped malformed index entry: nested links are not supported",
+                )
             if href is None:
+                if any(part.strip() for part in after_link):
+                    return (
+                        None,
+                        "skipped malformed index entry: entry link must be the first content",
+                    )
+                after_link = []
                 href = child.attrGet("href") or ""
                 in_link = True
             else:
@@ -326,17 +355,39 @@ def _entry_from_inline_token(token: object) -> IndexEntry | None:
                 desc_link_parts.append(content)
             elif href is not None:
                 after_link.append(content)
+            else:
+                after_link.append(content)
 
-    if not href or not title_parts:
-        return None
+    if not href:
+        return None, "skipped malformed index entry: missing link target"
+    if not title_parts:
+        return None, "skipped malformed index entry: missing link title"
 
     suffix = "".join(after_link)
     m = _DESC_SEP.match(suffix)
     # A second link outside the title is only valid inside a " - description" suffix
     if has_desc_link and not m:
-        return None
+        return (
+            None,
+            "skipped malformed index entry: additional links must be in a description",
+        )
+    if not m and suffix.strip():
+        return (
+            None,
+            "skipped malformed index entry: trailing text must be in a description",
+        )
     description = suffix[m.end() :].rstrip() if m else None
-    return IndexEntry(title="".join(title_parts), link=href, description=description)
+    return (
+        IndexEntry(title="".join(title_parts), link=href, description=description),
+        None,
+    )
+
+
+def _token_line(token: object) -> int | None:
+    token_map = getattr(token, "map", None)
+    if not token_map:
+        return None
+    return int(token_map[0]) + 1
 
 
 def _render_entry(entry: IndexEntry) -> str:
