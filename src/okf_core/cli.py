@@ -15,14 +15,17 @@ from okf_core import (
     ConfigError,
     backlinks_to,
     build_bundle_graph,
+    declared_okf_version,
     generate_index,
     list_concepts,
     links_from,
     load_config,
     neighborhood,
+    render_index_document,
     scan_bundle,
     validate_bundle,
 )
+from okf_core.write_safety import check_bundle_write_safety
 
 
 class _Encoder(json.JSONEncoder):
@@ -308,7 +311,20 @@ def graph_cmd(
     metavar="PATH",
     help="Directory to generate index for (default: bundle root).",
 )
-def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) -> None:
+@click.option(
+    "--force",
+    is_flag=True,
+    help=(
+        "Overwrite root index.md without preserving an existing supported "
+        "okf_version declaration when config omits okf_version."
+    ),
+)
+def index_cmd(
+    config_path: str | None,
+    bundle_name: str,
+    directory: str | None,
+    force: bool,
+) -> None:
     """Generate index.md for a bundle directory."""
     _, bundle = _load(config_path, bundle_name)
     target_dir = (
@@ -323,6 +339,19 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
             err=True,
         )
         sys.exit(2)
+
+    write_safety_problem = check_bundle_write_safety(bundle)
+    if write_safety_problem is not None:
+        index_path = target_dir / "index.md"
+        result = {
+            "path": str(index_path),
+            "entries": 0,
+            "problems": [{"concept_id": "", "message": write_safety_problem.message}],
+            "scan_problems": [],
+        }
+        click.echo(json.dumps(result, cls=_Encoder, indent=2))
+        click.echo(write_safety_problem.message, err=True)
+        sys.exit(1)
 
     manifest = scan_bundle(bundle)
 
@@ -350,8 +379,12 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
     entries_written = len(direct_entries) - len(generated.problems)
 
     index_path = target_dir / "index.md"
+    body = render_index_document(
+        generated.body,
+        okf_version=_okf_version_for_index_write(bundle, target_dir, force),
+    )
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(generated.body, encoding="utf-8")
+    index_path.write_text(body, encoding="utf-8")
 
     result = {
         "path": str(index_path),
@@ -374,6 +407,22 @@ def index_cmd(config_path: str | None, bundle_name: str, directory: str | None) 
     )
     if generated.problems or scan_problems_in_dir:
         sys.exit(1)
+
+
+def _okf_version_for_index_write(
+    bundle: Any, target_dir: Path, force: bool
+) -> str | None:
+    if target_dir != bundle.bundle_root:
+        return None
+    if bundle.okf_version is not None:
+        return bundle.okf_version
+    if force:
+        return None
+
+    index_path = bundle.bundle_root / "index.md"
+    if not index_path.is_file():
+        return None
+    return declared_okf_version(index_path.read_text(encoding="utf-8"))
 
 
 def _link_dict(link: Any) -> dict[str, Any]:

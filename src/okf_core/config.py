@@ -15,6 +15,8 @@ from pydantic import (
     model_validator,
 )
 
+from okf_core.versions import OkfVersionError, validate_supported_okf_version
+
 CONFIG_FILENAME = "okf-core.toml"
 
 
@@ -53,6 +55,12 @@ class ProjectDefaults(BaseModel):
     concept_path_strategy: str = "relative-path"
     index_cache: Path = Path(".okf-cache")
     listing_fields: tuple[str, ...] = ()
+    okf_version: str | None = None
+
+    @field_validator("okf_version")
+    @classmethod
+    def _validate_okf_version(cls, v: str | None) -> str | None:
+        return _validate_optional_okf_version(v)
 
 
 class BundleConfig(BaseModel):
@@ -68,12 +76,18 @@ class BundleConfig(BaseModel):
     concept_path_strategy: str
     index_cache: Path
     listing_fields: tuple[str, ...] = ()
+    okf_version: str | None = None
     profile: str | None = None
 
     @field_validator("bundle_root", "index_cache", mode="after")
     @classmethod
     def _normalize_paths(cls, v: Path) -> Path:
         return v.expanduser().resolve(strict=False)
+
+    @field_validator("okf_version")
+    @classmethod
+    def _validate_okf_version(cls, v: str | None) -> str | None:
+        return _validate_optional_okf_version(v)
 
 
 class OkfConfig(BaseModel):
@@ -110,6 +124,12 @@ class ConfigOverrides(BaseModel):
     concept_path_strategy: str | None = None
     index_cache: Path | None = None
     listing_fields: tuple[str, ...] | None = None
+    okf_version: str | None = None
+
+    @field_validator("okf_version")
+    @classmethod
+    def _validate_okf_version(cls, v: str | None) -> str | None:
+        return _validate_optional_okf_version(v)
 
 
 class _BundleInput(BaseModel):
@@ -122,7 +142,13 @@ class _BundleInput(BaseModel):
     concept_path_strategy: str | None = None
     index_cache: Path | None = None
     listing_fields: tuple[str, ...] | None = None
+    okf_version: str | None = None
     profile: str | None = None
+
+    @field_validator("okf_version")
+    @classmethod
+    def _validate_okf_version(cls, v: str | None) -> str | None:
+        return _validate_optional_okf_version(v)
 
 
 class _ConfigFile(BaseModel):
@@ -286,6 +312,7 @@ def _resolve_bundles(
                 concept_path_strategy=defaults.concept_path_strategy,
                 index_cache=defaults.index_cache,
                 listing_fields=defaults.listing_fields,
+                okf_version=defaults.okf_version,
             )
         }
 
@@ -337,6 +364,11 @@ def _resolve_bundle(
         raw_bundle.listing_fields,
         defaults.listing_fields,
     )
+    okf_version = _select_config_value(
+        overrides.okf_version,
+        raw_bundle.okf_version,
+        defaults.okf_version,
+    )
 
     return BundleConfig(
         name=name,
@@ -347,6 +379,7 @@ def _resolve_bundle(
         concept_path_strategy=concept_path_strategy,
         index_cache=_normalize_path(index_cache, project_root),
         listing_fields=listing_fields,
+        okf_version=okf_version,
         profile=raw_bundle.profile,
     )
 
@@ -368,6 +401,15 @@ def _normalize_path(path: Path, project_root: Path) -> Path:
     if expanded.is_absolute():
         return expanded.resolve(strict=False)
     return (project_root / expanded).resolve(strict=False)
+
+
+def _validate_optional_okf_version(version: str | None) -> str | None:
+    if version is None:
+        return None
+    try:
+        return validate_supported_okf_version(version)
+    except OkfVersionError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def _resolve_search_root(start_path: str | Path | None) -> Path:

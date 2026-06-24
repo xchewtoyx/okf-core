@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import inspect
 from pathlib import Path
 
 from click.testing import CliRunner
@@ -25,6 +26,8 @@ def _patch_toml_write(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def _runner() -> CliRunner:
+    if "mix_stderr" in inspect.signature(CliRunner).parameters:
+        return CliRunner(mix_stderr=False)
     return CliRunner()
 
 
@@ -34,6 +37,13 @@ def _write_concept(path: Path, *, title: str, type_: str = "concept") -> None:
         f"---\ntype: {type_}\ntitle: {title}\n---\nBody\n",
         encoding="utf-8",
         newline="\n",
+    )
+
+
+def _write_future_root_index(root: Path) -> None:
+    (root / "index.md").write_text(
+        "---\nokf_version: '0.2'\n---\n# Future Bundle\n",
+        encoding="utf-8",
     )
 
 
@@ -187,12 +197,28 @@ def test_scan_config_error_exits_2(tmp_path: Path) -> None:
 
 
 def test_scan_no_config_uses_defaults_no_error() -> None:
-    runner = CliRunner()
+    runner = _runner()
     with runner.isolated_filesystem():
         result = runner.invoke(cli, ["scan"])
     assert result.exit_code == 0
     data = json.loads(result.stdout)
     assert "concepts" in data
+
+
+def test_scan_consumes_future_version_bundle_best_effort(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_future_root_index(tmp_path)
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["scan", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concepts"][0]["concept_id"] == "example"
+    assert data["problems"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -379,6 +405,24 @@ def test_list_concepts_config_error_exits_2(tmp_path: Path) -> None:
     assert result.exit_code == 2
 
 
+def test_list_concepts_consumes_future_version_bundle_best_effort(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_future_root_index(tmp_path)
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["list-concepts", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concepts"][0]["concept_id"] == "example"
+    assert data["problems"] == []
+
+
 # ---------------------------------------------------------------------------
 # okf graph
 # ---------------------------------------------------------------------------
@@ -486,6 +530,27 @@ def test_graph_scan_problems_appear_in_json(tmp_path: Path) -> None:
     assert data["problems"][0]["kind"] == "parse-error"
 
 
+def test_graph_consumes_future_version_bundle_best_effort(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_future_root_index(tmp_path)
+    _write_concept(tmp_path / "a.md", title="A")
+    _write_concept(tmp_path / "b.md", title="B")
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["graph", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concepts"] == ["a", "b"]
+    assert data["links"][0]["target_concept_id"] == "b"
+
+
 # ---------------------------------------------------------------------------
 # okf index
 # ---------------------------------------------------------------------------
@@ -504,6 +569,196 @@ def test_index_writes_index_md(tmp_path: Path) -> None:
     index_path = tmp_path / "index.md"
     assert index_path.exists()
     assert "Example" in index_path.read_text(encoding="utf-8")
+
+
+def test_index_writes_root_okf_version_when_configured(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\nokf_version = "0.1"\n',
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    content = (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert content.startswith("---\nokf_version: '0.1'\n---\n")
+    assert "Example" in content
+
+
+def test_index_preserves_existing_root_okf_version_when_config_unset(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "index.md").write_text(
+        "---\nokf_version: '0.1'\n---\n# Old\n", encoding="utf-8"
+    )
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    content = (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert content.startswith("---\nokf_version: '0.1'\n---\n")
+    assert "Example" in content
+
+
+def test_index_force_drops_existing_root_okf_version_when_config_unset(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "index.md").write_text(
+        "---\nokf_version: '0.1'\n---\n# Old\n", encoding="utf-8"
+    )
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path), "--force"])
+
+    assert result.exit_code == 0
+    content = (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert not content.startswith("---")
+    assert "Example" in content
+
+
+def test_index_force_does_not_bypass_unsupported_root_version(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    original = "---\nokf_version: '0.2'\n---\n# Future\n"
+    (tmp_path / "index.md").write_text(original, encoding="utf-8")
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path), "--force"])
+
+    assert result.exit_code == 1
+    assert (tmp_path / "index.md").read_text(encoding="utf-8") == original
+    assert "unsupported bundle root okf_version" in result.stdout
+
+
+def test_index_does_not_write_version_frontmatter_for_subdirectory(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\nokf_version = "0.1"\n',
+        encoding="utf-8",
+    )
+    subdir = tmp_path / "topics"
+    _write_concept(subdir / "example.md", title="Example")
+
+    result = _runner().invoke(
+        cli, ["index", "--config", str(config_path), "--directory", str(subdir)]
+    )
+
+    assert result.exit_code == 0
+    content = (subdir / "index.md").read_text(encoding="utf-8")
+    assert not content.startswith("---")
+    assert "Example" in content
+
+
+def test_index_leaves_newer_version_bundle_root_alone(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    original = "---\nokf_version: '0.2'\n---\n# Future\n"
+    (tmp_path / "index.md").write_text(original, encoding="utf-8")
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert (tmp_path / "index.md").read_text(encoding="utf-8") == original
+    assert "unsupported bundle root okf_version" in result.stdout
+
+
+def test_index_rejects_unquoted_numeric_root_okf_version(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    original = "---\nokf_version: 0.2\n---\n# Future\n"
+    (tmp_path / "index.md").write_text(original, encoding="utf-8")
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert (tmp_path / "index.md").read_text(encoding="utf-8") == original
+    assert "invalid bundle root okf_version" in result.stdout
+
+
+def test_index_rejects_non_scalar_root_okf_version(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    original = "---\nokf_version: [0, 2]\n---\n# Future\n"
+    (tmp_path / "index.md").write_text(original, encoding="utf-8")
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert (tmp_path / "index.md").read_text(encoding="utf-8") == original
+    assert "invalid bundle root okf_version" in result.stdout
+
+
+def test_index_rejects_malformed_root_index_frontmatter(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    original = "---\nokf_version: [invalid\n---\n# Future\n"
+    (tmp_path / "index.md").write_text(original, encoding="utf-8")
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert (tmp_path / "index.md").read_text(encoding="utf-8") == original
+    assert "could not parse bundle root index.md frontmatter" in result.stdout
+
+
+def test_index_rejects_subdirectory_write_when_root_version_is_newer(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "index.md").write_text(
+        "---\nokf_version: '0.2'\n---\n# Future\n",
+        encoding="utf-8",
+    )
+    subdir = tmp_path / "topics"
+    _write_concept(subdir / "example.md", title="Example")
+
+    result = _runner().invoke(
+        cli, ["index", "--config", str(config_path), "--directory", str(subdir)]
+    )
+
+    assert result.exit_code == 1
+    assert not (subdir / "index.md").exists()
+    assert "unsupported bundle root okf_version" in result.stdout
 
 
 def test_index_emits_json_with_path_and_entry_count(tmp_path: Path) -> None:
