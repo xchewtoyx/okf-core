@@ -70,7 +70,7 @@ from okf_core.validation import validate_bundle
 from okf_core.versions import is_supported_okf_version, parse_okf_version
 from okf_core.write_safety import BundleWriteSafetyProblem, check_bundle_write_safety
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 __all__ = [
     "BundleConfig",

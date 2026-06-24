@@ -23,7 +23,7 @@ The target pattern is semi-opaque:
 
 ## Status
 
-v0.2.0 is released. v0.3.0 is in progress. Configuration loading, concept
+v0.2.1 is released. v0.3.0 is in progress. Configuration loading, concept
 document parsing, configurable concept ID/path resolution, bundle manifest
 scanning, index file parsing and generation, base and profile-based validation,
 Markdown link graph traversal, deterministic bundle listings, seed-based context
