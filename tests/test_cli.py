@@ -40,6 +40,13 @@ def _write_concept(path: Path, *, title: str, type_: str = "concept") -> None:
     )
 
 
+def _write_future_root_index(root: Path) -> None:
+    (root / "index.md").write_text(
+        "---\nokf_version: '0.2'\n---\n# Future Bundle\n",
+        encoding="utf-8",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
@@ -196,6 +203,22 @@ def test_scan_no_config_uses_defaults_no_error() -> None:
     assert result.exit_code == 0
     data = json.loads(result.stdout)
     assert "concepts" in data
+
+
+def test_scan_consumes_future_version_bundle_best_effort(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_future_root_index(tmp_path)
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["scan", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concepts"][0]["concept_id"] == "example"
+    assert data["problems"] == []
 
 
 # ---------------------------------------------------------------------------
@@ -382,6 +405,24 @@ def test_list_concepts_config_error_exits_2(tmp_path: Path) -> None:
     assert result.exit_code == 2
 
 
+def test_list_concepts_consumes_future_version_bundle_best_effort(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_future_root_index(tmp_path)
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    result = _runner().invoke(cli, ["list-concepts", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concepts"][0]["concept_id"] == "example"
+    assert data["problems"] == []
+
+
 # ---------------------------------------------------------------------------
 # okf graph
 # ---------------------------------------------------------------------------
@@ -487,6 +528,27 @@ def test_graph_scan_problems_appear_in_json(tmp_path: Path) -> None:
     data = json.loads(result.stdout)
     assert len(data["problems"]) == 1
     assert data["problems"][0]["kind"] == "parse-error"
+
+
+def test_graph_consumes_future_version_bundle_best_effort(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_future_root_index(tmp_path)
+    _write_concept(tmp_path / "a.md", title="A")
+    _write_concept(tmp_path / "b.md", title="B")
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["graph", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concepts"] == ["a", "b"]
+    assert data["links"][0]["target_concept_id"] == "b"
 
 
 # ---------------------------------------------------------------------------
