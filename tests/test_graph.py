@@ -11,6 +11,7 @@ from okf_core import (
     extract_markdown_links,
     links_from,
     neighborhood,
+    scan_bundle,
 )
 
 
@@ -145,6 +146,28 @@ def test_graph_reports_decode_problems_with_decode_error_kind(tmp_path: Path) ->
 
     assert graph.problems[0].path == path
     assert graph.problems[0].kind == "decode-error"
+
+
+def test_graph_uses_manifest_content_without_rereading(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [B](b.md).")
+    _write_concept(root / "b.md")
+    bundle = _bundle(root)
+    manifest = scan_bundle(bundle)
+
+    def fail_read_text(*args: object, **kwargs: object) -> str:
+        raise AssertionError("graph should use manifest-cached content")
+
+    monkeypatch.setattr(Path, "read_text", fail_read_text)
+
+    graph = build_bundle_graph(bundle, manifest)
+
+    assert [
+        (link.source_concept_id, link.target_concept_id) for link in graph.links
+    ] == [("a", "b")]
 
 
 def test_neighborhood_is_depth_limited_and_bidirectional(tmp_path: Path) -> None:

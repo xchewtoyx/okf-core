@@ -200,9 +200,12 @@ documents at any hierarchy level.
 
 `scan_bundle()` scans a resolved `BundleConfig` and returns a deterministic
 `BundleManifest`. Manifest entries include the concept ID, path, bundle root,
-`mtime_ns` timestamp, size, SHA-256 hash, and parsed frontmatter summary for
-each discovered concept document. Frontmatter summaries are returned as
-immutable mappings so manifest data cannot be accidentally changed in place.
+`mtime_ns` timestamp, size, SHA-256 hash, parsed frontmatter summary, and raw
+Markdown content for each discovered concept document. Frontmatter summaries are
+returned as immutable mappings so manifest data cannot be accidentally changed
+in place. Raw content is exposed through `ConceptManifestEntry.content` as the
+scan-time snapshot; entries constructed outside `scan_bundle()` read and cache
+their file content on first access.
 
 Scanning applies the bundle's configured include globs, exclude globs, and
 reserved filename rules. A missing bundle root returns an empty manifest so
@@ -300,6 +303,9 @@ makes model API calls.
 Each `ContextEntry` in the result includes `concept_id`, `path`, `title`, `content`, `selection_reason` (`"seed"`, `"outbound-link"`, or `"backlink"`), `graph_distance`, and `char_count`. The `ContextPack` result provides `bundle_name`, `seeds` (the de-duplicated valid seed IDs in input order), `entries`, `omitted_concept_ids` (budget- and read-error omissions), and `problems` (unknown seeds and file-read errors).
 
 Pass a pre-built `BundleGraph` as `graph` to avoid building the graph twice.
+When the graph was built from scanned manifest entries, context pack content
+reuses each entry's scan-time content snapshot instead of rereading files from
+disk.
 
 ```python
 from okf_core import build_context_pack, load_config
@@ -325,9 +331,10 @@ inline code, and images are ignored.
 `build_bundle_graph(bundle, manifest=None)` scans concept bodies and returns a
 `BundleGraph` with resolved directed concept links, broken internal concept
 links, and non-fatal graph problems. Callers may pass an existing
-`BundleManifest` to avoid scanning twice. Graph problems use the same scan-style
-kind values for document failures, such as `read-error`, `decode-error`, and
-`parse-error`.
+`BundleManifest` to avoid scanning twice; scanned manifest entries also let
+graph construction reuse the raw content snapshot instead of rereading concept
+files. Graph problems use the same scan-style kind values for document failures,
+such as `read-error`, `decode-error`, and `parse-error`.
 
 Internal OKF concept links resolve according to OKF v0.1 rules:
 

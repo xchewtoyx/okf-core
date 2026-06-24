@@ -110,7 +110,7 @@ def build_bundle_graph(
 
     for entry in resolved_manifest.concepts:
         try:
-            markdown = entry.path.read_text(encoding="utf-8")
+            markdown = entry.content
         except OSError as exc:
             problems.append(_graph_problem(entry, "read-error", exc))
             continue
