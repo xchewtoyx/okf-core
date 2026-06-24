@@ -1115,3 +1115,56 @@ def test_index_config_error_exits_2(tmp_path: Path) -> None:
     result = _runner().invoke(cli, ["index", "--config", str(config_path)])
 
     assert result.exit_code == 2
+
+
+def test_index_picks_up_directory_metadata(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    _write_concept(subdir / "a.md", title="Alpha")
+    (subdir / "_directory.yml").write_text(
+        """
+type: _directory
+title: Custom CLI Subdir
+description: Custom CLI Description
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    index_path = tmp_path / "index.md"
+    assert index_path.exists()
+    content = index_path.read_text(encoding="utf-8")
+    assert "* [Custom CLI Subdir](sub/) - Custom CLI Description" in content
+
+
+def test_index_malformed_directory_metadata_exits_1(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    _write_concept(tmp_path / "a.md", title="Alpha")
+    _write_concept(subdir / "b.md", title="Beta")
+    (subdir / "_directory.yml").write_text(
+        """
+{invalid yaml
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    data = json.loads(result.stdout)
+    assert len(data["problems"]) == 1
+    assert (
+        "failed to parse metadata file _directory.yml" in data["problems"][0]["message"]
+    )
+    assert data["entries"] == 1

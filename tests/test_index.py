@@ -619,3 +619,138 @@ def test_round_trip(tmp_path: Path) -> None:
     second = "\n".join(lines)
 
     assert result.body == second
+
+
+def test_generate_index_reads_directory_metadata(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yml").write_text(
+        """
+type: _directory
+title: Custom Title
+description: Custom Description
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert result.problems == ()
+    assert "* [Custom Title](sub/) - Custom Description" in result.body
+
+
+def test_generate_index_directory_metadata_validation_error(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    # Missing type field
+    (subdir / "_directory.yml").write_text(
+        """
+title: No Type Title
+description: No Type Description
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert len(result.problems) == 1
+    assert "validation error" in result.problems[0].message
+    # Despite validation error, title and description are still extracted
+    assert "* [No Type Title](sub/) - No Type Description" in result.body
+
+
+def test_generate_index_directory_metadata_malformed(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yml").write_text(
+        """
+{invalid yaml: [
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert len(result.problems) == 1
+    assert "failed to parse metadata file _directory.yml" in result.problems[0].message
+    # Falls back to default directory name and no description
+    assert "* [sub](sub/)" in result.body
+    assert " - " not in result.body
+
+
+def test_generate_index_directory_metadata_non_string_keys(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yml").write_text(
+        """
+type: _directory
+123: Numeric Key
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(tmp_path, [], subdirectories=[subdir])
+    assert len(result.problems) == 1
+    assert "YAML frontmatter keys must be strings" in result.problems[0].message
+    assert "* [sub](sub/)" in result.body
+
+
+def test_generate_index_directory_metadata_fallback_to_callback(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "_directory.yml").write_text(
+        """
+type: _directory
+title: File Title
+""".strip(),
+        encoding="utf-8",
+    )
+
+    def describe(path: Path) -> str | None:
+        return "Callback Description"
+
+    result = generate_index(
+        tmp_path, [], subdirectories=[subdir], describe_directory=describe
+    )
+    assert result.problems == ()
+    assert "* [File Title](sub/) - Callback Description" in result.body
+
+
+def test_generate_index_custom_metadata_file(tmp_path: Path) -> None:
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+    (subdir / "custom-name.yaml").write_text(
+        """
+type: _directory
+title: Custom Config Title
+description: Custom Config Description
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = generate_index(
+        tmp_path,
+        [],
+        subdirectories=[subdir],
+        directory_metadata_file="custom-name.yaml",
+    )
+    assert result.problems == ()
+    assert "* [Custom Config Title](sub/) - Custom Config Description" in result.body
+
+
+def test_generate_index_directory_metadata_file_must_be_simple_filename(
+    tmp_path: Path,
+) -> None:
+    # Test path segments (like "sub/meta.yml") or absolute paths are rejected
+    # but the index generation still continues.
+    e = _entry(tmp_path / "a.md", tmp_path, concept_id="a", title="Alpha")
+    subdir = tmp_path / "sub"
+    subdir.mkdir()
+
+    result = generate_index(
+        tmp_path,
+        [e],
+        subdirectories=[subdir],
+        directory_metadata_file="sub/meta.yml",
+    )
+    assert len(result.problems) == 1
+    assert "must be a simple filename, not a path" in result.problems[0].message
+    assert "* [Alpha](a.md)" in result.body
+    assert "* [sub](sub/)" in result.body

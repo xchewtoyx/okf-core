@@ -333,3 +333,52 @@ def test_concept_document_frontmatter_can_be_updated_before_serializing() -> Non
     assert serialize_concept_document(document) == (
         "---\ntype: concept\nstatus: draft\n---\nBody\n"
     )
+
+
+def test_system_types_bypass_taxonomy_validation_only_with_flag() -> None:
+    from okf_core import ProfileConfig, TaxonomyConfig
+
+    project_taxonomy = TaxonomyConfig(allowed_types=("concept",))
+    profile = ProfileConfig(taxonomy=TaxonomyConfig(allowed_types=("concept",)))
+
+    doc_system = ConceptDocument(frontmatter={"type": "_directory"})
+
+    # 1. With is_directory_meta=True, allowed_types check is bypassed.
+    findings_bypass = validate_concept_document_with_profile(
+        doc_system, profile, project_taxonomy, is_directory_meta=True
+    )
+    assert findings_bypass == ()
+
+    # 2. With is_directory_meta=False, allowed_types check is NOT bypassed.
+    findings_normal = validate_concept_document_with_profile(
+        doc_system, profile, project_taxonomy, is_directory_meta=False
+    )
+    assert len(findings_normal) == 1
+    assert findings_normal[0].severity == "error"
+    assert "not allowed by this profile" in findings_normal[0].message
+
+
+def test_directory_metadata_bypasses_profile_field_rules() -> None:
+    from okf_core import ProfileConfig
+
+    # Profile requires 'status' and defines no optional fields
+    profile = ProfileConfig(required_frontmatter=("status",))
+
+    doc = ConceptDocument(
+        frontmatter={"type": "_directory", "custom_extra_field": "val"}
+    )
+
+    # 1. With is_directory_meta=True, required fields and unknown fields are bypassed
+    findings_bypass = validate_concept_document_with_profile(
+        doc, profile, is_directory_meta=True
+    )
+    assert findings_bypass == ()
+
+    # 2. With is_directory_meta=False, status is missing (error) and custom_extra_field is unknown (warning)
+    findings_normal = validate_concept_document_with_profile(
+        doc, profile, is_directory_meta=False
+    )
+    assert len(findings_normal) == 2
+    severities = {f.severity for f in findings_normal}
+    assert "error" in severities
+    assert "warning" in severities

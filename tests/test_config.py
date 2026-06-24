@@ -20,9 +20,11 @@ def test_absent_config_uses_built_in_defaults(tmp_path: Path) -> None:
     assert config.defaults.reserved_filenames == ("index.md", "log.md")
     assert config.defaults.concept_path_strategy == "relative-path"
     assert config.defaults.index_cache == tmp_path / ".okf-cache"
+    assert config.defaults.directory_metadata_file == "_directory.yml"
     assert config.defaults.okf_version is None
     assert config.bundles["default"].okf_version is None
     assert config.bundles["default"].bundle_root == tmp_path
+    assert config.bundles["default"].directory_metadata_file == "_directory.yml"
 
 
 def test_absent_config_with_existing_file_project_root_uses_parent(
@@ -561,3 +563,56 @@ profile = "nonexistent"
         match="bundle 'docs' references profile 'nonexistent' which does not exist",
     ):
         load_config(config_path=config_path)
+
+
+def test_directory_metadata_file_configuration(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+directory_metadata_file = "custom-meta.yml"
+
+[bundles.docs]
+bundle_root = "docs"
+
+[bundles.custom]
+bundle_root = "custom"
+directory_metadata_file = "special-meta.yaml"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path=config_path)
+
+    assert config.defaults.directory_metadata_file == "custom-meta.yml"
+    assert config.bundles["docs"].directory_metadata_file == "custom-meta.yml"
+    assert config.bundles["custom"].directory_metadata_file == "special-meta.yaml"
+
+
+def test_directory_metadata_file_python_overrides(tmp_path: Path) -> None:
+    config = load_config(
+        project_root=tmp_path,
+        overrides=ConfigOverrides(directory_metadata_file="override-meta.yml"),
+    )
+    assert config.defaults.directory_metadata_file == "override-meta.yml"
+    assert config.bundles["default"].directory_metadata_file == "override-meta.yml"
+
+
+def test_directory_metadata_file_validation_rejects_paths(tmp_path: Path) -> None:
+    # 1. Defaults path validation
+    config_path1 = tmp_path / "okf-core1.toml"
+    config_path1.write_text(
+        "[defaults]\ndirectory_metadata_file = 'sub/meta.yml'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="must be a simple filename"):
+        load_config(config_path=config_path1)
+
+    # 2. Bundle path validation
+    config_path2 = tmp_path / "okf-core2.toml"
+    config_path2.write_text(
+        "[defaults]\n[bundles.docs]\nbundle_root = 'docs'\ndirectory_metadata_file = 'sub/meta.yml'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="must be a simple filename"):
+        load_config(config_path=config_path2)

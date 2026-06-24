@@ -55,12 +55,20 @@ class ProjectDefaults(BaseModel):
     concept_path_strategy: str = "relative-path"
     index_cache: Path = Path(".okf-cache")
     listing_fields: tuple[str, ...] = ()
+    directory_metadata_file: str = "_directory.yml"
     okf_version: str | None = None
 
     @field_validator("okf_version")
     @classmethod
     def _validate_okf_version(cls, v: str | None) -> str | None:
         return _validate_optional_okf_version(v)
+
+    @field_validator("directory_metadata_file")
+    @classmethod
+    def _validate_metadata_file(cls, v: str) -> str:
+        res = _validate_metadata_filename(v)
+        assert res is not None
+        return res
 
 
 class BundleConfig(BaseModel):
@@ -78,6 +86,7 @@ class BundleConfig(BaseModel):
     listing_fields: tuple[str, ...] = ()
     okf_version: str | None = None
     profile: str | None = None
+    directory_metadata_file: str = "_directory.yml"
 
     @field_validator("bundle_root", "index_cache", mode="after")
     @classmethod
@@ -88,6 +97,13 @@ class BundleConfig(BaseModel):
     @classmethod
     def _validate_okf_version(cls, v: str | None) -> str | None:
         return _validate_optional_okf_version(v)
+
+    @field_validator("directory_metadata_file")
+    @classmethod
+    def _validate_metadata_file(cls, v: str) -> str:
+        res = _validate_metadata_filename(v)
+        assert res is not None
+        return res
 
 
 class OkfConfig(BaseModel):
@@ -124,12 +140,18 @@ class ConfigOverrides(BaseModel):
     concept_path_strategy: str | None = None
     index_cache: Path | None = None
     listing_fields: tuple[str, ...] | None = None
+    directory_metadata_file: str | None = None
     okf_version: str | None = None
 
     @field_validator("okf_version")
     @classmethod
     def _validate_okf_version(cls, v: str | None) -> str | None:
         return _validate_optional_okf_version(v)
+
+    @field_validator("directory_metadata_file")
+    @classmethod
+    def _validate_metadata_file(cls, v: str | None) -> str | None:
+        return _validate_metadata_filename(v)
 
 
 class _BundleInput(BaseModel):
@@ -144,11 +166,17 @@ class _BundleInput(BaseModel):
     listing_fields: tuple[str, ...] | None = None
     okf_version: str | None = None
     profile: str | None = None
+    directory_metadata_file: str | None = None
 
     @field_validator("okf_version")
     @classmethod
     def _validate_okf_version(cls, v: str | None) -> str | None:
         return _validate_optional_okf_version(v)
+
+    @field_validator("directory_metadata_file")
+    @classmethod
+    def _validate_metadata_file(cls, v: str | None) -> str | None:
+        return _validate_metadata_filename(v)
 
 
 class _ConfigFile(BaseModel):
@@ -313,6 +341,7 @@ def _resolve_bundles(
                 index_cache=defaults.index_cache,
                 listing_fields=defaults.listing_fields,
                 okf_version=defaults.okf_version,
+                directory_metadata_file=defaults.directory_metadata_file,
             )
         }
 
@@ -369,6 +398,11 @@ def _resolve_bundle(
         raw_bundle.okf_version,
         defaults.okf_version,
     )
+    directory_metadata_file = _select_config_value(
+        overrides.directory_metadata_file,
+        raw_bundle.directory_metadata_file,
+        defaults.directory_metadata_file,
+    )
 
     return BundleConfig(
         name=name,
@@ -381,6 +415,7 @@ def _resolve_bundle(
         listing_fields=listing_fields,
         okf_version=okf_version,
         profile=raw_bundle.profile,
+        directory_metadata_file=directory_metadata_file,
     )
 
 
@@ -410,6 +445,16 @@ def _validate_optional_okf_version(version: str | None) -> str | None:
         return validate_supported_okf_version(version)
     except OkfVersionError as exc:
         raise ValueError(str(exc)) from exc
+
+
+def _validate_metadata_filename(v: str | None) -> str | None:
+    if v is not None:
+        p = Path(v)
+        if p.name != v or p.is_absolute():
+            raise ValueError(
+                f"directory_metadata_file {v!r} must be a simple filename, not a path"
+            )
+    return v
 
 
 def _resolve_search_root(start_path: str | Path | None) -> Path:

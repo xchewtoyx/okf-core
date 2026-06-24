@@ -128,7 +128,9 @@ Supported `[defaults]` keys are:
 - `concept_path_strategy`
 - `index_cache`
 - `listing_fields`
+- `directory_metadata_file` (Non-Spec local tool enhancement: string, defaults to `"_directory.yml"`). The filename of the directory metadata sidecar file used to carry folder-level descriptions/titles.
 - `okf_version`
+
 
 Supported `[taxonomy]` keys are `known_types` and `allowed_types`.
 
@@ -152,7 +154,9 @@ reserved_filenames = ["index.md", "log.md"]
 concept_path_strategy = "relative-path"
 index_cache = ".okf-cache"
 listing_fields = []
+directory_metadata_file = "_directory.yml"
 # okf_version = "0.1"
+
 ```
 
 If no bundles are declared, `okf-core` exposes one resolved bundle named
@@ -188,11 +192,13 @@ body-only Markdown.
 
 `validate_concept_document()` performs base OKF concept conformance checks, returning a tuple of structured `ValidationFinding` objects (e.g. reporting missing or empty `type` fields as errors).
 
-`validate_concept_document_with_profile(document, profile, project_taxonomy)` validates a concept document against a specific `ProfileConfig` and optional `TaxonomyConfig`, checking for:
+`validate_concept_document_with_profile(document, profile, project_taxonomy, *, is_directory_meta=False)` validates a concept document against a specific `ProfileConfig` and optional `TaxonomyConfig`, checking for:
 - Base OKF conformance.
-- Profile-required frontmatter fields (errors if missing).
-- Undocumented custom frontmatter fields (warnings if present but not defined in the profile or standard OKF fields).
-- Taxonomy type rules (errors if type violates profile/project `allowed_types`, warnings if type violates `known_types`).
+- Profile-required frontmatter fields (errors if missing; skipped if `is_directory_meta=True`).
+- Undocumented custom frontmatter fields (warnings if present but not defined in the profile or standard OKF fields; skipped if `is_directory_meta=True`).
+- Taxonomy type rules (errors if type violates profile/project `allowed_types`, warnings if type violates `known_types`). Note that if `is_directory_meta=True` is provided and the document type starts with an underscore (such as `_directory`), taxonomy checks are bypassed to accommodate local directory metadata without taxonomy configuration changes.
+
+
 
 `validate_bundle(bundle, config)` scans a bundle and validates all of its concept documents against the configured profile, returning a mapping of file paths to their respective validation findings. Any scan or parsing failures are reported as validation errors.
 
@@ -276,17 +282,29 @@ OKF spec §9. Entries whose `type` is absent or not a string are a spec §4.1
 violation; they are skipped and reported as `IndexProblem` objects in the
 `problems` field of the result. Entries or subdirectories whose path falls
 outside `directory` are likewise skipped and reported. Subdirectory entries
-appear in a trailing `Subdirectories` section. Entry titles come from the
+appear in a trailing `Subdirectories` section.
+
+**Local Tool-Specific Enhancement**: `generate_index()` and the `okf index` CLI command support an optional directory metadata sidecar file (by default `_directory.yml`, configurable via `directory_metadata_file`). Since subdirectories are not concepts and do not have an identity in the base OKF spec, this sidecar allows configuring folder-level metadata as a non-spec local tool enhancement. If the file exists, it is parsed and validated like a concept document's frontmatter (requiring a `type` field which should be `_directory`). Any validation findings or parsing problems are surfaced in the `problems` list of the returned `GeneratedIndex`.
+
+If the sidecar is valid:
+- Its `title` key overrides the directory name in the trailing `Subdirectories` section (defaults to the relative directory path).
+- Its `description` key provides the directory's description in the `Subdirectories` section.
+
+If a description is not defined in the sidecar, the `describe_directory` callback (if provided) is used as a fallback.
+
+Entry titles come from the
 `title` frontmatter field, converted to a string, with internal newlines
 collapsed to spaces and then stripped; if absent, `None`, or
 empty/whitespace-only, the file stem is used as a fallback. Falsy-but-non-empty
 values such as `title: 0` are preserved as their string form. The same
 normalisation applies to `description` and to strings returned by
-`describe_directory`: absent, `None`, or empty/whitespace-only values omit
-the entry suffix; falsy-but-non-empty values are preserved. The function
-returns a `GeneratedIndex` dataclass with `.body` and `.problems` fields;
-writing the file to disk is the caller's responsibility for library use. The
-CLI `okf index` command owns that write step for command-line use.
+`describe_directory` (and the sidecar description): absent, `None`, or
+empty/whitespace-only values omit the entry suffix; falsy-but-non-empty values
+are preserved. The function returns a `GeneratedIndex` dataclass with `.body`
+and `.problems` fields; writing the file to disk is the caller's responsibility
+for library use. The CLI `okf index` command owns that write step for
+command-line use.
+
 
 ```python
 from okf_core import generate_index, scan_bundle, load_config
