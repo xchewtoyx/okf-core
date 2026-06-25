@@ -783,6 +783,44 @@ def test_graph_emits_full_graph_json(tmp_path: Path) -> None:
     assert data["broken_links"] == []
 
 
+def test_graph_link_title_serialised_in_json(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="A")
+    _write_concept(tmp_path / "b.md", title="B")
+    (tmp_path / "a.md").write_text(
+        '---\ntype: concept\ntitle: A\n---\nSee [B](b.md "related").\n',
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["graph", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["links"][0]["title"] == "related"
+
+
+def test_graph_link_title_null_when_absent(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="A")
+    _write_concept(tmp_path / "b.md", title="B")
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["graph", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["links"][0]["title"] is None
+
+
 def test_graph_concept_output_includes_backlinks_and_neighborhood(
     tmp_path: Path,
 ) -> None:
@@ -1269,7 +1307,9 @@ def test_index_malformed_directory_metadata_exits_1(tmp_path: Path) -> None:
 
 
 def test_list_bundles_help_exits_zero() -> None:
-    assert _runner().invoke(cli, ["list-bundles", "--help"]).exit_code == 0
+    result = _runner().invoke(cli, ["list-bundles", "--help"])
+    assert result.exit_code == 0
+    assert "--config" in result.stdout
 
 
 def test_list_bundles_emits_json_with_default_bundle(tmp_path: Path) -> None:
@@ -1314,13 +1354,12 @@ def test_list_bundles_emits_all_named_bundles(tmp_path: Path) -> None:
     assert beta["profile"] == "default"
 
 
-def test_list_bundles_config_path_none_when_no_config_file(tmp_path: Path) -> None:
-    # Invoke from a directory with no okf-core.toml; config_path should be null
-    # and a single implicit default bundle is returned.
+def test_list_bundles_missing_config_file_exits_2(tmp_path: Path) -> None:
     result = _runner().invoke(
         cli, ["list-bundles", "--config", str(tmp_path / "nonexistent.toml")]
     )
     assert result.exit_code == 2
+    assert "Configuration error" in result.stderr
 
 
 def test_list_bundles_stderr_summary_reports_count(tmp_path: Path) -> None:
@@ -1334,4 +1373,4 @@ def test_list_bundles_stderr_summary_reports_count(tmp_path: Path) -> None:
     result = _runner().invoke(cli, ["list-bundles", "--config", str(config_path)])
 
     assert result.exit_code == 0
-    assert "2" in result.stderr
+    assert "Found 2 bundle(s)" in result.stderr
