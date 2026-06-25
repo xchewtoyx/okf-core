@@ -7,6 +7,7 @@ consume `okf-core`.
 ## Developer Setup
 
 - Always develop and run tests within a local virtual environment named `.venv` to prevent package pollution.
+- Note: Developer environment bootstrapping (`just install`) requires Python 3.11+ to utilize the standard library's `tomllib` and avoid dependency workarounds in development. Runtime compatibility for consuming projects still fully supports Python 3.10+.
 - Install [`just`](https://just.systems/) for a simpler command surface. If unavailable, use the manual steps below instead.
 - Bootstrap the environment and dependencies using:
   ```sh
