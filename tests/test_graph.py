@@ -33,6 +33,42 @@ def test_extract_markdown_links_ignores_code_and_images() -> None:
     assert [(link.text, link.target) for link in links] == [("real", "target.md")]
 
 
+def test_extract_markdown_links_parses_title_attribute() -> None:
+    links = extract_markdown_links('[B](b.md "related")')
+
+    assert len(links) == 1
+    assert links[0].title == "related"
+
+
+def test_extract_markdown_links_title_is_none_when_absent() -> None:
+    links = extract_markdown_links("[B](b.md)")
+
+    assert len(links) == 1
+    assert links[0].title is None
+
+
+def test_graph_link_carries_title(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body='See [B](b.md "related").')
+    _write_concept(root / "b.md")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert len(graph.links) == 1
+    assert graph.links[0].title == "related"
+
+
+def test_graph_link_title_none_when_absent(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [B](b.md).")
+    _write_concept(root / "b.md")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert len(graph.links) == 1
+    assert graph.links[0].title is None
+
+
 def test_graph_resolves_outbound_links_and_backlinks(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", body="See [B](b.md).")

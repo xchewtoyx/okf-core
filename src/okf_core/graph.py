@@ -29,6 +29,7 @@ class MarkdownLink:
 
     text: str
     target: str
+    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +42,7 @@ class ConceptLink:
     target: str
     target_path: Path
     target_concept_id: str | None = None
+    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,10 +82,12 @@ def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
             target = child.attrGet("href")
             if target is None:
                 continue
+            title_raw = child.attrGet("title")
             links.append(
                 MarkdownLink(
                     text=_collect_link_text(children[index + 1 :]),
                     target=cast(str, target),
+                    title=str(title_raw) if title_raw else None,
                 )
             )
 
@@ -252,6 +256,7 @@ def _resolve_concept_link(
         target=markdown_link.target,
         target_path=target_path,
         target_concept_id=target_concept_id,
+        title=markdown_link.title,
     )
 
 
