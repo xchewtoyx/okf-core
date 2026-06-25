@@ -105,7 +105,7 @@ pip install -e .
 
 All commands load `okf-core.toml` by searching upward from the current working directory. Use `--config PATH` to specify a config file explicitly and `--bundle NAME` to select a named bundle (default: `default`).
 
-Commands emit machine-readable JSON on stdout and a one-line human-readable summary on stderr. Exit codes: `0` success, `1` errors or validation failures, `2` config or usage error.
+By default, commands emit machine-readable JSON on stdout and a one-line human-readable summary on stderr (except where noted, e.g. `okf validate --quiet`). Exit codes: `0` success, `1` errors or validation failures, `2` config or usage error.
 
 ### `okf scan`
 
