@@ -10,6 +10,7 @@ from types import MappingProxyType
 from typing import Any
 
 from okf_core.config import BundleConfig
+from okf_core.documents import parse_concept_document, DocumentParseError
 from okf_core.graph import BundleGraph
 from okf_core.manifest import BundleManifest, ConceptManifestEntry, scan_bundle
 
@@ -94,14 +95,20 @@ def list_concepts(
         content_val = None
         if with_content:
             try:
-                content_val = entry.content
-            except (OSError, UnicodeDecodeError) as exc:
+                content_val = entry.body
+            except (OSError, UnicodeDecodeError, DocumentParseError) as exc:
                 problems.append(
                     ListingProblem(
                         concept_id=entry.concept_id,
                         path=entry.path,
                         kind=(
-                            "read-error" if isinstance(exc, OSError) else "decode-error"
+                            "read-error"
+                            if isinstance(exc, OSError)
+                            else (
+                                "decode-error"
+                                if isinstance(exc, UnicodeDecodeError)
+                                else "parse-error"
+                            )
                         ),
                         message=str(exc),
                     )

@@ -190,10 +190,7 @@ def test_list_concepts_populates_content_when_with_content_is_true(
     listing = list_concepts(_bundle(root), with_content=True)
 
     assert len(listing.concepts) == 1
-    assert (
-        listing.concepts[0].content
-        == "---\ntype: concept\ntitle: Alpha\n---\nHello World\n"
-    )
+    assert listing.concepts[0].content == "Hello World\n"
     assert listing.problems == ()
 
 
@@ -217,8 +214,9 @@ def test_list_concepts_reports_content_read_error_as_problem(
     bundle = _bundle(root)
     manifest = scan_bundle(bundle)
 
-    # Clear the content cache to force a disk read during listing
+    # Clear the content cache and body cache to force a disk read during listing
     object.__setattr__(manifest.concepts[0], "_content_cache", None)
+    object.__setattr__(manifest.concepts[0], "_body_cache", None)
 
     def mock_read_bytes(*args: object, **kwargs: object) -> bytes:
         raise OSError("Permission denied")
@@ -231,6 +229,28 @@ def test_list_concepts_reports_content_read_error_as_problem(
     assert len(listing.problems) == 1
     assert listing.problems[0].kind == "read-error"
     assert "Permission denied" in listing.problems[0].message
+
+
+def test_list_concepts_reports_content_parse_error_as_problem(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n")
+    bundle = _bundle(root)
+    manifest = scan_bundle(bundle)
+
+    # Force a parse error on read by writing unterminated frontmatter to the file
+    # and clearing the content and body caches so list_concepts reads the modified file from disk
+    (root / "a.md").write_text("---\ntype: concept\ninvalid\n", encoding="utf-8")
+    object.__setattr__(manifest.concepts[0], "_content_cache", None)
+    object.__setattr__(manifest.concepts[0], "_body_cache", None)
+
+    listing = list_concepts(bundle, manifest=manifest, with_content=True)
+
+    assert listing.concepts == ()
+    assert len(listing.problems) == 1
+    assert listing.problems[0].kind == "parse-error"
+    assert "Unterminated YAML frontmatter" in listing.problems[0].message
 
 
 def _bundle(root: Path, *, listing_fields: tuple[str, ...] = ()) -> BundleConfig:

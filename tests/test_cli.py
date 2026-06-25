@@ -502,10 +502,7 @@ def test_list_concepts_with_content_flag(tmp_path: Path) -> None:
     assert result.exit_code == 0
     data = json.loads(result.stdout)
     assert data["concepts"][0]["concept_id"] == "a"
-    assert (
-        data["concepts"][0]["content"]
-        == "---\ntype: concept\ntitle: Alpha\n---\nHello World\n"
-    )
+    assert data["concepts"][0]["content"] == "Hello World\n"
     assert data["problems"] == []
 
 

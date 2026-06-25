@@ -33,6 +33,7 @@ class ConceptManifestEntry:
     _content_cache: str | None = field(
         default=None, init=False, repr=False, compare=False
     )
+    _body_cache: str | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def content(self) -> str:
@@ -42,6 +43,17 @@ class ConceptManifestEntry:
             content = self.path.read_bytes().decode("utf-8")
             object.__setattr__(self, "_content_cache", content)
         return content
+
+    @property
+    def body(self) -> str:
+        """Return Markdown body content (with YAML frontmatter stripped)."""
+        body = self._body_cache
+        if body is None:
+            from okf_core.documents import parse_concept_document
+
+            body = parse_concept_document(self.content).body
+            object.__setattr__(self, "_body_cache", body)
+        return body
 
 
 @dataclass(frozen=True)
@@ -150,6 +162,7 @@ def _scan_concept_path(
         frontmatter=_freeze_value(document.frontmatter),
     )
     object.__setattr__(entry, "_content_cache", markdown)
+    object.__setattr__(entry, "_body_cache", document.body)
     return entry, None
 
 
