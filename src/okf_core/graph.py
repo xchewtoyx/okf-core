@@ -95,6 +95,9 @@ def build_bundle_graph(
     manifest: BundleManifest | None = None,
 ) -> BundleGraph:
     """Build a deterministic concept-link graph from a configured bundle."""
+    from okf_core.hooks import get_hook_manager
+
+    pm = get_hook_manager(bundle)
 
     resolved_manifest = manifest if manifest is not None else scan_bundle(bundle)
     concept_ids = {entry.concept_id for entry in resolved_manifest.concepts}
@@ -111,6 +114,15 @@ def build_bundle_graph(
     ]
 
     for entry in resolved_manifest.concepts:
+        cached_links = pm.hook.okf_enter_resolve_links(entry=entry, bundle=bundle)
+        if cached_links is not None:
+            for link in cached_links:
+                if link.target_concept_id in concept_ids:
+                    resolved_links.append(link)
+                else:
+                    broken_links.append(link)
+            continue
+
         try:
             markdown = entry.content
         except OSError as exc:
@@ -126,14 +138,18 @@ def build_bundle_graph(
             problems.append(_graph_problem(entry, "parse-error", exc))
             continue
 
+        entry_links: list[ConceptLink] = []
         for markdown_link in extract_markdown_links(document.body):
             link = _resolve_concept_link(bundle, entry, markdown_link)
             if link is None:
                 continue
+            entry_links.append(link)
             if link.target_concept_id in concept_ids:
                 resolved_links.append(link)
             else:
                 broken_links.append(link)
+
+        pm.hook.okf_exit_resolve_links(entry=entry, links=entry_links, bundle=bundle)
 
     return BundleGraph(
         bundle_name=resolved_manifest.bundle_name,

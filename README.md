@@ -59,6 +59,7 @@ Supported `[defaults]` keys are:
 - `reserved_filenames`
 - `concept_path_strategy`
 - `index_cache`
+- `okf_cache_dir` (Non-Spec local tool enhancement: string, defaults to `unset`). Directory path to enable a lightweight SQLite database cache to store concept metadata and extracted links, skipping parsing for unmodified documents.
 - `listing_fields`
 - `directory_metadata_file` (Non-Spec local tool enhancement: string, defaults to `"_directory.yml"`). The filename of the directory metadata sidecar file used to carry folder-level descriptions/titles.
 - `okf_version`
@@ -79,6 +80,7 @@ exclude = []
 reserved_filenames = ["index.md", "log.md"]
 concept_path_strategy = "relative-path"
 index_cache = ".okf-cache"
+# okf_cache_dir = ".okf-cache"
 listing_fields = []
 directory_metadata_file = "_directory.yml"
 # okf_version = "0.1"
