@@ -261,10 +261,19 @@ def _resolve_concept_link(
     )
 
 
+_LINK_SORT_FIELDS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        ("source_concept_id", "target_path", "target_concept_id", "target")
+        + tuple(f.name for f in dataclasses.fields(ConceptLink))
+    )
+)
+
+
 def _link_sort_key(link: ConceptLink) -> tuple[str, ...]:
-    priority = ("source_concept_id", "target_path", "target_concept_id", "target")
-    names = dict.fromkeys(priority + tuple(f.name for f in dataclasses.fields(link)))
-    return tuple("" if (v := getattr(link, name)) is None else str(v) for name in names)
+    return tuple(
+        "" if (v := getattr(link, name)) is None else str(v)
+        for name in _LINK_SORT_FIELDS
+    )
 
 
 def _is_ignored_reserved_path(path: Path, bundle: BundleConfig) -> bool:
