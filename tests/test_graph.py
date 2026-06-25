@@ -47,6 +47,13 @@ def test_extract_markdown_links_title_is_none_when_absent() -> None:
     assert links[0].title is None
 
 
+def test_extract_markdown_links_empty_title_is_none() -> None:
+    links = extract_markdown_links('[B](b.md "")')
+
+    assert len(links) == 1
+    assert links[0].title is None
+
+
 def test_graph_link_carries_title(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", body='See [B](b.md "related").')
