@@ -138,7 +138,7 @@ consume `okf-core`.
   # or without just:
   black --check src tests && python -m ruff check .github/scripts/ && python -m mypy .github/scripts/ --ignore-missing-imports && .venv/bin/actionlint .github/workflows/*.yml && pytest
   ```
-- Use `just test-matrix` to run the full pytest suite locally across all Python versions configured in the GHA workflow matrix (e.g. 3.11, 3.12, 3.13) via Docker:
+- Use `just test-matrix` to run the full pytest suite locally across all Python versions configured in the GHA workflow matrix (e.g. 3.10, 3.11, 3.12, 3.13) via Docker:
   ```sh
   just test-matrix
   # or without just:
