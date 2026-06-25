@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -260,14 +261,8 @@ def _resolve_concept_link(
     )
 
 
-def _link_sort_key(link: ConceptLink) -> tuple[str, str, str, str, str]:
-    return (
-        link.source_concept_id,
-        link.target_concept_id or "",
-        str(link.target_path),
-        link.target,
-        link.title or "",
-    )
+def _link_sort_key(link: ConceptLink) -> tuple[str, ...]:
+    return tuple("" if v is None else str(v) for v in dataclasses.astuple(link))
 
 
 def _is_ignored_reserved_path(path: Path, bundle: BundleConfig) -> bool:
