@@ -138,3 +138,11 @@ consume `okf-core`.
   # or without just:
   black --check src tests && python -m ruff check .github/scripts/ && python -m mypy .github/scripts/ --ignore-missing-imports && .venv/bin/actionlint .github/workflows/*.yml && pytest
   ```
+- Use `just test-matrix` to run the full pytest suite locally across all Python versions configured in the GHA workflow matrix (e.g. 3.11, 3.12, 3.13) via Docker:
+  ```sh
+  just test-matrix
+  # or without just:
+  python .github/scripts/run_local_matrix.py
+  ```
+  This parses the workflow matrix from `.github/workflows/test.yml` and spins up containerized pytest checks to detect version incompatibilities before raising a pull request.
+

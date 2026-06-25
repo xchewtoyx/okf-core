@@ -31,6 +31,11 @@ check: _require-venv
 test: _require-venv
     {{python}} -m pytest
 
+# Run the CI test matrix locally in Docker
+test-matrix: _require-venv
+    {{python}} .github/scripts/run_local_matrix.py
+
+
 # Run ruff, mypy, and actionlint static analysis
 lint: _require-venv
     {{python}} -m ruff check .github/scripts/
