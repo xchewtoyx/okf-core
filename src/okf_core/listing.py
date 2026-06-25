@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Any
 
 from okf_core.config import BundleConfig
-from okf_core.documents import parse_concept_document, DocumentParseError
+from okf_core.documents import DocumentParseError
 from okf_core.graph import BundleGraph
 from okf_core.manifest import BundleManifest, ConceptManifestEntry, scan_bundle
 
