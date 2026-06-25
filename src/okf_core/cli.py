@@ -185,16 +185,24 @@ def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     is_flag=True,
     help="Include resolved inbound/outbound concept-link counts.",
 )
+@click.option(
+    "--with-content",
+    is_flag=True,
+    help="Include raw Markdown body of valid concepts (with YAML frontmatter stripped).",
+)
 def list_concepts_cmd(
     config_path: str | None,
     bundle_name: str,
     with_graph_counts: bool,
+    with_content: bool,
 ) -> None:
     """List addressable concepts for seed discovery."""
     _, bundle = _load(config_path, bundle_name)
     manifest = scan_bundle(bundle)
     graph = build_bundle_graph(bundle, manifest=manifest) if with_graph_counts else None
-    listing = list_concepts(bundle, manifest=manifest, graph=graph)
+    listing = list_concepts(
+        bundle, manifest=manifest, graph=graph, with_content=with_content
+    )
 
     result = {
         "bundle": listing.bundle_name,
@@ -567,6 +575,7 @@ def _concept_listing_dict(concept: Any) -> dict[str, Any]:
         "frontmatter": concept.frontmatter,
         "outbound_link_count": concept.outbound_link_count,
         "inbound_link_count": concept.inbound_link_count,
+        "content": concept.content,
     }
 
 
