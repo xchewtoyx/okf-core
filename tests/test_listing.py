@@ -253,6 +253,33 @@ def test_list_concepts_reports_content_parse_error_as_problem(
     assert "Unterminated YAML frontmatter" in listing.problems[0].message
 
 
+def test_list_concepts_reports_content_decode_error_as_problem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n")
+    bundle = _bundle(root)
+    manifest = scan_bundle(bundle)
+
+    # Clear the content cache and body cache to force a disk read during listing
+    object.__setattr__(manifest.concepts[0], "_content_cache", None)
+    object.__setattr__(manifest.concepts[0], "_body_cache", None)
+
+    # Return invalid UTF-8 bytes to trigger UnicodeDecodeError
+    def mock_read_bytes(*args: object, **kwargs: object) -> bytes:
+        return b"\xff\xfe\x80"
+
+    monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
+
+    listing = list_concepts(bundle, manifest=manifest, with_content=True)
+
+    assert listing.concepts == ()
+    assert len(listing.problems) == 1
+    assert listing.problems[0].kind == "decode-error"
+    assert "utf-8" in listing.problems[0].message
+
+
 def _bundle(root: Path, *, listing_fields: tuple[str, ...] = ()) -> BundleConfig:
     return BundleConfig(
         name="docs",

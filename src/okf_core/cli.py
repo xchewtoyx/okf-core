@@ -188,7 +188,7 @@ def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
 @click.option(
     "--with-content",
     is_flag=True,
-    help="Include raw Markdown content of valid concepts.",
+    help="Include raw Markdown body of valid concepts (with YAML frontmatter stripped).",
 )
 def list_concepts_cmd(
     config_path: str | None,
