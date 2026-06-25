@@ -4,6 +4,8 @@ python := ".venv/bin/python"
 install:
     #!/usr/bin/env bash
     set -euo pipefail
+    # Developer setup requires Python 3.11+ to use the standard library's tomllib.
+    # The package runtime compatibility still supports Python 3.10+ (via tomli fallback).
     if ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"; then
         echo "error: Python 3.11+ required, got $(python3 --version)" >&2
         exit 1
@@ -38,8 +40,8 @@ test-matrix: _require-venv
 
 # Run ruff, mypy, and actionlint static analysis
 lint: _require-venv
-    {{python}} -m ruff check .github/scripts/
-    {{python}} -m mypy .github/scripts/ --ignore-missing-imports
+    {{python}} -m ruff check src tests .github/scripts/
+    {{python}} -m mypy src tests .github/scripts/ --ignore-missing-imports
     .venv/bin/actionlint .github/workflows/*.yml
 
 # Run check + lint + test (mirrors CI)

@@ -27,7 +27,8 @@ def _patch_toml_write(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def _runner() -> CliRunner:
     if "mix_stderr" in inspect.signature(CliRunner).parameters:
-        return CliRunner(mix_stderr=False)
+        kwargs: dict[str, Any] = {"mix_stderr": False}
+        return CliRunner(**kwargs)
     return CliRunner()
 
 

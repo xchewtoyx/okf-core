@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Any
 
 from pathlib import Path
 import re
@@ -86,7 +87,7 @@ def test_config_read_errors_raise_config_error(
     config_path.write_text("[defaults]\n", encoding="utf-8")
     original_open = Path.open
 
-    def fail_open(path: Path, *args: object, **kwargs: object) -> object:
+    def fail_open(path: Path, *args: Any, **kwargs: Any) -> Any:
         if path == config_path:
             raise OSError("read failed")
         return original_open(path, *args, **kwargs)

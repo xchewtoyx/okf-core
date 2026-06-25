@@ -5,7 +5,7 @@ from __future__ import annotations
 try:
     import tomllib
 except ImportError:
-    import tomli as tomllib
+    import tomli as tomllib  # type: ignore[no-redef]
 from pathlib import Path
 from typing import Any
 
