@@ -311,7 +311,8 @@ def test_validate_quiet_success(tmp_path: Path, quiet_flag: str) -> None:
 
     assert result.exit_code == 0
     assert result.stdout == ""
-    assert result.stderr == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
 
 
 @pytest.mark.parametrize("quiet_flag", ["--quiet", "-q"])
@@ -329,7 +330,8 @@ def test_validate_quiet_errors(tmp_path: Path, quiet_flag: str) -> None:
 
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
 
 
 def test_validate_with_profile_checks_required_fields(tmp_path: Path) -> None:

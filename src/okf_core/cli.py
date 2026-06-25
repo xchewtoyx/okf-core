@@ -129,24 +129,37 @@ def scan(config_path: str | None, bundle_name: str) -> None:
     help="Suppress all validation output.",
 )
 def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
-    """Validate a bundle and emit findings as JSON."""
+    """Validate a bundle and emit findings as JSON.
+
+    Args:
+        config_path: Path to okf-core.toml (default: search upward from cwd).
+        bundle_name: Named bundle from config.
+        quiet: If True, suppress all validation output (findings JSON on stdout
+            and validation summary on stderr), leaving the exit code as the sole
+            signal.
+    """
     cfg, bundle = _load(config_path, bundle_name)
     findings = validate_bundle(bundle, cfg)
     error_count = 0
-    warning_count = 0
-    findings_dict: dict[str, list[dict[str, Any]]] = {}
-    for path, path_findings in findings.items():
-        findings_dict[str(path)] = [
-            {"severity": f.severity, "message": f.message, "field": f.field}
-            for f in path_findings
-        ]
-        for f in path_findings:
-            if f.severity == "error":
-                error_count += 1
-            else:
-                warning_count += 1
-    result: dict[str, Any] = {"bundle": bundle.name, "findings": findings_dict}
-    if not quiet:
+    if quiet:
+        for path_findings in findings.values():
+            for f in path_findings:
+                if f.severity == "error":
+                    error_count += 1
+    else:
+        warning_count = 0
+        findings_dict: dict[str, list[dict[str, Any]]] = {}
+        for path, path_findings in findings.items():
+            findings_dict[str(path)] = [
+                {"severity": f.severity, "message": f.message, "field": f.field}
+                for f in path_findings
+            ]
+            for f in path_findings:
+                if f.severity == "error":
+                    error_count += 1
+                else:
+                    warning_count += 1
+        result: dict[str, Any] = {"bundle": bundle.name, "findings": findings_dict}
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(
             f"Validated bundle {bundle.name!r}: {error_count} errors, {warning_count} warnings",
