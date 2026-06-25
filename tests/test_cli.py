@@ -334,6 +334,21 @@ def test_validate_quiet_errors(tmp_path: Path, quiet_flag: str) -> None:
         assert result.stderr == ""
 
 
+@pytest.mark.parametrize("quiet_flag", ["--quiet", "-q"])
+def test_validate_quiet_config_error(tmp_path: Path, quiet_flag: str) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text("[defaults]\n", encoding="utf-8")
+
+    result = _runner().invoke(
+        cli,
+        ["validate", "--config", str(config_path), quiet_flag, "--bundle", "missing"],
+    )
+
+    assert result.exit_code == 2
+    mixed_output = result.stdout + (getattr(result, "stderr", "") or "")
+    assert "not found" in mixed_output
+
+
 def test_validate_with_profile_checks_required_fields(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
