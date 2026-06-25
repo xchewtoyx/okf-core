@@ -35,11 +35,6 @@ url = "https://xchewtoyx.github.io/okf-core/simple/"
 
 Then add `okf-core` to your dependencies as usual.
 
-**Development install** (from a local clone):
-
-```sh
-python -m pip install -e ".[test]"
-```
 
 ## Configuration
 

@@ -9,7 +9,7 @@ install:
         exit 1
     fi
     python3 -m venv .venv
-    {{python}} -m pip install -e ".[test]"
+    {{python}} -m pip install -e ".[test,dev]"
 
 [private]
 _require-venv:
@@ -30,6 +30,11 @@ check: _require-venv
 # Run tests
 test: _require-venv
     {{python}} -m pytest
+
+# Run the CI test matrix locally in Docker
+test-matrix: _require-venv
+    {{python}} .github/scripts/run_local_matrix.py
+
 
 # Run ruff, mypy, and actionlint static analysis
 lint: _require-venv

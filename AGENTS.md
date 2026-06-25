@@ -16,7 +16,7 @@ consume `okf-core`.
   ```sh
   python3 -m venv .venv
   source .venv/bin/activate
-  python -m pip install -e ".[test]"
+  python -m pip install -e ".[test,dev]"
   ```
 
 ## Project Shape
@@ -130,7 +130,7 @@ consume `okf-core`.
   python -m mypy .github/scripts/ --ignore-missing-imports
   .venv/bin/actionlint .github/workflows/*.yml
   ```
-  `ruff` checks Python style and common bugs in `.github/scripts/`; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[test]` deps and run in CI.
+  `ruff` checks Python style and common bugs in `.github/scripts/`; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[dev]` deps and run in CI.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
 - Use `just ci` to run the full check + lint + test suite that mirrors what CI requires:
   ```sh
@@ -138,3 +138,11 @@ consume `okf-core`.
   # or without just:
   black --check src tests && python -m ruff check .github/scripts/ && python -m mypy .github/scripts/ --ignore-missing-imports && .venv/bin/actionlint .github/workflows/*.yml && pytest
   ```
+- Use `just test-matrix` to run the full pytest suite locally across all Python versions configured in the GHA workflow matrix (e.g. 3.10, 3.11, 3.12, 3.13) via Docker:
+  ```sh
+  just test-matrix
+  # or without just:
+  python .github/scripts/run_local_matrix.py
+  ```
+  This parses the workflow matrix from `.github/workflows/test.yml` and spins up containerized pytest checks to detect version incompatibilities before raising a pull request.
+
