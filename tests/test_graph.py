@@ -141,6 +141,22 @@ def test_graph_reports_unresolvable_markdown_paths_as_broken(tmp_path: Path) -> 
     assert graph.broken_links[0].target_concept_id is None
 
 
+def test_graph_broken_links_sort_by_target_path_not_concept_id(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    # Both targets are missing, so target_concept_id is None for each.
+    # Sort must be driven by target_path (field 2), not target_concept_id (None for all).
+    _write_concept(root / "a.md", body="See [Z](z_missing.md) and [A](a_missing.md).")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert graph.links == ()
+    assert len(graph.broken_links) == 2
+    assert [link.target for link in graph.broken_links] == [
+        "a_missing.md",
+        "z_missing.md",
+    ]
+
+
 def test_graph_reports_outside_reserved_filename_as_broken(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", body="See [outside reserved](../index.md).")
