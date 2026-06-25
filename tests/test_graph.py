@@ -141,21 +141,27 @@ def test_graph_reports_unresolvable_markdown_paths_as_broken(tmp_path: Path) -> 
     assert graph.broken_links[0].target_concept_id is None
 
 
-def test_graph_broken_links_sort_by_target_path_not_concept_id(tmp_path: Path) -> None:
+def test_graph_links_sort_by_target_path_across_all_link_states(tmp_path: Path) -> None:
     root = tmp_path / "docs"
-    # "../outside.md" is outside the bundle root so target_concept_id=None ("").
-    # "b_missing.md" is inside the bundle so target_concept_id="b_missing".
-    # Sorted by concept_id: None("") < "b_missing" → outside.md first.
-    # Sorted by target_path: docs/b_missing.md < outside.md ('d' < 'o') → b_missing first.
-    # The test asserts target_path order, confirming it is the primary sort key.
+    # Three link states from one source, each with a distinct target_concept_id:
+    #   c.md (exists)         → resolved, target_concept_id="c"
+    #   b_missing.md (absent) → broken,   target_concept_id="b_missing"
+    #   ../outside.md (OOB)   → broken,   target_concept_id=None ("")
+    #
+    # Sorted by target_path:  docs/b_missing < docs/c < outside  ('d' before 'o')
+    # Sorted by concept_id:   None("") < "b_missing" < "c"       (outside first)
+    #
+    # The assertions use target_path order; outside sorts last in broken_links,
+    # not first as it would if concept_id (None → "") were the primary key.
     _write_concept(
-        root / "a.md", body="See [outside](../outside.md) and [B](b_missing.md)."
+        root / "a.md",
+        body="See [outside](../outside.md), [B](b_missing.md), and [C](c.md).",
     )
+    _write_concept(root / "c.md")
 
     graph = build_bundle_graph(_bundle(root))
 
-    assert graph.links == ()
-    assert len(graph.broken_links) == 2
+    assert [link.target for link in graph.links] == ["c.md"]
     assert [link.target for link in graph.broken_links] == [
         "b_missing.md",
         "../outside.md",
