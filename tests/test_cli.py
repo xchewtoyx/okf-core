@@ -485,6 +485,49 @@ def test_list_concepts_consumes_future_version_bundle_best_effort(
     assert data["problems"] == []
 
 
+def test_list_concepts_with_content_flag(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: Alpha\n---\nHello World\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(
+        cli, ["list-concepts", "--config", str(config_path), "--with-content"]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concepts"][0]["concept_id"] == "a"
+    assert (
+        data["concepts"][0]["content"]
+        == "---\ntype: concept\ntitle: Alpha\n---\nHello World\n"
+    )
+    assert data["problems"] == []
+
+
+def test_list_concepts_content_is_null_without_flag(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: Alpha\n---\nHello World\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["list-concepts", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["concepts"][0]["concept_id"] == "a"
+    assert data["concepts"][0]["content"] is None
+    assert data["problems"] == []
+
+
 # ---------------------------------------------------------------------------
 # okf context
 # ---------------------------------------------------------------------------

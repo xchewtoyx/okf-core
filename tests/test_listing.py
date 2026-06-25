@@ -181,6 +181,58 @@ def test_list_concepts_omits_graph_counts_by_default(tmp_path: Path) -> None:
     assert listing.concepts[0].inbound_link_count is None
 
 
+def test_list_concepts_populates_content_when_with_content_is_true(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n", body="Hello World\n")
+
+    listing = list_concepts(_bundle(root), with_content=True)
+
+    assert len(listing.concepts) == 1
+    assert (
+        listing.concepts[0].content
+        == "---\ntype: concept\ntitle: Alpha\n---\nHello World\n"
+    )
+    assert listing.problems == ()
+
+
+def test_list_concepts_defaults_content_to_none(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n", body="Hello World\n")
+
+    listing = list_concepts(_bundle(root))
+
+    assert len(listing.concepts) == 1
+    assert listing.concepts[0].content is None
+    assert listing.problems == ()
+
+
+def test_list_concepts_reports_content_read_error_as_problem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n")
+    bundle = _bundle(root)
+    manifest = scan_bundle(bundle)
+
+    # Clear the content cache to force a disk read during listing
+    object.__setattr__(manifest.concepts[0], "_content_cache", None)
+
+    def mock_read_bytes(*args: object, **kwargs: object) -> bytes:
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
+
+    listing = list_concepts(bundle, manifest=manifest, with_content=True)
+
+    assert listing.concepts == ()
+    assert len(listing.problems) == 1
+    assert listing.problems[0].kind == "read-error"
+    assert "Permission denied" in listing.problems[0].message
+
+
 def _bundle(root: Path, *, listing_fields: tuple[str, ...] = ()) -> BundleConfig:
     return BundleConfig(
         name="docs",

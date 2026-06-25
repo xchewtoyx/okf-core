@@ -27,6 +27,7 @@ class ConceptListing:
     frontmatter: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     outbound_link_count: int | None = None
     inbound_link_count: int | None = None
+    content: str | None = None
 
 
 @dataclass(frozen=True)
@@ -53,6 +54,7 @@ def list_concepts(
     *,
     manifest: BundleManifest | None = None,
     graph: BundleGraph | None = None,
+    with_content: bool = False,
 ) -> BundleListing:
     """List valid concept documents as deterministic seed candidates.
 
@@ -60,6 +62,9 @@ def list_concepts(
     producer-defined frontmatter fields are preserved.  Entries whose ``type``
     field is missing, non-string, or blank are reported as structured problems
     because OKF concept documents require a non-empty string ``type``.
+
+    If ``with_content`` is True, the raw Markdown body of each valid concept
+    is populated in the ``content`` field of the listing entries.
     """
 
     resolved_manifest = _resolve_manifest(bundle, manifest, graph)
@@ -86,6 +91,23 @@ def list_concepts(
             )
             continue
 
+        content_val = None
+        if with_content:
+            try:
+                content_val = entry.content
+            except (OSError, UnicodeDecodeError) as exc:
+                problems.append(
+                    ListingProblem(
+                        concept_id=entry.concept_id,
+                        path=entry.path,
+                        kind=(
+                            "read-error" if isinstance(exc, OSError) else "decode-error"
+                        ),
+                        message=str(exc),
+                    )
+                )
+                continue
+
         concepts.append(
             ConceptListing(
                 concept_id=entry.concept_id,
@@ -101,6 +123,7 @@ def list_concepts(
                 inbound_link_count=(
                     inbound_counts.get(entry.concept_id) if graph is not None else None
                 ),
+                content=content_val,
             )
         )
 
