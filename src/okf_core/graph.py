@@ -260,12 +260,13 @@ def _resolve_concept_link(
     )
 
 
-def _link_sort_key(link: ConceptLink) -> tuple[str, str, str, str]:
+def _link_sort_key(link: ConceptLink) -> tuple[str, str, str, str, str]:
     return (
         link.source_concept_id,
         link.target_concept_id or "",
         str(link.target_path),
         link.target,
+        link.title or "",
     )
 
 
