@@ -109,9 +109,9 @@ def test_graph_resolves_nested_relative_and_bundle_absolute_links(
     assert [
         (link.target, link.target_concept_id) for link in links_from(graph, "topics/a")
     ] == [
-        ("/root.md#intro", "root"),  # text="absolute"
-        ("../root.md", "root"),  # text="parent"
-        ("./b.md", "topics/b"),  # text="sibling"
+        ("../root.md", "root"),
+        ("/root.md#intro", "root"),
+        ("./b.md", "topics/b"),
     ]
 
 

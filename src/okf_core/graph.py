@@ -261,8 +261,24 @@ def _resolve_concept_link(
     )
 
 
+# Stable structural fields that should sort first; remaining fields follow
+# automatically via dataclasses.fields(), so new fields never need manual updates.
+_LINK_SORT_PRIORITY = (
+    "source_concept_id",
+    "target_concept_id",
+    "target_path",
+    "target",
+)
+_LINK_SORT_TAIL = tuple(
+    f.name for f in dataclasses.fields(ConceptLink) if f.name not in _LINK_SORT_PRIORITY
+)
+
+
 def _link_sort_key(link: ConceptLink) -> tuple[str, ...]:
-    return tuple("" if v is None else str(v) for v in dataclasses.astuple(link))
+    return tuple(
+        "" if (v := getattr(link, name)) is None else str(v)
+        for name in (*_LINK_SORT_PRIORITY, *_LINK_SORT_TAIL)
+    )
 
 
 def _is_ignored_reserved_path(path: Path, bundle: BundleConfig) -> bool:
