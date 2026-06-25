@@ -9,7 +9,7 @@ install:
         exit 1
     fi
     python3 -m venv .venv
-    {{python}} -m pip install -e ".[test]"
+    {{python}} -m pip install -e ".[test,dev]"
 
 [private]
 _require-venv:

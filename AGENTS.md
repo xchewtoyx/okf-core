@@ -16,7 +16,7 @@ consume `okf-core`.
   ```sh
   python3 -m venv .venv
   source .venv/bin/activate
-  python -m pip install -e ".[test]"
+  python -m pip install -e ".[test,dev]"
   ```
 
 ## Project Shape
@@ -130,7 +130,7 @@ consume `okf-core`.
   python -m mypy .github/scripts/ --ignore-missing-imports
   .venv/bin/actionlint .github/workflows/*.yml
   ```
-  `ruff` checks Python style and common bugs in `.github/scripts/`; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[test]` deps and run in CI.
+  `ruff` checks Python style and common bugs in `.github/scripts/`; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[dev]` deps and run in CI.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
 - Use `just ci` to run the full check + lint + test suite that mirrors what CI requires:
   ```sh

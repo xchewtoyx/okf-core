@@ -38,8 +38,10 @@ test = [
   "pytest",
   "pytest-cov",
   "coverage",
-  "black >= 24, < 27",
   "packaging >= 24",
+]
+dev = [
+  "black >= 24, < 27",
   "ruff >= 0.9, < 2",
   "mypy >= 2, < 4",
   "actionlint-py >= 1.7, < 2",
