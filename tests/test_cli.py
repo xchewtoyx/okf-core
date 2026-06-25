@@ -297,6 +297,58 @@ profile = "typed"
     assert all(f["severity"] == "warning" for f in data["findings"][path_key])
 
 
+@pytest.mark.parametrize("quiet_flag", ["--quiet", "-q"])
+def test_validate_quiet_success(tmp_path: Path, quiet_flag: str) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "valid.md", title="Valid")
+
+    result = _runner().invoke(
+        cli, ["validate", "--config", str(config_path), quiet_flag]
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
+
+
+@pytest.mark.parametrize("quiet_flag", ["--quiet", "-q"])
+def test_validate_quiet_errors(tmp_path: Path, quiet_flag: str) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    bad = tmp_path / "no_type.md"
+    bad.write_text("---\ntitle: Missing Type\n---\nBody\n", encoding="utf-8")
+
+    result = _runner().invoke(
+        cli, ["validate", "--config", str(config_path), quiet_flag]
+    )
+
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
+
+
+@pytest.mark.parametrize("quiet_flag", ["--quiet", "-q"])
+def test_validate_quiet_config_error(tmp_path: Path, quiet_flag: str) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text("[defaults]\n", encoding="utf-8")
+
+    result = _runner().invoke(
+        cli,
+        ["validate", "--config", str(config_path), quiet_flag, "--bundle", "missing"],
+    )
+
+    assert result.exit_code == 2
+    mixed_output = result.stdout + (getattr(result, "stderr", "") or "")
+    assert "not found" in mixed_output
+
+
 def test_validate_with_profile_checks_required_fields(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(

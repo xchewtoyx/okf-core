@@ -122,29 +122,44 @@ def scan(config_path: str | None, bundle_name: str) -> None:
     metavar="NAME",
     help="Named bundle from config.",
 )
-def validate(config_path: str | None, bundle_name: str) -> None:
-    """Validate a bundle and emit findings as JSON."""
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    help="Suppress validation findings and summary output (does not suppress configuration/load errors).",
+)
+def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
+    """Validate a bundle.
+
+    Emits findings as JSON unless quiet is True.
+    """
     cfg, bundle = _load(config_path, bundle_name)
     findings = validate_bundle(bundle, cfg)
     error_count = 0
-    warning_count = 0
-    findings_dict: dict[str, list[dict[str, Any]]] = {}
-    for path, path_findings in findings.items():
-        findings_dict[str(path)] = [
-            {"severity": f.severity, "message": f.message, "field": f.field}
-            for f in path_findings
-        ]
-        for f in path_findings:
-            if f.severity == "error":
-                error_count += 1
-            else:
-                warning_count += 1
-    result: dict[str, Any] = {"bundle": bundle.name, "findings": findings_dict}
-    click.echo(json.dumps(result, cls=_Encoder, indent=2))
-    click.echo(
-        f"Validated bundle {bundle.name!r}: {error_count} errors, {warning_count} warnings",
-        err=True,
-    )
+    if quiet:
+        for path_findings in findings.values():
+            for f in path_findings:
+                if f.severity == "error":
+                    error_count += 1
+    else:
+        warning_count = 0
+        findings_dict: dict[str, list[dict[str, Any]]] = {}
+        for path, path_findings in findings.items():
+            findings_dict[str(path)] = [
+                {"severity": f.severity, "message": f.message, "field": f.field}
+                for f in path_findings
+            ]
+            for f in path_findings:
+                if f.severity == "error":
+                    error_count += 1
+                else:
+                    warning_count += 1
+        result: dict[str, Any] = {"bundle": bundle.name, "findings": findings_dict}
+        click.echo(json.dumps(result, cls=_Encoder, indent=2))
+        click.echo(
+            f"Validated bundle {bundle.name!r}: {error_count} errors, {warning_count} warnings",
+            err=True,
+        )
     if error_count:
         sys.exit(1)
 
