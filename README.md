@@ -12,7 +12,7 @@ The target pattern is semi-opaque:
 
 ## Status
 
-`okf-core` is under active development (`v0.3.0-dev`). It provides a fully functional Python library and CLI for scanning, validating, indexing, and traversing Open Knowledge Format bundles.
+`okf-core` is under active development. It provides a fully functional Python library and CLI for scanning, validating, indexing, and traversing Open Knowledge Format bundles.
 
 ## Installation
 
