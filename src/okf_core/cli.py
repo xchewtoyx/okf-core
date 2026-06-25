@@ -417,7 +417,7 @@ def list_bundles_cmd(config_path: str | None) -> None:
             "profile": bundle.profile,
             "okf_version": bundle.okf_version,
         }
-        for bundle in cfg.bundles.values()
+        for bundle in sorted(cfg.bundles.values(), key=lambda b: b.name)
     ]
     result: dict[str, Any] = {
         "config_path": str(cfg.config_path) if cfg.config_path is not None else None,

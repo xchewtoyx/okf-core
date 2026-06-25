@@ -102,6 +102,20 @@ All commands load `okf-core.toml` by searching upward from the current working d
 
 By default, commands emit machine-readable JSON on stdout and a one-line human-readable summary on stderr (except where noted, e.g. `okf validate --quiet`). Exit codes: `0` success, `1` errors or validation failures, `2` config or usage error.
 
+### `okf list-bundles`
+
+Lists all bundles configured in `okf-core.toml`:
+
+```sh
+okf list-bundles [--config PATH]
+```
+
+Output: `{"config_path": "...", "bundles": [...]}`
+
+Each bundle entry includes `name`, `bundle_root`, `profile`, and `okf_version`. Bundles are emitted in ascending alphabetical order by name. A human-readable count is written to stderr (`Found N bundle(s)`). Unlike other commands, `list-bundles` accepts only `--config` — it operates at the config file level rather than selecting a single bundle.
+
+Exits `2` on config or usage error.
+
 ### `okf scan`
 
 Scans a bundle and emits a manifest:
