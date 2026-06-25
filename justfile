@@ -38,11 +38,12 @@ test-matrix: _require-venv
     {{python}} .github/scripts/run_local_matrix.py
 
 
-# Run ruff, mypy, and actionlint static analysis
+# Run black, ruff, mypy, and actionlint (matches CI lint-and-format job)
 lint: _require-venv
+    {{python}} -m black --check src tests
     {{python}} -m ruff check src tests .github/scripts/
     {{python}} -m mypy src tests .github/scripts/ --ignore-missing-imports
     .venv/bin/actionlint .github/workflows/*.yml
 
-# Run check + lint + test (mirrors CI)
-ci: check lint test
+# Run lint + test (matches full CI)
+ci: lint test
