@@ -38,10 +38,10 @@ class ConceptLink:
     """A resolved or broken directed link from one concept document."""
 
     source_concept_id: str
-    target_path: Path
-    target: str
     source_path: Path
     text: str
+    target: str
+    target_path: Path
     target_concept_id: str | None = None
     title: str | None = None
 
@@ -262,7 +262,9 @@ def _resolve_concept_link(
 
 
 def _link_sort_key(link: ConceptLink) -> tuple[str, ...]:
-    return tuple("" if v is None else str(v) for v in dataclasses.astuple(link))
+    priority = ("source_concept_id", "target_path", "target_concept_id", "target")
+    names = dict.fromkeys(priority + tuple(f.name for f in dataclasses.fields(link)))
+    return tuple("" if (v := getattr(link, name)) is None else str(v) for name in names)
 
 
 def _is_ignored_reserved_path(path: Path, bundle: BundleConfig) -> bool:
