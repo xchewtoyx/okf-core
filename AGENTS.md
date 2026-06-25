@@ -100,6 +100,17 @@ consume `okf-core`.
   consistency (e.g. a sentence that says X is required should not be immediately
   followed by instructions for when X is unavailable).
 - Updates to `main` must happen through pull requests only.
+- **Never merge a pull request.** The human reviewer merges manually after
+  approving. Do not call any merge API or CLI command on a PR.
+- **Never force-push** (`git push --force` or `--force-with-lease`). If a branch
+  needs updating after a rebase or conflict resolution, coordinate with the
+  reviewer rather than overwriting remote history.
+- **Each issue gets its own branch**, created fresh from `origin/main`:
+  ```sh
+  git fetch origin main
+  git checkout -b <branch-name> origin/main
+  ```
+  Do not reuse or extend an existing feature branch for a different issue.
 - Do not close story issues until the implementation PR has been approved by a
   human and merged.
 - Do not try to align pull request numbers with issue numbers. GitHub assigns
