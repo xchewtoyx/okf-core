@@ -100,18 +100,6 @@ consume `okf-core`.
   consistency (e.g. a sentence that says X is required should not be immediately
   followed by instructions for when X is unavailable).
 - Updates to `main` must happen through pull requests only.
-- **Automated agents must not merge pull requests.** The human reviewer merges
-  manually after approving. Agents must not call any merge API or CLI command
-  on a PR.
-- **Automated agents must not force-push** (`git push --force` or
-  `--force-with-lease`). If a branch needs updating, push new commits instead.
-- **Automated agents must start each issue on its own branch**, created fresh
-  from `origin/main`:
-  ```sh
-  git fetch origin main
-  git checkout -b <branch-name> origin/main
-  ```
-  Do not reuse or extend an existing feature branch for a different issue.
 - Do not close story issues until the implementation PR has been approved by a
   human and merged.
 - Do not try to align pull request numbers with issue numbers. GitHub assigns
@@ -120,6 +108,23 @@ consume `okf-core`.
   `Part of #N` in PR bodies instead.
 - Copilot review can supplement human review, but it does not replace the human
   approval requirement.
+
+## Automated Agent Rules
+
+> **These rules apply to automated agents (e.g. Claude, Copilot) only.**
+> Human contributors are not subject to these constraints and may use normal
+> Git and GitHub workflows at their discretion.
+
+- **Do not merge pull requests.** The human reviewer merges manually after
+  approving. Do not call any merge API or CLI command on a PR.
+- **Do not force-push** (`git push --force` or `--force-with-lease`). If a
+  branch needs updating, push new commits instead.
+- **Start each issue on its own branch**, created fresh from `origin/main`:
+  ```sh
+  git fetch origin main
+  git checkout -b <branch-name> origin/main
+  ```
+  Do not reuse or extend an existing feature branch for a different issue.
 
 ## Testing Guidelines
 
