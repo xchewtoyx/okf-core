@@ -1337,8 +1337,8 @@ def test_list_bundles_emits_all_named_bundles(tmp_path: Path) -> None:
     root_b = tmp_path / "b"
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
-        f'[bundles.alpha]\nbundle_root = "{root_a}"\n'
         f'[bundles.beta]\nbundle_root = "{root_b}"\nprofile = "default"\n'
+        f'[bundles.alpha]\nbundle_root = "{root_a}"\n'
         f"[profiles.default]\n",
         encoding="utf-8",
     )
@@ -1347,11 +1347,9 @@ def test_list_bundles_emits_all_named_bundles(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     data = json.loads(result.stdout)
-    names = [b["name"] for b in data["bundles"]]
-    assert "alpha" in names
-    assert "beta" in names
-    beta = next(b for b in data["bundles"] if b["name"] == "beta")
-    assert beta["profile"] == "default"
+    # bundles are sorted by name regardless of TOML definition order
+    assert [b["name"] for b in data["bundles"]] == ["alpha", "beta"]
+    assert data["bundles"][1]["profile"] == "default"
 
 
 def test_list_bundles_missing_config_file_exits_2(tmp_path: Path) -> None:
