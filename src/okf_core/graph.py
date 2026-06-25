@@ -87,7 +87,7 @@ def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
                 MarkdownLink(
                     text=_collect_link_text(children[index + 1 :]),
                     target=cast(str, target),
-                    title=str(title_raw) if title_raw else None,
+                    title=str(title_raw) if title_raw is not None else None,
                 )
             )
 
