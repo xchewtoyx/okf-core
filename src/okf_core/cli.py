@@ -129,15 +129,9 @@ def scan(config_path: str | None, bundle_name: str) -> None:
     help="Suppress validation findings and summary output (does not suppress configuration/load errors).",
 )
 def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
-    """Validate a bundle and emit findings as JSON.
+    """Validate a bundle.
 
-    Args:
-        config_path: Path to okf-core.toml (default: search upward from cwd).
-        bundle_name: Named bundle from config.
-        quiet: If True, suppress validation findings (JSON on stdout) and the
-            validation summary (on stderr), leaving the exit code as the sole signal
-            for validation success/failure (does not suppress configuration or
-            bundle load errors).
+    Emits findings as JSON unless quiet is True.
     """
     cfg, bundle = _load(config_path, bundle_name)
     findings = validate_bundle(bundle, cfg)
