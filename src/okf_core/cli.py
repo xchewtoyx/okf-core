@@ -122,7 +122,13 @@ def scan(config_path: str | None, bundle_name: str) -> None:
     metavar="NAME",
     help="Named bundle from config.",
 )
-def validate(config_path: str | None, bundle_name: str) -> None:
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    help="Suppress all validation output.",
+)
+def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     """Validate a bundle and emit findings as JSON."""
     cfg, bundle = _load(config_path, bundle_name)
     findings = validate_bundle(bundle, cfg)
@@ -140,11 +146,12 @@ def validate(config_path: str | None, bundle_name: str) -> None:
             else:
                 warning_count += 1
     result: dict[str, Any] = {"bundle": bundle.name, "findings": findings_dict}
-    click.echo(json.dumps(result, cls=_Encoder, indent=2))
-    click.echo(
-        f"Validated bundle {bundle.name!r}: {error_count} errors, {warning_count} warnings",
-        err=True,
-    )
+    if not quiet:
+        click.echo(json.dumps(result, cls=_Encoder, indent=2))
+        click.echo(
+            f"Validated bundle {bundle.name!r}: {error_count} errors, {warning_count} warnings",
+            err=True,
+        )
     if error_count:
         sys.exit(1)
 

@@ -435,13 +435,15 @@ Each concept entry includes `concept_id`, `path`, `size`, `sha256`, and
 Validates all concept documents against the configured profile:
 
 ```sh
-okf validate [--config PATH] [--bundle NAME]
+okf validate [--config PATH] [--bundle NAME] [--quiet]
 ```
 
 Output: `{"bundle": "...", "findings": {"path": [{"severity": "...", "message": "...", "field": "..."}]}}`
 
 Only paths with findings appear as keys. Exits `1` if any error-severity
 findings are present; exits `0` if there are only warnings or no findings.
+
+Use `--quiet` or `-q` to suppress all output (findings on stdout and validation summary on stderr), leaving the exit code as the sole signal.
 
 #### `okf list-concepts`
 
