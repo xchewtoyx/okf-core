@@ -1299,7 +1299,7 @@ def test_list_bundles_emits_all_named_bundles(tmp_path: Path) -> None:
     config_path.write_text(
         f'[bundles.alpha]\nbundle_root = "{root_a}"\n'
         f'[bundles.beta]\nbundle_root = "{root_b}"\nprofile = "default"\n'
-        f'[profiles.default]\n',
+        f"[profiles.default]\n",
         encoding="utf-8",
     )
 
