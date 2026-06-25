@@ -18,6 +18,8 @@ def parse_workflow_matrix(yaml_content: str) -> list[str]:
         List of python version strings in the matrix.
     """
     data = yaml.safe_load(yaml_content)
+    if not isinstance(data, dict):
+        raise TypeError("Workflow YAML content must be a mapping/dictionary")
     try:
         versions = data["jobs"]["pytest"]["strategy"]["matrix"]["python-version"]
     except KeyError as exc:
