@@ -184,7 +184,7 @@ okf graph [--config PATH] [--bundle NAME] --broken
 
 Full output includes `concepts`, resolved `links`, `broken_links`, and `problems`. `--concept` emits outbound links, backlinks, broken links from that concept, and a depth-limited `neighborhood`. `--broken` emits only broken internal concept links and graph problems.
 
-Each link entry includes `source_concept_id`, `source_path`, `text`, `target`, `title`, `target_path`, and `target_concept_id`. `title` is the CommonMark link title attribute (e.g. `[B](b.md "related")` → `"related"`); it is `null` when no title is present.
+Each link entry includes `source_concept_id`, `source_path`, `text`, `target`, `title`, `target_path`, and `target_concept_id`. `title` is the CommonMark link title attribute (e.g. `[B](b.md "related")` → `"related"`); it is `null` when no title is present or when the title is an empty string — both are treated as absent.
 
 Broken links do not make the command fail. Unknown bundles, unknown concept IDs, invalid depth values, and config errors exit `2`.
 
@@ -312,7 +312,7 @@ for entry in pack.entries:
 
 ### Graph Operations
 
-`extract_markdown_links()` extracts standard non-image Markdown links from a Markdown body. It uses a CommonMark-compatible parser so links in fenced code, inline code, and images are ignored. Each returned `MarkdownLink` carries `text`, `target`, and `title` (the CommonMark link title attribute, `None` when absent). `title` is propagated to `ConceptLink` so graph consumers can use it as relationship metadata without requiring custom frontmatter extensions.
+`extract_markdown_links()` extracts standard non-image Markdown links from a Markdown body. It uses a CommonMark-compatible parser so links in fenced code, inline code, and images are ignored. Each returned `MarkdownLink` carries `text`, `target`, and `title` (the CommonMark link title attribute, `None` when absent or empty). `title` is propagated to `ConceptLink` so graph consumers can use it as relationship metadata without requiring custom frontmatter extensions.
 
 `build_bundle_graph(bundle, manifest=None)` scans concept bodies and returns a `BundleGraph` with resolved directed concept links, broken internal concept links, and non-fatal graph problems. Callers may pass an existing `BundleManifest` to avoid scanning twice; scanned manifest entries also let graph construction reuse the raw content snapshot instead of rereading concept files. Graph problems use the same scan-style kind values for document failures, such as `read-error`, `decode-error`, and `parse-error`.
 

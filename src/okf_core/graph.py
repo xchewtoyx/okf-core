@@ -87,8 +87,6 @@ def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
                 MarkdownLink(
                     text=_collect_link_text(children[index + 1 :]),
                     target=cast(str, target),
-                    # markdown-it returns None for both absent and empty titles
-                    # (e.g. `[B](b.md "")` → None), so a falsy guard is safe.
                     title=str(title_raw) if title_raw else None,
                 )
             )
