@@ -394,6 +394,39 @@ def graph_cmd(
     )
 
 
+@cli.command("list-bundles")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+def list_bundles_cmd(config_path: str | None) -> None:
+    """List all configured bundles."""
+    try:
+        cfg = load_config(config_path=config_path)
+    except ConfigError as exc:
+        click.echo(f"Configuration error: {exc}", err=True)
+        sys.exit(2)
+
+    bundles = [
+        {
+            "name": bundle.name,
+            "bundle_root": str(bundle.bundle_root),
+            "profile": bundle.profile,
+            "okf_version": bundle.okf_version,
+        }
+        for bundle in cfg.bundles.values()
+    ]
+    result: dict[str, Any] = {
+        "config_path": str(cfg.config_path) if cfg.config_path is not None else None,
+        "bundles": bundles,
+    }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(f"Found {len(bundles)} bundle(s)", err=True)
+
+
 @cli.command("index")
 @click.option(
     "--config",

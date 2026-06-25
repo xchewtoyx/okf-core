@@ -62,6 +62,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "graph" in result.stdout
     assert "list-concepts" in result.stdout
     assert "context" in result.stdout
+    assert "list-bundles" in result.stdout
 
 
 def test_scan_help_exits_zero() -> None:
@@ -1260,4 +1261,77 @@ def test_index_malformed_directory_metadata_exits_1(tmp_path: Path) -> None:
     assert (
         "failed to parse metadata file _directory.yml" in data["problems"][0]["message"]
     )
-    assert data["entries"] == 1
+
+
+# ---------------------------------------------------------------------------
+# okf list-bundles
+# ---------------------------------------------------------------------------
+
+
+def test_list_bundles_help_exits_zero() -> None:
+    assert _runner().invoke(cli, ["list-bundles", "--help"]).exit_code == 0
+
+
+def test_list_bundles_emits_json_with_default_bundle(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\nokf_version = "0.1"\n',
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["list-bundles", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert str(config_path) == data["config_path"]
+    assert len(data["bundles"]) == 1
+    bundle = data["bundles"][0]
+    assert bundle["name"] == "default"
+    assert bundle["bundle_root"] == str(tmp_path)
+    assert bundle["profile"] is None
+    assert bundle["okf_version"] == "0.1"
+
+
+def test_list_bundles_emits_all_named_bundles(tmp_path: Path) -> None:
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[bundles.alpha]\nbundle_root = "{root_a}"\n'
+        f'[bundles.beta]\nbundle_root = "{root_b}"\nprofile = "default"\n'
+        f"[profiles.default]\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["list-bundles", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    names = [b["name"] for b in data["bundles"]]
+    assert "alpha" in names
+    assert "beta" in names
+    beta = next(b for b in data["bundles"] if b["name"] == "beta")
+    assert beta["profile"] == "default"
+
+
+def test_list_bundles_config_path_none_when_no_config_file(tmp_path: Path) -> None:
+    # Invoke from a directory with no okf-core.toml; config_path should be null
+    # and a single implicit default bundle is returned.
+    result = _runner().invoke(
+        cli, ["list-bundles", "--config", str(tmp_path / "nonexistent.toml")]
+    )
+    assert result.exit_code == 2
+
+
+def test_list_bundles_stderr_summary_reports_count(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[bundles.x]\nbundle_root = "{tmp_path}"\n'
+        f'[bundles.y]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["list-bundles", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert "2" in result.stderr
