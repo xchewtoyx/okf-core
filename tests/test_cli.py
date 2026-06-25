@@ -783,7 +783,7 @@ def test_graph_emits_full_graph_json(tmp_path: Path) -> None:
     assert data["broken_links"] == []
 
 
-def test_graph_link_title_serialised_in_json(tmp_path: Path) -> None:
+def test_graph_link_title_serialized_in_json(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
         f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
