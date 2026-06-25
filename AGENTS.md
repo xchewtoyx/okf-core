@@ -126,17 +126,17 @@ consume `okf-core`.
   ```sh
   just lint
   # or without just (requires venv activated or using venv binaries directly):
-  python -m ruff check .github/scripts/
-  python -m mypy .github/scripts/ --ignore-missing-imports
+  python -m ruff check src tests .github/scripts/
+  python -m mypy src tests .github/scripts/ --ignore-missing-imports
   .venv/bin/actionlint .github/workflows/*.yml
   ```
-  `ruff` checks Python style and common bugs in `.github/scripts/`; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[dev]` deps and run in CI.
+  `ruff` checks Python style and common bugs in the codebase and scripts; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[dev]` deps and run in CI.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
 - Use `just ci` to run the full check + lint + test suite that mirrors what CI requires:
   ```sh
   just ci
   # or without just:
-  black --check src tests && python -m ruff check .github/scripts/ && python -m mypy .github/scripts/ --ignore-missing-imports && .venv/bin/actionlint .github/workflows/*.yml && pytest
+  black --check src tests && python -m ruff check src tests .github/scripts/ && python -m mypy src tests .github/scripts/ --ignore-missing-imports && .venv/bin/actionlint .github/workflows/*.yml && pytest
   ```
 - Use `just test-matrix` to run the full pytest suite locally across all Python versions configured in the GHA workflow matrix (e.g. 3.10, 3.11, 3.12, 3.13) via Docker:
   ```sh
