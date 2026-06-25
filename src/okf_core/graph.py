@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from markdown_it import MarkdownIt
@@ -81,7 +83,7 @@ def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
             links.append(
                 MarkdownLink(
                     text=_collect_link_text(children[index + 1 :]),
-                    target=target,
+                    target=cast(str, target),
                 )
             )
 
@@ -190,7 +192,7 @@ def neighborhood(
     return tuple(sorted(seen))
 
 
-def _collect_link_text(children: list[object]) -> str:
+def _collect_link_text(children: Sequence[Any]) -> str:
     parts: list[str] = []
     for child in children:
         child_type = getattr(child, "type", None)

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from typing import Any
 
 from hashlib import sha256
 from pathlib import Path
@@ -141,9 +142,9 @@ def test_scan_bundle_size_matches_hashed_content_when_stat_size_is_stale(
 
     def stale_size_stat(
         stat_path: Path,
-        *args: object,
-        **kwargs: object,
-    ) -> object:
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
         stat_result = original_stat(stat_path, *args, **kwargs)
         if stat_path == path:
             values = list(stat_result)

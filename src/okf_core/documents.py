@@ -107,13 +107,13 @@ def validate_concept_document_with_profile(
         is_system_type = is_directory_meta and concept_type_str.startswith("_")
 
         if not is_system_type:
-            allowed_types = ()
+            allowed_types: tuple[str, ...] = ()
             if profile.taxonomy.allowed_types:
                 allowed_types = profile.taxonomy.allowed_types
             elif project_taxonomy is not None and project_taxonomy.allowed_types:
                 allowed_types = project_taxonomy.allowed_types
 
-            known_types = ()
+            known_types: tuple[str, ...] = ()
             if profile.taxonomy.known_types:
                 known_types = profile.taxonomy.known_types
             elif project_taxonomy is not None and project_taxonomy.known_types:

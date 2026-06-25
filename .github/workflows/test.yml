@@ -24,10 +24,10 @@ jobs:
       - name: Check code formatting (Black)
         run: black --check src tests
 
-      - name: Lint scripts (ruff + mypy)
+      - name: Lint code and scripts (ruff + mypy)
         run: |
-          python -m ruff check .github/scripts/
-          python -m mypy .github/scripts/ --ignore-missing-imports
+          python -m ruff check src tests .github/scripts/
+          python -m mypy src tests .github/scripts/ --ignore-missing-imports
 
       - name: Lint workflows (actionlint)
         run: actionlint .github/workflows/*.yml
