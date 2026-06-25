@@ -443,7 +443,7 @@ Output: `{"bundle": "...", "findings": {"path": [{"severity": "...", "message": 
 Only paths with findings appear as keys. Exits `1` if any error-severity
 findings are present; exits `0` if there are only warnings or no findings.
 
-Use `--quiet` or `-q` to suppress all output (findings on stdout and validation summary on stderr), leaving the exit code as the sole signal.
+Use `--quiet` or `-q` to suppress validation findings (on stdout) and the validation summary (on stderr), leaving the exit code as the sole signal for validation success/failure. Note that configuration/load errors (which exit with code `2`) are still printed to stderr.
 
 #### `okf list-concepts`
 
