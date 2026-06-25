@@ -95,3 +95,19 @@ def test_main_docker_daemon_not_running(monkeypatch: pytest.MonkeyPatch) -> None
     with pytest.raises(SystemExit) as excinfo:
         run_local_matrix.main()
     assert excinfo.value.code == 1
+
+
+def test_main_workflow_file_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify main exits if the workflow file does not exist."""
+    original_is_file = Path.is_file
+
+    def mock_is_file(self: Path) -> bool:
+        if self.name == "test.yml":
+            return False
+        return original_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", mock_is_file)
+
+    with pytest.raises(SystemExit) as excinfo:
+        run_local_matrix.main()
+    assert excinfo.value.code == 1
