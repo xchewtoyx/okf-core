@@ -100,12 +100,13 @@ consume `okf-core`.
   consistency (e.g. a sentence that says X is required should not be immediately
   followed by instructions for when X is unavailable).
 - Updates to `main` must happen through pull requests only.
-- **Never merge a pull request.** The human reviewer merges manually after
-  approving. Do not call any merge API or CLI command on a PR.
-- **Never force-push** (`git push --force` or `--force-with-lease`). If a branch
-  needs updating after a rebase or conflict resolution, coordinate with the
-  reviewer rather than overwriting remote history.
-- **Each issue gets its own branch**, created fresh from `origin/main`:
+- **Automated agents must not merge pull requests.** The human reviewer merges
+  manually after approving. Agents must not call any merge API or CLI command
+  on a PR.
+- **Automated agents must not force-push** (`git push --force` or
+  `--force-with-lease`). If a branch needs updating, push new commits instead.
+- **Automated agents must start each issue on its own branch**, created fresh
+  from `origin/main`:
   ```sh
   git fetch origin main
   git checkout -b <branch-name> origin/main
