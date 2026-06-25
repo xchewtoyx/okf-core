@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from collections.abc import Sequence
+import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -29,6 +30,7 @@ class MarkdownLink:
 
     text: str
     target: str
+    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -41,6 +43,7 @@ class ConceptLink:
     target: str
     target_path: Path
     target_concept_id: str | None = None
+    title: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,10 +83,12 @@ def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
             target = child.attrGet("href")
             if target is None:
                 continue
+            title_raw = child.attrGet("title")
             links.append(
                 MarkdownLink(
                     text=_collect_link_text(children[index + 1 :]),
                     target=cast(str, target),
+                    title=str(title_raw) if title_raw else None,
                 )
             )
 
@@ -252,15 +257,22 @@ def _resolve_concept_link(
         target=markdown_link.target,
         target_path=target_path,
         target_concept_id=target_concept_id,
+        title=markdown_link.title,
     )
 
 
-def _link_sort_key(link: ConceptLink) -> tuple[str, str, str, str]:
-    return (
-        link.source_concept_id,
-        link.target_concept_id or "",
-        str(link.target_path),
-        link.target,
+_LINK_SORT_FIELDS: tuple[str, ...] = tuple(
+    dict.fromkeys(
+        ("source_concept_id", "target_path", "target_concept_id", "target")
+        + tuple(f.name for f in dataclasses.fields(ConceptLink))
+    )
+)
+
+
+def _link_sort_key(link: ConceptLink) -> tuple[str, ...]:
+    return tuple(
+        "" if (v := getattr(link, name)) is None else str(v)
+        for name in _LINK_SORT_FIELDS
     )
 
 

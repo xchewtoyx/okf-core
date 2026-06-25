@@ -33,6 +33,49 @@ def test_extract_markdown_links_ignores_code_and_images() -> None:
     assert [(link.text, link.target) for link in links] == [("real", "target.md")]
 
 
+def test_extract_markdown_links_parses_title_attribute() -> None:
+    links = extract_markdown_links('[B](b.md "related")')
+
+    assert len(links) == 1
+    assert links[0].title == "related"
+
+
+def test_extract_markdown_links_title_is_none_when_absent() -> None:
+    links = extract_markdown_links("[B](b.md)")
+
+    assert len(links) == 1
+    assert links[0].title is None
+
+
+def test_extract_markdown_links_empty_title_is_none() -> None:
+    links = extract_markdown_links('[B](b.md "")')
+
+    assert len(links) == 1
+    assert links[0].title is None
+
+
+def test_graph_link_carries_title(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body='See [B](b.md "related").')
+    _write_concept(root / "b.md")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert len(graph.links) == 1
+    assert graph.links[0].title == "related"
+
+
+def test_graph_link_title_none_when_absent(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [B](b.md).")
+    _write_concept(root / "b.md")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert len(graph.links) == 1
+    assert graph.links[0].title is None
+
+
 def test_graph_resolves_outbound_links_and_backlinks(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", body="See [B](b.md).")
@@ -96,6 +139,33 @@ def test_graph_reports_unresolvable_markdown_paths_as_broken(tmp_path: Path) -> 
     assert len(graph.broken_links) == 1
     assert graph.broken_links[0].target == "../outside.md"
     assert graph.broken_links[0].target_concept_id is None
+
+
+def test_graph_links_sort_by_target_path_across_all_link_states(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    # Three link states from one source, each with a distinct target_concept_id:
+    #   c.md (exists)         → resolved, target_concept_id="c"
+    #   b_missing.md (absent) → broken,   target_concept_id="b_missing"
+    #   ../outside.md (OOB)   → broken,   target_concept_id=None ("")
+    #
+    # Sorted by target_path:  docs/b_missing < docs/c < outside  ('d' before 'o')
+    # Sorted by concept_id:   None("") < "b_missing" < "c"       (outside first)
+    #
+    # The assertions use target_path order; outside sorts last in broken_links,
+    # not first as it would if concept_id (None → "") were the primary key.
+    _write_concept(
+        root / "a.md",
+        body="See [outside](../outside.md), [B](b_missing.md), and [C](c.md).",
+    )
+    _write_concept(root / "c.md")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert [link.target for link in graph.links] == ["c.md"]
+    assert [link.target for link in graph.broken_links] == [
+        "b_missing.md",
+        "../outside.md",
+    ]
 
 
 def test_graph_reports_outside_reserved_filename_as_broken(tmp_path: Path) -> None:

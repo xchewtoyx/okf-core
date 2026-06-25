@@ -109,6 +109,23 @@ consume `okf-core`.
 - Copilot review can supplement human review, but it does not replace the human
   approval requirement.
 
+## Automated Agent Rules
+
+> **These rules apply to automated agents (e.g. Claude, Copilot) only.**
+> Human contributors are not subject to these constraints and may use normal
+> Git and GitHub workflows at their discretion.
+
+- **Do not merge pull requests.** The human reviewer merges manually after
+  approving. Do not call any merge API or CLI command on a PR.
+- **Do not force-push** (`git push --force` or `--force-with-lease`). If a
+  branch needs updating, push new commits instead.
+- **Start each issue on its own branch**, created fresh from `origin/main`:
+  ```sh
+  git fetch origin main
+  git checkout -b <branch-name> origin/main
+  ```
+  Do not reuse or extend an existing feature branch for a different issue.
+
 ## Testing Guidelines
 
 - **Decompose Tests**: Avoid monolithic "happy-path" tests that assert multiple independent configurations in a single test case. Decompose them into focused, single-responsibility tests to prevent assertion shadowing.

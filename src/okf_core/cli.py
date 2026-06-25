@@ -583,6 +583,7 @@ def _link_dict(link: Any) -> dict[str, Any]:
         "source_path": str(link.source_path),
         "text": link.text,
         "target": link.target,
+        "title": link.title,
         "target_path": str(link.target_path),
         "target_concept_id": link.target_concept_id,
     }
