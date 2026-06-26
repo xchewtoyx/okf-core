@@ -26,7 +26,7 @@ def test_search_creates_fts_schema_in_existing_cache_db(tmp_path: Path) -> None:
         tables = {
             row[0]
             for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type IN ('table', 'virtual table')"
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
             )
         }
     assert "concepts" in tables
