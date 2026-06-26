@@ -311,7 +311,7 @@ def _apply_overrides(
     defaults: ProjectDefaults,
     overrides: ConfigOverrides,
 ) -> ProjectDefaults:
-    defaults_fields = defaults.__class__.model_fields
+    defaults_fields = type(defaults).model_fields
     update = {
         name: value
         for name, value in overrides.model_dump().items()
