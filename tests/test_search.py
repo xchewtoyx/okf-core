@@ -160,6 +160,15 @@ def test_fts5_schema_error_becomes_search_config_error() -> None:
         _ensure_search_schema(MissingFtsConnection())  # type: ignore[arg-type]
 
 
+def test_unrelated_schema_operational_error_is_not_masked() -> None:
+    class BrokenConnection:
+        def execute(self, _sql: str) -> None:
+            raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    with pytest.raises(sqlite3.OperationalError, match="readonly database"):
+        _ensure_search_schema(BrokenConnection())  # type: ignore[arg-type]
+
+
 def test_search_limit_and_deterministic_tiebreak(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "b.md", title="Same")

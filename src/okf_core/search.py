@@ -121,6 +121,8 @@ def _ensure_search_schema(conn: sqlite3.Connection) -> None:
             );
             """)
     except sqlite3.OperationalError as exc:
+        if "no such module: fts5" not in str(exc).lower():
+            raise
         raise SearchConfigError(
             "SQLite FTS5 is not available; install or use a Python SQLite build with FTS5 support"
         ) from exc
