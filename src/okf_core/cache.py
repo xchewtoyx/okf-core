@@ -28,30 +28,35 @@ def compute_pagerank(
         return {}
 
     n = len(nodes)
-    pr = {node: 1.0 / n for node in nodes}
+    sorted_nodes = sorted(nodes)
+    pr = {node: 1.0 / n for node in sorted_nodes}
 
-    out_links: dict[str, list[str]] = {node: [] for node in nodes}
-    in_links: dict[str, list[str]] = {node: [] for node in nodes}
+    out_links: dict[str, list[str]] = {node: [] for node in sorted_nodes}
+    in_links: dict[str, list[str]] = {node: [] for node in sorted_nodes}
 
     for src, dst in edges:
         if src in nodes and dst in nodes:
             out_links[src].append(dst)
             in_links[dst].append(src)
 
-    sinks = [node for node in nodes if not out_links[node]]
+    for node in sorted_nodes:
+        out_links[node].sort()
+        in_links[node].sort()
+
+    sinks = [node for node in sorted_nodes if not out_links[node]]
 
     for _ in range(max_iter):
         next_pr = {}
         sink_sum = sum(pr[sink] for sink in sinks)
 
-        for node in nodes:
+        for node in sorted_nodes:
             rank_sum = sum(
                 pr[neighbor] / len(out_links[neighbor]) for neighbor in in_links[node]
             )
             rank_sum += sink_sum / n
             next_pr[node] = (1.0 - d) / n + d * rank_sum
 
-        err = sum(abs(next_pr[node] - pr[node]) for node in nodes)
+        err = sum(abs(next_pr[node] - pr[node]) for node in sorted_nodes)
         pr = next_pr
         if err < tol:
             break
@@ -104,6 +109,9 @@ class SqliteCachePlugin:
             # Create indexes for performance
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_concept_id);"
+            )
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_concepts_path ON concepts(path);"
             )
             # Migrate old schemas if ctime_ns is missing
             try:
@@ -160,10 +168,9 @@ class SqliteCachePlugin:
 
             obsolete_ids = cached_ids - active_ids
             if obsolete_ids:
-                placeholders = ",".join("?" for _ in obsolete_ids)
-                conn.execute(
-                    f"DELETE FROM concepts WHERE concept_id IN ({placeholders})",
-                    tuple(obsolete_ids),
+                conn.executemany(
+                    "DELETE FROM concepts WHERE concept_id = ?",
+                    [(obs_id,) for obs_id in obsolete_ids],
                 )
 
         if self._conn is not None:

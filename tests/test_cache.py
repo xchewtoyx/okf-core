@@ -362,24 +362,26 @@ def test_cache_invalidation_on_metadata_change(
     size2 = stat2.st_size
 
     # Verify that mtime and size did not change, but ctime did!
-    if ctime2 != ctime1:
-        assert mtime2 == mtime1
-        assert size2 == size1
+    if ctime2 == ctime1:
+        pytest.skip("Filesystem does not support distinct ctime updates on chmod()")
 
-        # Mock read_bytes to verify it IS called (since cache misses on ctime mismatch)
-        read_called = False
-        original_read_bytes = Path.read_bytes
+    assert mtime2 == mtime1
+    assert size2 == size1
 
-        def mock_read_bytes(self: Path) -> bytes:
-            nonlocal read_called
-            read_called = True
-            return original_read_bytes(self)
+    # Mock read_bytes to verify it IS called (since cache misses on ctime mismatch)
+    read_called = False
+    original_read_bytes = Path.read_bytes
 
-        monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
+    def mock_read_bytes(self: Path) -> bytes:
+        nonlocal read_called
+        read_called = True
+        return original_read_bytes(self)
 
-        # Second scan: should detect change and hit the disk
-        scan_bundle(bundle)
-        assert read_called
+    monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
+
+    # Second scan: should detect change and hit the disk
+    scan_bundle(bundle)
+    assert read_called
 
 
 def test_transaction_rollback_on_scan_abort(
