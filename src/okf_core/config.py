@@ -56,7 +56,6 @@ class ProjectDefaults(BaseModel):
     exclude: tuple[str, ...] = ()
     reserved_filenames: tuple[str, ...] = ("index.md", "log.md")
     concept_path_strategy: str = "relative-path"
-    index_cache: Path = Path(".okf-cache")
     listing_fields: tuple[str, ...] = ()
     directory_metadata_file: str = "_directory.yml"
     okf_version: str | None = None
@@ -85,14 +84,13 @@ class BundleConfig(BaseModel):
     exclude: tuple[str, ...]
     reserved_filenames: tuple[str, ...]
     concept_path_strategy: str
-    index_cache: Path
     listing_fields: tuple[str, ...] = ()
     okf_version: str | None = None
     profile: str | None = None
     directory_metadata_file: str = "_directory.yml"
     okf_cache_dir: Path | None = None
 
-    @field_validator("bundle_root", "index_cache", mode="after")
+    @field_validator("bundle_root", mode="after")
     @classmethod
     def _normalize_paths(cls, v: Path) -> Path:
         return v.expanduser().resolve(strict=False)
@@ -149,7 +147,6 @@ class ConfigOverrides(BaseModel):
     exclude: tuple[str, ...] | None = None
     reserved_filenames: tuple[str, ...] | None = None
     concept_path_strategy: str | None = None
-    index_cache: Path | None = None
     listing_fields: tuple[str, ...] | None = None
     directory_metadata_file: str | None = None
     okf_version: str | None = None
@@ -174,7 +171,6 @@ class _BundleInput(BaseModel):
     exclude: tuple[str, ...] | None = None
     reserved_filenames: tuple[str, ...] | None = None
     concept_path_strategy: str | None = None
-    index_cache: Path | None = None
     listing_fields: tuple[str, ...] | None = None
     okf_version: str | None = None
     profile: str | None = None
@@ -331,7 +327,6 @@ def _normalize_defaults(
 ) -> ProjectDefaults:
     update = {
         "bundle_root": _normalize_path(defaults.bundle_root, project_root),
-        "index_cache": _normalize_path(defaults.index_cache, project_root),
     }
     return defaults.model_copy(update=update)
 
@@ -353,7 +348,6 @@ def _resolve_bundles(
                 exclude=defaults.exclude,
                 reserved_filenames=defaults.reserved_filenames,
                 concept_path_strategy=defaults.concept_path_strategy,
-                index_cache=defaults.index_cache,
                 listing_fields=defaults.listing_fields,
                 okf_version=defaults.okf_version,
                 directory_metadata_file=defaults.directory_metadata_file,
@@ -403,11 +397,6 @@ def _resolve_bundle(
         raw_bundle.concept_path_strategy,
         defaults.concept_path_strategy,
     )
-    index_cache = _select_config_value(
-        overrides.index_cache,
-        raw_bundle.index_cache,
-        defaults.index_cache,
-    )
     listing_fields = _select_config_value(
         overrides.listing_fields,
         raw_bundle.listing_fields,
@@ -438,7 +427,6 @@ def _resolve_bundle(
         exclude=exclude,
         reserved_filenames=reserved_filenames,
         concept_path_strategy=concept_path_strategy,
-        index_cache=_normalize_path(index_cache, project_root),
         listing_fields=listing_fields,
         okf_version=okf_version,
         profile=raw_bundle.profile,

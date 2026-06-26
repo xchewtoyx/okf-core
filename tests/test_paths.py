@@ -160,5 +160,4 @@ def _bundle(
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy=concept_path_strategy,
-        index_cache=Path(".okf-cache"),
     )

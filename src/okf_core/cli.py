@@ -24,6 +24,8 @@ from okf_core import (
     neighborhood,
     render_index_document,
     scan_bundle,
+    search_concepts,
+    SearchConfigError,
     validate_bundle,
 )
 from okf_core.write_safety import check_bundle_write_safety
@@ -213,6 +215,75 @@ def list_concepts_cmd(
     click.echo(
         f"Listed bundle {bundle.name!r}: {len(listing.concepts)} concepts, "
         f"{len(listing.problems)} problems",
+        err=True,
+    )
+
+
+@cli.command("search")
+@click.argument("query")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--limit",
+    default=10,
+    show_default=True,
+    type=click.IntRange(min=0),
+    metavar="N",
+    help="Maximum number of results to return.",
+)
+@click.option(
+    "--no-refresh",
+    is_flag=True,
+    help="Search the current FTS index without scanning and refreshing first.",
+)
+def search_cmd(
+    query: str,
+    config_path: str | None,
+    bundle_name: str,
+    limit: int,
+    no_refresh: bool,
+) -> None:
+    """Search indexed bundle concepts with SQLite FTS5."""
+    _, bundle = _load(config_path, bundle_name)
+    try:
+        search_results = search_concepts(
+            bundle,
+            query,
+            limit=limit,
+            refresh=not no_refresh,
+        )
+    except SearchConfigError as exc:
+        click.echo(f"Search configuration error: {exc}", err=True)
+        sys.exit(2)
+
+    result = {
+        "bundle": search_results.bundle_name,
+        "query": search_results.query,
+        "results": [
+            _search_result_dict(search_result)
+            for search_result in search_results.results
+        ],
+        "problems": [
+            _listing_problem_dict(problem) for problem in search_results.problems
+        ],
+    }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(
+        f"Searched bundle {bundle.name!r}: {len(search_results.results)} results, "
+        f"{len(search_results.problems)} problems",
         err=True,
     )
 
@@ -619,6 +690,17 @@ def _listing_problem_dict(problem: Any) -> dict[str, Any]:
         "path": str(problem.path),
         "kind": problem.kind,
         "message": problem.message,
+    }
+
+
+def _search_result_dict(result: Any) -> dict[str, Any]:
+    return {
+        "concept_id": result.concept_id,
+        "path": str(result.path),
+        "title": result.title,
+        "description": result.description,
+        "score": result.score,
+        "snippets": list(result.snippets),
     }
 
 

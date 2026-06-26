@@ -277,7 +277,6 @@ def _bundle(root: Path) -> BundleConfig:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=Path(".okf-cache"),
     )
 
 

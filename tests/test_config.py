@@ -20,7 +20,6 @@ def test_absent_config_uses_built_in_defaults(tmp_path: Path) -> None:
     assert config.defaults.exclude == ()
     assert config.defaults.reserved_filenames == ("index.md", "log.md")
     assert config.defaults.concept_path_strategy == "relative-path"
-    assert config.defaults.index_cache == tmp_path / ".okf-cache"
     assert config.defaults.directory_metadata_file == "_directory.yml"
     assert config.defaults.okf_version is None
     assert config.bundles["default"].okf_version is None
@@ -39,7 +38,6 @@ def test_absent_config_with_existing_file_project_root_uses_parent(
     assert config.project_root == tmp_path
     assert config.config_path is None
     assert config.defaults.bundle_root == tmp_path
-    assert config.defaults.index_cache == tmp_path / ".okf-cache"
 
 
 def test_absent_config_with_nonexistent_project_root_uses_requested_path(
@@ -52,7 +50,6 @@ def test_absent_config_with_nonexistent_project_root_uses_requested_path(
     assert config.project_root == project_root
     assert config.config_path is None
     assert config.defaults.bundle_root == project_root
-    assert config.defaults.index_cache == project_root / ".okf-cache"
 
 
 def test_explicit_config_path_loads_file(tmp_path: Path) -> None:
@@ -61,7 +58,6 @@ def test_explicit_config_path_loads_file(tmp_path: Path) -> None:
         """
 [defaults]
 bundle_root = "knowledge"
-index_cache = ".cache/okf"
 """.strip(),
         encoding="utf-8",
     )
@@ -71,7 +67,6 @@ index_cache = ".cache/okf"
     assert config.config_path == config_path
     assert config.project_root == tmp_path
     assert config.defaults.bundle_root == tmp_path / "knowledge"
-    assert config.defaults.index_cache == tmp_path / ".cache" / "okf"
 
 
 def test_missing_explicit_config_path_raises_config_error(tmp_path: Path) -> None:
@@ -255,7 +250,6 @@ profile = "strict"                  # Referenced profile
 include = ["topics/**/*.md"]        # Overridden (relative to bundle_root)
 reserved_filenames = ["home.md"]    # Overridden
 concept_path_strategy = "slug"      # Overridden
-index_cache = ".cache/product"      # Overridden
 listing_fields = ["activity"]       # Overridden
 # Note: exclude is inherited from [defaults]
 """.strip(),
@@ -271,7 +265,6 @@ listing_fields = ["activity"]       # Overridden
     assert bundle.exclude == ("**/tmp/**",)
     assert bundle.reserved_filenames == ("home.md",)
     assert bundle.concept_path_strategy == "slug"
-    assert bundle.index_cache == tmp_path / ".cache" / "product"
     assert bundle.listing_fields == ("activity",)
 
 
@@ -395,6 +388,8 @@ listing_fields = []
         "[defaults]\nunexpected = true",
         "[profiles.strict]\nunexpected = true",
         "[bundles.docs]\nunexpected = true",
+        "[defaults]\nindex_cache = '.okf-cache'",
+        "[bundles.docs]\nbundle_root = 'docs'\nindex_cache = '.okf-cache'",
     ],
 )
 def test_unknown_keys_fail_closed(tmp_path: Path, toml: str) -> None:
@@ -420,6 +415,11 @@ def test_invalid_override_error_uses_config_error() -> None:
         load_config(overrides={"unexpected": True})
 
 
+def test_index_cache_override_is_rejected() -> None:
+    with pytest.raises(ConfigError, match="index_cache"):
+        load_config(overrides={"index_cache": ".okf-cache"})
+
+
 def test_python_overrides_take_precedence_over_file_values(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
@@ -430,7 +430,6 @@ include = ["file/**/*.md"]
 exclude = ["file-exclude/**"]
 reserved_filenames = ["file.md"]
 concept_path_strategy = "file-strategy"
-index_cache = ".file-cache"
 listing_fields = ["file"]
 okf_version = "0.1"
 """.strip(),
@@ -445,7 +444,6 @@ okf_version = "0.1"
             exclude=("api-exclude/**",),
             reserved_filenames=("api.md",),
             concept_path_strategy="api-strategy",
-            index_cache=Path(".api-cache"),
             listing_fields=("api",),
             okf_version="0.0",
         ),
@@ -456,7 +454,6 @@ okf_version = "0.1"
     assert config.defaults.exclude == ("api-exclude/**",)
     assert config.defaults.reserved_filenames == ("api.md",)
     assert config.defaults.concept_path_strategy == "api-strategy"
-    assert config.defaults.index_cache == tmp_path / ".api-cache"
     assert config.defaults.listing_fields == ("api",)
     assert config.defaults.okf_version == "0.0"
     assert config.bundles["default"].bundle_root == tmp_path / "from-api"
@@ -477,7 +474,6 @@ include = ["file/**/*.md"]
 exclude = ["file-exclude/**"]
 reserved_filenames = ["file.md"]
 concept_path_strategy = "file-strategy"
-index_cache = ".file-cache"
 listing_fields = ["file"]
 okf_version = "0.1"
 """.strip(),
@@ -492,7 +488,6 @@ okf_version = "0.1"
             "exclude": ["api-exclude/**"],
             "reserved_filenames": ["api.md"],
             "concept_path_strategy": "api-strategy",
-            "index_cache": ".api-cache",
             "listing_fields": ["api"],
             "okf_version": "0.0",
         },
@@ -505,7 +500,6 @@ okf_version = "0.1"
     assert bundle.exclude == ("api-exclude/**",)
     assert bundle.reserved_filenames == ("api.md",)
     assert bundle.concept_path_strategy == "api-strategy"
-    assert bundle.index_cache == tmp_path / ".api-cache"
     assert bundle.listing_fields == ("api",)
     assert bundle.okf_version == "0.0"
 
