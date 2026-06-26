@@ -617,3 +617,33 @@ def test_directory_metadata_file_validation_rejects_paths(tmp_path: Path) -> Non
     )
     with pytest.raises(ConfigError, match="must be a simple filename"):
         load_config(config_path=config_path2)
+
+
+def test_okf_cache_dir_configuration(tmp_path: Path) -> None:
+    # 1. Verify default is None
+    config = load_config(project_root=tmp_path)
+    assert not hasattr(config.defaults, "okf_cache_dir")
+    assert config.bundles["default"].okf_cache_dir is None
+
+    # 2. Verify setting defaults.okf_cache_dir raises ConfigError (not supported)
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        "[defaults]\nokf_cache_dir = '.okf-cache'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError):
+        load_config(config_path=config_path)
+
+    # 3. Verify bundle-level caching and relative path resolution
+    config_path.write_text(
+        "[bundles.b1]\nbundle_root = 'b1'\nokf_cache_dir = '.custom-cache'\n",
+        encoding="utf-8",
+    )
+    config = load_config(config_path=config_path)
+    assert config.bundles["b1"].okf_cache_dir == tmp_path / "b1" / ".custom-cache"
+
+    # 4. Verify overrides parameter resolves relative to bundle root
+    config = load_config(
+        config_path=config_path, overrides={"okf_cache_dir": ".api-cache"}
+    )
+    assert config.bundles["b1"].okf_cache_dir == tmp_path / "b1" / ".api-cache"

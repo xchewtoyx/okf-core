@@ -100,55 +100,87 @@ def build_bundle_graph(
     manifest: BundleManifest | None = None,
 ) -> BundleGraph:
     """Build a deterministic concept-link graph from a configured bundle."""
+    root = bundle.bundle_root.resolve(strict=False)
+    if not root.is_dir():
+        return BundleGraph(bundle_name=bundle.name)
 
-    resolved_manifest = manifest if manifest is not None else scan_bundle(bundle)
-    concept_ids = {entry.concept_id for entry in resolved_manifest.concepts}
-    resolved_links: list[ConceptLink] = []
-    broken_links: list[ConceptLink] = []
-    problems: list[GraphProblem] = [
-        GraphProblem(
-            concept_id="",
-            path=problem.path,
-            kind=problem.kind,
-            message=problem.message,
+    from okf_core.hooks import get_hook_manager
+
+    pm = get_hook_manager(bundle)
+
+    try:
+        pm.hook.okf_start_graph(bundle=bundle)
+        resolved_manifest = manifest if manifest is not None else scan_bundle(bundle)
+        concept_ids = {entry.concept_id for entry in resolved_manifest.concepts}
+        resolved_links: list[ConceptLink] = []
+        broken_links: list[ConceptLink] = []
+        problems: list[GraphProblem] = [
+            GraphProblem(
+                concept_id="",
+                path=problem.path,
+                kind=problem.kind,
+                message=problem.message,
+            )
+            for problem in resolved_manifest.problems
+        ]
+
+        for entry in resolved_manifest.concepts:
+            pm.hook.okf_enter_resolve_links(entry=entry, bundle=bundle)
+            entry_links = pm.hook.okf_fetch_resolve_links(entry=entry, bundle=bundle)
+            problem = None
+            if entry_links is None:
+                try:
+                    markdown = entry.content
+                except OSError as exc:
+                    problem = _graph_problem(entry, "read-error", exc)
+                except UnicodeDecodeError as exc:
+                    problem = _graph_problem(entry, "decode-error", exc)
+
+                if problem is None:
+                    try:
+                        document = parse_concept_document(markdown)
+                    except DocumentParseError as exc:
+                        problem = _graph_problem(entry, "parse-error", exc)
+
+                if problem is not None:
+                    problems.append(problem)
+                    entry_links = None
+                else:
+                    resolved_extracted: list[ConceptLink] = []
+                    for markdown_link in extract_markdown_links(document.body):
+                        link = _resolve_concept_link(bundle, entry, markdown_link)
+                        if link is not None:
+                            resolved_extracted.append(link)
+                    entry_links = resolved_extracted
+
+            if entry_links is not None:
+                for link in entry_links:
+                    if link.target_concept_id in concept_ids:
+                        resolved_links.append(link)
+                    else:
+                        broken_links.append(link)
+
+            pm.hook.okf_exit_resolve_links(
+                entry=entry,
+                links=entry_links,
+                problem=problem,
+                bundle=bundle,
+            )
+
+        graph = BundleGraph(
+            bundle_name=resolved_manifest.bundle_name,
+            concepts=resolved_manifest.concepts,
+            links=tuple(sorted(resolved_links, key=_link_sort_key)),
+            broken_links=tuple(sorted(broken_links, key=_link_sort_key)),
+            problems=tuple(
+                sorted(problems, key=lambda problem: (str(problem.path), problem.kind))
+            ),
         )
-        for problem in resolved_manifest.problems
-    ]
-
-    for entry in resolved_manifest.concepts:
-        try:
-            markdown = entry.content
-        except OSError as exc:
-            problems.append(_graph_problem(entry, "read-error", exc))
-            continue
-        except UnicodeDecodeError as exc:
-            problems.append(_graph_problem(entry, "decode-error", exc))
-            continue
-
-        try:
-            document = parse_concept_document(markdown)
-        except DocumentParseError as exc:
-            problems.append(_graph_problem(entry, "parse-error", exc))
-            continue
-
-        for markdown_link in extract_markdown_links(document.body):
-            link = _resolve_concept_link(bundle, entry, markdown_link)
-            if link is None:
-                continue
-            if link.target_concept_id in concept_ids:
-                resolved_links.append(link)
-            else:
-                broken_links.append(link)
-
-    return BundleGraph(
-        bundle_name=resolved_manifest.bundle_name,
-        concepts=resolved_manifest.concepts,
-        links=tuple(sorted(resolved_links, key=_link_sort_key)),
-        broken_links=tuple(sorted(broken_links, key=_link_sort_key)),
-        problems=tuple(
-            sorted(problems, key=lambda problem: (str(problem.path), problem.kind))
-        ),
-    )
+        pm.hook.okf_end_graph(bundle=bundle, graph=graph)
+        return graph
+    except Exception:
+        pm.hook.okf_abort_graph(bundle=bundle)
+        raise
 
 
 def links_from(graph: BundleGraph, concept_id: str) -> tuple[ConceptLink, ...]:

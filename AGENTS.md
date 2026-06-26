@@ -67,6 +67,13 @@ consume `okf-core`.
   become a required core dependency unless a future issue explicitly justifies
   that tradeoff.
 - Avoid over-engineering type/schema validation within core validation APIs. Core validation must focus on base OKF conformance (like the `type` string) and simple presence/non-emptiness checks for profile-required fields, leaving rich type/schema enforcement to the consuming project or custom workflow hooks.
+- **`pluggy` hook naming convention:** All hook names must follow the `okf_verb_noun` pattern.
+  Use `start`/`end`/`abort` as the verb for whole-phase lifecycle hooks (called once at the
+  beginning/end/failure of a scan or graph build transaction, e.g. `okf_start_scan`,
+  `okf_end_graph`). Use `fetch` as the verb for substitution/caching hooks (which return
+  a value or `None` to bypass core computation, e.g. `okf_fetch_scan_concept`). Use `enter`/`exit`
+  as the verb for per-item observation hooks (called symmetrically for observation/metrics,
+  always firing, e.g. `okf_enter_scan_concept`, `okf_exit_resolve_links`).
 - **Surface problems explicitly; never fail silently.** When a function
   encounters input it cannot process (malformed data, spec violations, missing
   required fields), expose the problem through a structured return channel.
