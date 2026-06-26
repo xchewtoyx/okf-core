@@ -423,6 +423,58 @@ def test_transaction_rollback_on_scan_abort(
         assert cursor.fetchone()[0] == 0
 
 
+def test_graph_building_with_precomputed_manifest_without_cached_concepts(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    # Write a concept that links to another
+    _write_concept(root / "a.md", "type: concept\n", body="[B](b.md)\n")
+    _write_concept(root / "b.md", "type: concept\n")
+
+    # 1. Run scan_bundle WITHOUT caching enabled
+    no_cache_bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        index_cache=root / ".cache",
+        okf_cache_dir=None,
+    )
+    manifest = scan_bundle(no_cache_bundle)
+    assert len(manifest.concepts) == 2
+
+    # 2. Run build_bundle_graph WITH caching enabled, passing the precomputed manifest.
+    # The concepts are not in the SQLite database, but this should not raise IntegrityError.
+    cache_dir = tmp_path / "custom-cache"
+    cache_bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        index_cache=root / ".cache",
+        okf_cache_dir=cache_dir,
+    )
+
+    from okf_core.graph import build_bundle_graph
+
+    graph = build_bundle_graph(cache_bundle, manifest=manifest)
+    assert len(graph.links) == 1
+    assert graph.links[0].source_concept_id == "a"
+    assert graph.links[0].target_concept_id == "b"
+
+    # Verify that nothing was actually written to the links table
+    db_path = cache_dir / "okf-cache.db"
+    assert db_path.is_file()
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) FROM links")
+        assert cursor.fetchone()[0] == 0
+
+
 def _write_concept(path: Path, frontmatter: str, *, body: str = "Body\n") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{frontmatter}---\n{body}", encoding="utf-8")

@@ -87,9 +87,9 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
     from okf_core.hooks import get_hook_manager
 
     pm = get_hook_manager(bundle)
-    pm.hook.okf_scan_start(bundle=bundle)
 
     try:
+        pm.hook.okf_scan_start(bundle=bundle)
         entries: list[ConceptManifestEntry] = []
         problems: list[ManifestProblem] = []
 

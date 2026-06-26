@@ -102,9 +102,9 @@ def build_bundle_graph(
     from okf_core.hooks import get_hook_manager
 
     pm = get_hook_manager(bundle)
-    pm.hook.okf_graph_start(bundle=bundle)
 
     try:
+        pm.hook.okf_graph_start(bundle=bundle)
         resolved_manifest = manifest if manifest is not None else scan_bundle(bundle)
         concept_ids = {entry.concept_id for entry in resolved_manifest.concepts}
         resolved_links: list[ConceptLink] = []

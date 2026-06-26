@@ -385,6 +385,13 @@ class SqliteCachePlugin:
         bundle: BundleConfig,
     ) -> None:
         with self._connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM concepts WHERE concept_id = ?", (entry.concept_id,)
+            )
+            if cursor.fetchone() is None:
+                return
+
             conn.execute(
                 "DELETE FROM links WHERE source_concept_id = ?", (entry.concept_id,)
             )

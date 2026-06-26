@@ -60,7 +60,6 @@ class ProjectDefaults(BaseModel):
     listing_fields: tuple[str, ...] = ()
     directory_metadata_file: str = "_directory.yml"
     okf_version: str | None = None
-    okf_cache_dir: Path | None = None
 
     @field_validator("okf_version")
     @classmethod
@@ -333,8 +332,6 @@ def _normalize_defaults(
         "bundle_root": _normalize_path(defaults.bundle_root, project_root),
         "index_cache": _normalize_path(defaults.index_cache, project_root),
     }
-    if defaults.okf_cache_dir is not None:
-        update["okf_cache_dir"] = _normalize_path(defaults.okf_cache_dir, project_root)
     return defaults.model_copy(update=update)
 
 
@@ -345,10 +342,12 @@ def _resolve_bundles(
     project_root: Path,
 ) -> dict[str, BundleConfig]:
     if not raw_bundles:
+        resolved_bundle_root = defaults.bundle_root
+        okf_cache_dir = overrides.okf_cache_dir
         return {
             "default": BundleConfig(
                 name="default",
-                bundle_root=defaults.bundle_root,
+                bundle_root=resolved_bundle_root,
                 include=defaults.include,
                 exclude=defaults.exclude,
                 reserved_filenames=defaults.reserved_filenames,
@@ -357,7 +356,11 @@ def _resolve_bundles(
                 listing_fields=defaults.listing_fields,
                 okf_version=defaults.okf_version,
                 directory_metadata_file=defaults.directory_metadata_file,
-                okf_cache_dir=defaults.okf_cache_dir,
+                okf_cache_dir=(
+                    _normalize_path(okf_cache_dir, resolved_bundle_root)
+                    if okf_cache_dir is not None
+                    else None
+                ),
             )
         }
 
@@ -422,12 +425,14 @@ def _resolve_bundle(
     okf_cache_dir = _select_config_value(
         overrides.okf_cache_dir,
         raw_bundle.okf_cache_dir,
-        defaults.okf_cache_dir,
+        None,
     )
+
+    resolved_bundle_root = _normalize_path(bundle_root, project_root)
 
     return BundleConfig(
         name=name,
-        bundle_root=_normalize_path(bundle_root, project_root),
+        bundle_root=resolved_bundle_root,
         include=include,
         exclude=exclude,
         reserved_filenames=reserved_filenames,
@@ -438,7 +443,7 @@ def _resolve_bundle(
         profile=raw_bundle.profile,
         directory_metadata_file=directory_metadata_file,
         okf_cache_dir=(
-            _normalize_path(okf_cache_dir, project_root)
+            _normalize_path(okf_cache_dir, resolved_bundle_root)
             if okf_cache_dir is not None
             else None
         ),
