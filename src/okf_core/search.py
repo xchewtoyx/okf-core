@@ -181,9 +181,14 @@ def _flatten_field_value(value: Any) -> list[str]:
             parts.append(str(key))
             parts.extend(_flatten_field_value(value[key]))
         return parts
-    if isinstance(value, (list, tuple, set, frozenset)):
+    if isinstance(value, (list, tuple)):
         parts = []
         for item in value:
+            parts.extend(_flatten_field_value(item))
+        return parts
+    if isinstance(value, (set, frozenset)):
+        parts = []
+        for item in sorted(value, key=str):
             parts.extend(_flatten_field_value(item))
         return parts
     if value is None:

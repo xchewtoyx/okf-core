@@ -6,7 +6,7 @@ from pathlib import Path
 import pytest
 
 from okf_core import BundleConfig, SearchConfigError, scan_bundle, search_concepts
-from okf_core.search import _ensure_search_schema
+from okf_core.search import _ensure_search_schema, _flatten_field_value
 
 
 def test_search_creates_fts_schema_in_existing_cache_db(tmp_path: Path) -> None:
@@ -197,6 +197,13 @@ def _bundle(
         listing_fields=listing_fields,
         okf_cache_dir=okf_cache_dir,
     )
+
+
+def test_flatten_field_value_set_order_is_deterministic() -> None:
+    # frozenset/set iteration order is hash-dependent; _flatten_field_value must sort
+    values = frozenset({"zebra", "apple", "mango"})
+    result = _flatten_field_value(values)
+    assert result == sorted(result)
 
 
 def _write_concept(
