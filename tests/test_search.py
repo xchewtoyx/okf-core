@@ -102,6 +102,19 @@ def test_search_refresh_removes_deleted_excluded_and_reserved_documents(
     assert search_concepts(bundle, "Reserved").results == ()
 
 
+def test_search_refresh_avoids_sql_variable_limit_for_large_bundles(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    for index in range(1100):
+        _write_concept(root / f"topic-{index}.md", title=f"Topic {index}")
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    results = search_concepts(bundle, "Topic", limit=1)
+
+    assert len(results.results) == 1
+
+
 def test_search_backfills_missing_fts_rows_from_cached_concepts(
     tmp_path: Path,
 ) -> None:

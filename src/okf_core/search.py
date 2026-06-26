@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from okf_core.config import BundleConfig
-from okf_core.listing import ListingProblem, list_concepts
+from okf_core.listing import BundleListing, ListingProblem, list_concepts
 from okf_core.manifest import BundleManifest, scan_bundle
 
 
@@ -62,14 +62,17 @@ def search_concepts(
     fts_query = _build_fts_query(query)
 
     problems: tuple[ListingProblem, ...] = ()
+    listing: BundleListing | None = None
+    if refresh:
+        resolved_manifest = manifest if manifest is not None else scan_bundle(bundle)
+        listing = list_concepts(bundle, manifest=resolved_manifest, with_content=True)
+        problems = listing.problems
+
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON;")
         _ensure_search_schema(conn)
-        if refresh:
-            resolved_manifest = (
-                manifest if manifest is not None else scan_bundle(bundle)
-            )
-            problems = _refresh_search_index(conn, bundle, resolved_manifest)
+        if listing is not None:
+            _refresh_search_index(conn, bundle, listing)
 
         if limit == 0 or fts_query is None:
             return BundleSearchResults(
@@ -126,19 +129,16 @@ def _ensure_search_schema(conn: sqlite3.Connection) -> None:
 def _refresh_search_index(
     conn: sqlite3.Connection,
     bundle: BundleConfig,
-    manifest: BundleManifest,
-) -> tuple[ListingProblem, ...]:
-    listing = list_concepts(bundle, manifest=manifest, with_content=True)
+    listing: BundleListing,
+) -> None:
     active_ids = {concept.concept_id for concept in listing.concepts}
-
-    if active_ids:
-        placeholders = ", ".join("?" for _ in active_ids)
-        conn.execute(
-            f"DELETE FROM concept_fts WHERE concept_id NOT IN ({placeholders})",
-            tuple(sorted(active_ids)),
+    cached_ids = {row[0] for row in conn.execute("SELECT concept_id FROM concept_fts")}
+    obsolete_ids = cached_ids - active_ids
+    if obsolete_ids:
+        conn.executemany(
+            "DELETE FROM concept_fts WHERE concept_id = ?",
+            [(concept_id,) for concept_id in sorted(obsolete_ids)],
         )
-    else:
-        conn.execute("DELETE FROM concept_fts")
 
     for concept in listing.concepts:
         rel_path = concept.path.relative_to(bundle.bundle_root).as_posix()
@@ -162,8 +162,6 @@ def _refresh_search_index(
                 concept.content or "",
             ),
         )
-
-    return listing.problems
 
 
 def _fields_text(fields: Mapping[str, Any]) -> str:
