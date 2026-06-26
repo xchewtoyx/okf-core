@@ -478,3 +478,123 @@ def test_graph_building_with_precomputed_manifest_without_cached_concepts(
 def _write_concept(path: Path, frontmatter: str, *, body: str = "Body\n") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{frontmatter}---\n{body}", encoding="utf-8")
+
+
+def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
+    from collections.abc import Sequence
+    from okf_core.manifest import ConceptManifestEntry
+    from okf_core.graph import ConceptLink
+
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n", body="[B](b.md)\n")
+    _write_concept(root / "b.md", "type: concept\ntitle: Beta\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        index_cache=root / ".cache",
+        okf_cache_dir=cache_dir,
+    )
+
+    calls = []
+
+    class TrackingPlugin:
+        from okf_core.hooks import hookimpl
+
+        @hookimpl
+        def okf_enter_scan_concept(
+            self, path: Path, root: Path, bundle: BundleConfig
+        ) -> None:
+            calls.append(("enter_scan", path.name))
+
+        @hookimpl
+        def okf_fetch_scan_concept(
+            self, path: Path, root: Path, bundle: BundleConfig
+        ) -> None:
+            calls.append(("fetch_scan", path.name))
+
+        @hookimpl
+        def okf_exit_scan_concept(
+            self,
+            entry: ConceptManifestEntry,
+            path: Path,
+            root: Path,
+            bundle: BundleConfig,
+        ) -> None:
+            calls.append(("exit_scan", path.name))
+
+        @hookimpl
+        def okf_enter_resolve_links(
+            self, entry: ConceptManifestEntry, bundle: BundleConfig
+        ) -> None:
+            calls.append(("enter_resolve", entry.concept_id))
+
+        @hookimpl
+        def okf_fetch_resolve_links(
+            self, entry: ConceptManifestEntry, bundle: BundleConfig
+        ) -> None:
+            calls.append(("fetch_resolve", entry.concept_id))
+
+        @hookimpl
+        def okf_exit_resolve_links(
+            self,
+            entry: ConceptManifestEntry,
+            links: Sequence[ConceptLink],
+            bundle: BundleConfig,
+        ) -> None:
+            calls.append(("exit_resolve", entry.concept_id))
+
+    from okf_core import hooks
+
+    original_get_hook_manager = hooks.get_hook_manager
+
+    def mock_get_hook_manager(b: BundleConfig):
+        pm = original_get_hook_manager(b)
+        pm.register(TrackingPlugin())
+        return pm
+
+    from unittest.mock import patch
+
+    with patch("okf_core.hooks.get_hook_manager", mock_get_hook_manager):
+
+        # 1. First run: cache is empty
+        manifest = scan_bundle(bundle)
+        graph = build_bundle_graph(bundle, manifest=manifest)
+        assert len(graph.links) == 1
+
+        # Verify calls for a.md
+        assert calls.count(("enter_scan", "a.md")) == 1
+        assert calls.count(("fetch_scan", "a.md")) == 1
+        assert calls.count(("exit_scan", "a.md")) == 1
+
+        # Verify calls for b.md
+        assert calls.count(("enter_scan", "b.md")) == 1
+        assert calls.count(("fetch_scan", "b.md")) == 1
+        assert calls.count(("exit_scan", "b.md")) == 1
+
+        # Verify resolve calls for a
+        assert calls.count(("enter_resolve", "a")) == 1
+        assert calls.count(("fetch_resolve", "a")) == 1
+        assert calls.count(("exit_resolve", "a")) == 1
+
+        calls.clear()
+
+        # 2. Second run: cache is populated
+        manifest2 = scan_bundle(bundle)
+        graph2 = build_bundle_graph(bundle, manifest=manifest2)
+        assert len(graph2.links) == 1
+
+        # Verify calls for a.md still fire symmetrically on cache hit
+        assert calls.count(("enter_scan", "a.md")) == 1
+        assert calls.count(("fetch_scan", "a.md")) == 1
+        assert calls.count(("exit_scan", "a.md")) == 1
+
+        # Verify resolve calls for a still fire symmetrically on cache hit
+        assert calls.count(("enter_resolve", "a")) == 1
+        assert calls.count(("fetch_resolve", "a")) == 1
+        assert calls.count(("exit_resolve", "a")) == 1

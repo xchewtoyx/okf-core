@@ -246,7 +246,7 @@ class SqliteCachePlugin:
             self._conn = None
 
     @hookimpl
-    def okf_enter_scan_concept(
+    def okf_fetch_scan_concept(
         self,
         path: Path,
         root: Path,
@@ -263,6 +263,14 @@ class SqliteCachePlugin:
             # File unreadable or absent
             return None
 
+        # Cache validity is based on filesystem metadata only: mtime_ns, size,
+        # and ctime_ns.  The sha256 stored in the database is the hash computed
+        # during the last full parse; it is returned as-is on a hit so callers
+        # receive a consistent ConceptManifestEntry, but it is NOT re-computed
+        # or compared here.  Metadata-only validation avoids a full file read on
+        # every scan while still detecting content changes (mtime/size change)
+        # and out-of-band metadata updates such as rsync -a or utime resets
+        # (ctime change).
         with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
@@ -312,6 +320,15 @@ class SqliteCachePlugin:
             ctime_ns = 0
 
         with self._connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT 1 FROM concepts WHERE concept_id = ? AND mtime_ns = ? AND size = ? AND ctime_ns = ?",
+                (entry.concept_id, entry.mtime_ns, entry.size, ctime_ns),
+            )
+            if cursor.fetchone() is not None:
+                # Already cached and up to date; avoid redundant write (and resetting links_resolved to 0)
+                return
+
             conn.execute(
                 """
                 INSERT OR REPLACE INTO concepts (concept_id, stable_id, path, sha256, mtime_ns, size, frontmatter, links_resolved, pagerank, ctime_ns)
@@ -330,7 +347,7 @@ class SqliteCachePlugin:
             )
 
     @hookimpl
-    def okf_enter_resolve_links(
+    def okf_fetch_resolve_links(
         self,
         entry: ConceptManifestEntry,
         bundle: BundleConfig,
@@ -387,9 +404,14 @@ class SqliteCachePlugin:
         with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT 1 FROM concepts WHERE concept_id = ?", (entry.concept_id,)
+                "SELECT links_resolved FROM concepts WHERE concept_id = ?",
+                (entry.concept_id,),
             )
-            if cursor.fetchone() is None:
+            row = cursor.fetchone()
+            if row is None:
+                return
+            if row[0] == 1:
+                # Links are already marked as resolved; avoid redundant write
                 return
 
             conn.execute(

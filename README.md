@@ -67,7 +67,7 @@ Supported `[taxonomy]` keys are `known_types` and `allowed_types`.
 
 Supported `[profiles.<name>]` keys are `required_frontmatter`, `optional_frontmatter`, and nested `taxonomy` settings. Supported `[bundles.<name>]` keys are the same path/glob/reserved-name settings as `[defaults]`, plus `profile` and `okf_cache_dir` (see below).
 
-Relative paths are normalized against the resolved project root, and referenced files or directories do not need to exist yet. Unknown config keys fail closed with a configuration error so typos do not silently change behavior.
+Relative paths are normalized against the resolved project root, and referenced files or directories do not need to exist yet. The exception is `okf_cache_dir`, which is a bundle-only key resolved relative to each bundle's `bundle_root` (see the bundle configuration example below). Unknown config keys fail closed with a configuration error so typos do not silently change behavior.
 
 Built-in defaults are equivalent to:
 

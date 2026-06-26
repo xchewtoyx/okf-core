@@ -16,14 +16,22 @@ All hooks in this module follow the ``okf_verb_noun`` naming pattern:
       okf_end_graph
       okf_abort_graph
 
-* **Per-item hooks** use ``enter`` / ``exit`` as the verb.  These are called once
-  per concept document or link set within the scanning/resolution loop::
+* **Substitution hooks** use ``fetch`` as the verb. These allow a plugin to
+  substitute a result (e.g., from a cache) and bypass the core computation.
+  They are defined with ``firstresult=True``::
 
-      okf_enter_scan_concept   -- before processing one concept file
-      okf_exit_scan_concept    -- after processing one concept file
+      okf_fetch_scan_concept     -- try to retrieve scanned concept (skip parsing)
+      okf_fetch_resolve_links    -- try to retrieve resolved links (skip parsing)
 
-      okf_enter_resolve_links  -- before resolving links from one concept
-      okf_exit_resolve_links   -- after resolving links from one concept
+* **Per-item observation hooks** use ``enter`` / ``exit`` as the verb. These are
+  void hooks called symmetrically for observation, logging, or metrics. They
+  always fire regardless of whether the result was fetched or parsed::
+
+      okf_enter_scan_concept     -- before concept processing starts
+      okf_exit_scan_concept      -- after concept processing ends
+
+      okf_enter_resolve_links    -- before link resolution starts
+      okf_exit_resolve_links     -- after link resolution ends
 
 Plugin authors implementing ``@hookimpl`` methods must use the exact names above.
 """
@@ -58,17 +66,26 @@ class OkfSpec:
     ) -> None:
         """Invoked at the beginning of a bundle scan, allowing plugins to open transactions/resources."""
 
-    @hookspec(firstresult=True)
+    @hookspec
     def okf_enter_scan_concept(
         self,
         path: Path,
         root: Path,
         bundle: BundleConfig,
-    ) -> ConceptManifestEntry | None:
-        """Invoked before scanning a concept document.
+    ) -> None:
+        """Invoked before processing a concept document. Always fires."""
 
-        If a registered plugin returns a ConceptManifestEntry, the scanner will
-        reuse it and skip parsing the file.
+    @hookspec(firstresult=True)
+    def okf_fetch_scan_concept(
+        self,
+        path: Path,
+        root: Path,
+        bundle: BundleConfig,
+    ) -> ConceptManifestEntry | None:
+        """Invoked to substitute a scanned concept entry (e.g. from a cache).
+
+        If a registered plugin returns a ``ConceptManifestEntry``, the scanner
+        reuses it and skips reading and parsing the file.
         """
 
     @hookspec
@@ -79,18 +96,29 @@ class OkfSpec:
         root: Path,
         bundle: BundleConfig,
     ) -> None:
-        """Invoked after scanning a concept document, allowing plugins to cache or process it."""
+        """Invoked after a concept document is processed. Always fires.
 
-    @hookspec(firstresult=True)
+        Allows plugins to cache, record, or process the scanned entry.
+        """
+
+    @hookspec
     def okf_enter_resolve_links(
         self,
         entry: ConceptManifestEntry,
         bundle: BundleConfig,
-    ) -> Sequence[ConceptLink] | None:
-        """Invoked before resolving links from a concept document.
+    ) -> None:
+        """Invoked before resolving links from a concept document. Always fires."""
 
-        If a registered plugin returns a sequence of ConceptLink records,
-        the graph builder will reuse them directly and skip parsing the body.
+    @hookspec(firstresult=True)
+    def okf_fetch_resolve_links(
+        self,
+        entry: ConceptManifestEntry,
+        bundle: BundleConfig,
+    ) -> Sequence[ConceptLink] | None:
+        """Invoked to substitute resolved links (e.g. from a cache).
+
+        If a registered plugin returns a sequence of ``ConceptLink`` records,
+        the graph builder reuses them directly and skips parsing the body.
         """
 
     @hookspec
@@ -100,7 +128,10 @@ class OkfSpec:
         links: Sequence[ConceptLink],
         bundle: BundleConfig,
     ) -> None:
-        """Invoked after resolving links from a concept document, allowing plugins to cache or process them."""
+        """Invoked after resolving links from a concept document. Always fires.
+
+        Allows plugins to cache or process the resolved links.
+        """
 
     @hookspec
     def okf_end_scan(

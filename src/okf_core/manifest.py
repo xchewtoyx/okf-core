@@ -97,21 +97,18 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
             if is_reserved_concept_path(path, bundle):
                 continue
 
-            cached_entry = pm.hook.okf_enter_scan_concept(
-                path=path, root=root, bundle=bundle
-            )
-            if cached_entry is not None:
-                entries.append(cached_entry)
-                continue
+            pm.hook.okf_enter_scan_concept(path=path, root=root, bundle=bundle)
+            entry = pm.hook.okf_fetch_scan_concept(path=path, root=root, bundle=bundle)
+            if entry is None:
+                entry, problem = _scan_concept_path(path, root, bundle)
+                if problem is not None:
+                    problems.append(problem)
 
-            entry, problem = _scan_concept_path(path, root, bundle)
             if entry is not None:
                 entries.append(entry)
                 pm.hook.okf_exit_scan_concept(
                     entry=entry, path=path, root=root, bundle=bundle
                 )
-            if problem is not None:
-                problems.append(problem)
 
         manifest = BundleManifest(
             bundle_name=bundle.name,
