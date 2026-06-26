@@ -87,7 +87,8 @@ class SqliteCachePlugin:
                     size INTEGER NOT NULL,
                     frontmatter TEXT NOT NULL,
                     links_resolved INTEGER DEFAULT 0,
-                    pagerank REAL DEFAULT 0.0
+                    pagerank REAL DEFAULT 0.0,
+                    ctime_ns INTEGER DEFAULT 0 NOT NULL
                 );
                 """)
             conn.execute("""
@@ -104,6 +105,22 @@ class SqliteCachePlugin:
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_concept_id);"
             )
+            # Migrate old schemas if ctime_ns is missing
+            try:
+                conn.execute(
+                    "ALTER TABLE concepts ADD COLUMN ctime_ns INTEGER DEFAULT 0 NOT NULL;"
+                )
+            except sqlite3.OperationalError:
+                pass
+
+    def __del__(self) -> None:
+        """Defensive fallback to close connection on garbage collection."""
+        if self._conn is not None:
+            try:
+                self._conn.close()
+            except sqlite3.ProgrammingError:
+                pass
+            self._conn = None
 
     @contextlib.contextmanager
     def _connection(self) -> Generator[sqlite3.Connection, None, None]:
@@ -120,7 +137,10 @@ class SqliteCachePlugin:
         bundle: BundleConfig,
     ) -> None:
         if self._conn is not None:
-            self._conn.close()
+            try:
+                self._conn.close()
+            except sqlite3.ProgrammingError:
+                pass
         self._conn = sqlite3.connect(self.db_path)
         self._conn.execute("PRAGMA foreign_keys = ON;")
         self._conn.execute("BEGIN TRANSACTION;")
@@ -152,12 +172,28 @@ class SqliteCachePlugin:
             self._conn = None
 
     @hookimpl
+    def okf_scan_abort(
+        self,
+        bundle: BundleConfig,
+    ) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.rollback()
+                self._conn.close()
+            except sqlite3.ProgrammingError:
+                pass
+            self._conn = None
+
+    @hookimpl
     def okf_graph_start(
         self,
         bundle: BundleConfig,
     ) -> None:
         if self._conn is not None:
-            self._conn.close()
+            try:
+                self._conn.close()
+            except sqlite3.ProgrammingError:
+                pass
         self._conn = sqlite3.connect(self.db_path)
         self._conn.execute("PRAGMA foreign_keys = ON;")
         self._conn.execute("BEGIN TRANSACTION;")
@@ -190,6 +226,19 @@ class SqliteCachePlugin:
             self._conn = None
 
     @hookimpl
+    def okf_graph_abort(
+        self,
+        bundle: BundleConfig,
+    ) -> None:
+        if self._conn is not None:
+            try:
+                self._conn.rollback()
+                self._conn.close()
+            except sqlite3.ProgrammingError:
+                pass
+            self._conn = None
+
+    @hookimpl
     def okf_enter_scan_concept(
         self,
         path: Path,
@@ -202,6 +251,7 @@ class SqliteCachePlugin:
             stat = path.stat()
             mtime_ns = stat.st_mtime_ns
             size = stat.st_size
+            ctime_ns = stat.st_ctime_ns
         except OSError:
             # File unreadable or absent
             return None
@@ -212,9 +262,9 @@ class SqliteCachePlugin:
                 """
                 SELECT concept_id, stable_id, sha256, frontmatter
                 FROM concepts
-                WHERE path = ? AND mtime_ns = ? AND size = ?
+                WHERE path = ? AND mtime_ns = ? AND size = ? AND ctime_ns = ?
                 """,
-                (rel_path, mtime_ns, size),
+                (rel_path, mtime_ns, size, ctime_ns),
             )
             row = cursor.fetchone()
             if row is not None:
@@ -245,13 +295,20 @@ class SqliteCachePlugin:
     ) -> None:
         rel_path = path.relative_to(root).as_posix()
         fm_json = json.dumps(_unfreeze_value(entry.frontmatter))
+
+        # TODO(https://github.com/xchewtoyx/okf-core/issues/60): Derive stable_id alias from frontmatter/config in a future ticket
         stable_id = None
+
+        try:
+            ctime_ns = path.stat().st_ctime_ns
+        except OSError:
+            ctime_ns = 0
 
         with self._connection() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO concepts (concept_id, stable_id, path, sha256, mtime_ns, size, frontmatter, links_resolved, pagerank)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0.0)
+                INSERT OR REPLACE INTO concepts (concept_id, stable_id, path, sha256, mtime_ns, size, frontmatter, links_resolved, pagerank, ctime_ns)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0.0, ?)
                 """,
                 (
                     entry.concept_id,
@@ -261,6 +318,7 @@ class SqliteCachePlugin:
                     entry.mtime_ns,
                     entry.size,
                     fm_json,
+                    ctime_ns,
                 ),
             )
 

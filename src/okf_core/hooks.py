@@ -80,6 +80,13 @@ class OkfSpec:
         """Invoked at the end of a bundle scan, allowing cleanup/pruning of obsolete cache entries."""
 
     @hookspec
+    def okf_scan_abort(
+        self,
+        bundle: BundleConfig,
+    ) -> None:
+        """Invoked if a bundle scan fails, allowing plugins to abort transactions/cleanup."""
+
+    @hookspec
     def okf_graph_start(
         self,
         bundle: BundleConfig,
@@ -93,6 +100,13 @@ class OkfSpec:
         graph: BundleGraph,
     ) -> None:
         """Invoked at the end of a graph build operation, allowing plugins to commit/close transactions."""
+
+    @hookspec
+    def okf_graph_abort(
+        self,
+        bundle: BundleConfig,
+    ) -> None:
+        """Invoked if a graph build fails, allowing plugins to abort transactions/cleanup."""
 
 
 def get_hook_manager(bundle: BundleConfig) -> pluggy.PluginManager:

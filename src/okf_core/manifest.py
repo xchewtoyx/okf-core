@@ -89,40 +89,44 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
     pm = get_hook_manager(bundle)
     pm.hook.okf_scan_start(bundle=bundle)
 
-    entries: list[ConceptManifestEntry] = []
-    problems: list[ManifestProblem] = []
+    try:
+        entries: list[ConceptManifestEntry] = []
+        problems: list[ManifestProblem] = []
 
-    for path in _iter_included_paths(root, bundle):
-        if is_reserved_concept_path(path, bundle):
-            continue
+        for path in _iter_included_paths(root, bundle):
+            if is_reserved_concept_path(path, bundle):
+                continue
 
-        cached_entry = pm.hook.okf_enter_scan_concept(
-            path=path, root=root, bundle=bundle
-        )
-        if cached_entry is not None:
-            entries.append(cached_entry)
-            continue
-
-        entry, problem = _scan_concept_path(path, root, bundle)
-        if entry is not None:
-            entries.append(entry)
-            pm.hook.okf_exit_scan_concept(
-                entry=entry, path=path, root=root, bundle=bundle
+            cached_entry = pm.hook.okf_enter_scan_concept(
+                path=path, root=root, bundle=bundle
             )
-        if problem is not None:
-            problems.append(problem)
+            if cached_entry is not None:
+                entries.append(cached_entry)
+                continue
 
-    manifest = BundleManifest(
-        bundle_name=bundle.name,
-        concepts=tuple(
-            sorted(entries, key=lambda entry: (entry.concept_id, str(entry.path)))
-        ),
-        problems=tuple(
-            sorted(problems, key=lambda problem: (str(problem.path), problem.kind))
-        ),
-    )
-    pm.hook.okf_scan_end(bundle=bundle, manifest=manifest)
-    return manifest
+            entry, problem = _scan_concept_path(path, root, bundle)
+            if entry is not None:
+                entries.append(entry)
+                pm.hook.okf_exit_scan_concept(
+                    entry=entry, path=path, root=root, bundle=bundle
+                )
+            if problem is not None:
+                problems.append(problem)
+
+        manifest = BundleManifest(
+            bundle_name=bundle.name,
+            concepts=tuple(
+                sorted(entries, key=lambda entry: (entry.concept_id, str(entry.path)))
+            ),
+            problems=tuple(
+                sorted(problems, key=lambda problem: (str(problem.path), problem.kind))
+            ),
+        )
+        pm.hook.okf_scan_end(bundle=bundle, manifest=manifest)
+        return manifest
+    except Exception:
+        pm.hook.okf_scan_abort(bundle=bundle)
+        raise
 
 
 def _iter_included_paths(root: Path, bundle: BundleConfig) -> tuple[Path, ...]:

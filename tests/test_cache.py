@@ -323,6 +323,104 @@ def test_pagerank_calculation_with_orphans(tmp_path: Path) -> None:
             assert pr > 0.0
 
 
+def test_cache_invalidation_on_metadata_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import os
+
+    root = tmp_path / "docs"
+    a_path = root / "a.md"
+    _write_concept(a_path, "type: concept\ntitle: Alpha\n")
+
+    # Ensure permissions are standard 0o644
+    os.chmod(a_path, 0o644)
+    stat1 = a_path.stat()
+    ctime1 = stat1.st_ctime_ns
+    mtime1 = stat1.st_mtime_ns
+    size1 = stat1.st_size
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        index_cache=root / ".cache",
+        okf_cache_dir=cache_dir,
+    )
+
+    # First scan: populates cache
+    scan_bundle(bundle)
+
+    # Modify ctime by changing permissions to 0o755 (leaving size and mtime unchanged)
+    os.chmod(a_path, 0o755)
+    stat2 = a_path.stat()
+    ctime2 = stat2.st_ctime_ns
+    mtime2 = stat2.st_mtime_ns
+    size2 = stat2.st_size
+
+    # Verify that mtime and size did not change, but ctime did!
+    if ctime2 != ctime1:
+        assert mtime2 == mtime1
+        assert size2 == size1
+
+        # Mock read_bytes to verify it IS called (since cache misses on ctime mismatch)
+        read_called = False
+        original_read_bytes = Path.read_bytes
+
+        def mock_read_bytes(self: Path) -> bytes:
+            nonlocal read_called
+            read_called = True
+            return original_read_bytes(self)
+
+        monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
+
+        # Second scan: should detect change and hit the disk
+        scan_bundle(bundle)
+        assert read_called
+
+
+def test_transaction_rollback_on_scan_abort(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        index_cache=root / ".cache",
+        okf_cache_dir=cache_dir,
+    )
+
+    # Mock _scan_concept_path to raise an error mid-scan
+    from okf_core import manifest
+
+    def mock_scan_concept_path(*args, **kwargs):
+        raise ValueError("Simulated scan failure")
+
+    monkeypatch.setattr(manifest, "_scan_concept_path", mock_scan_concept_path)
+
+    # Run scan_bundle, which should fail
+    with pytest.raises(ValueError, match="Simulated scan failure"):
+        scan_bundle(bundle)
+
+    # Verify that the DB file exists, but it has no entries (rolled back)
+    db_path = cache_dir / "okf-cache.db"
+    assert db_path.is_file()
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) FROM concepts")
+        assert cursor.fetchone()[0] == 0
+
+
 def _write_concept(path: Path, frontmatter: str, *, body: str = "Body\n") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"---\n{frontmatter}---\n{body}", encoding="utf-8")
