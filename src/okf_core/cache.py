@@ -140,7 +140,7 @@ class SqliteCachePlugin:
                 yield conn
 
     @hookimpl
-    def okf_scan_start(
+    def okf_start_scan(
         self,
         bundle: BundleConfig,
     ) -> None:
@@ -154,7 +154,7 @@ class SqliteCachePlugin:
         self._conn.execute("BEGIN TRANSACTION;")
 
     @hookimpl
-    def okf_scan_end(
+    def okf_end_scan(
         self,
         bundle: BundleConfig,
         manifest: BundleManifest,
@@ -179,7 +179,7 @@ class SqliteCachePlugin:
             self._conn = None
 
     @hookimpl
-    def okf_scan_abort(
+    def okf_abort_scan(
         self,
         bundle: BundleConfig,
     ) -> None:
@@ -192,7 +192,7 @@ class SqliteCachePlugin:
             self._conn = None
 
     @hookimpl
-    def okf_graph_start(
+    def okf_start_graph(
         self,
         bundle: BundleConfig,
     ) -> None:
@@ -206,7 +206,7 @@ class SqliteCachePlugin:
         self._conn.execute("BEGIN TRANSACTION;")
 
     @hookimpl
-    def okf_graph_end(
+    def okf_end_graph(
         self,
         bundle: BundleConfig,
         graph: BundleGraph,
@@ -233,7 +233,7 @@ class SqliteCachePlugin:
             self._conn = None
 
     @hookimpl
-    def okf_graph_abort(
+    def okf_abort_graph(
         self,
         bundle: BundleConfig,
     ) -> None:

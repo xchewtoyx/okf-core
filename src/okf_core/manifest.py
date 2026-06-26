@@ -89,7 +89,7 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
     pm = get_hook_manager(bundle)
 
     try:
-        pm.hook.okf_scan_start(bundle=bundle)
+        pm.hook.okf_start_scan(bundle=bundle)
         entries: list[ConceptManifestEntry] = []
         problems: list[ManifestProblem] = []
 
@@ -122,10 +122,10 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
                 sorted(problems, key=lambda problem: (str(problem.path), problem.kind))
             ),
         )
-        pm.hook.okf_scan_end(bundle=bundle, manifest=manifest)
+        pm.hook.okf_end_scan(bundle=bundle, manifest=manifest)
         return manifest
     except Exception:
-        pm.hook.okf_scan_abort(bundle=bundle)
+        pm.hook.okf_abort_scan(bundle=bundle)
         raise
 
 

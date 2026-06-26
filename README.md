@@ -59,16 +59,15 @@ Supported `[defaults]` keys are:
 - `reserved_filenames`
 - `concept_path_strategy`
 - `index_cache`
-- `okf_cache_dir` (Non-Spec local tool enhancement: string, defaults to `unset`). Directory path to enable a lightweight SQLite database cache to store concept metadata and extracted links, skipping parsing for unmodified documents. Caching is a local, non-spec extension and must be configured per bundle (it cannot be set in `[defaults]`). If specified as a relative path, it is resolved relative to the bundle's root directory.
 - `listing_fields`
 - `directory_metadata_file` (Non-Spec local tool enhancement: string, defaults to `"_directory.yml"`). The filename of the directory metadata sidecar file used to carry folder-level descriptions/titles.
 - `okf_version`
 
 Supported `[taxonomy]` keys are `known_types` and `allowed_types`.
 
-Supported `[profiles.<name>]` keys are `required_frontmatter`, `optional_frontmatter`, and nested `taxonomy` settings. Supported `[bundles.<name>]` keys are the same path/glob/reserved-name settings as `[defaults]`, plus `profile` and `okf_cache_dir`.
+Supported `[profiles.<name>]` keys are `required_frontmatter`, `optional_frontmatter`, and nested `taxonomy` settings. Supported `[bundles.<name>]` keys are the same path/glob/reserved-name settings as `[defaults]`, plus `profile` and `okf_cache_dir` (see below).
 
-Relative paths are normalized against the resolved project root (with the exception of `okf_cache_dir`, which is resolved relative to the bundle root), and referenced files or directories do not need to exist yet. Unknown config keys fail closed with a configuration error so typos do not silently change behavior.
+Relative paths are normalized against the resolved project root, and referenced files or directories do not need to exist yet. Unknown config keys fail closed with a configuration error so typos do not silently change behavior.
 
 Built-in defaults are equivalent to:
 

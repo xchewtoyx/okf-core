@@ -104,7 +104,7 @@ def build_bundle_graph(
     pm = get_hook_manager(bundle)
 
     try:
-        pm.hook.okf_graph_start(bundle=bundle)
+        pm.hook.okf_start_graph(bundle=bundle)
         resolved_manifest = manifest if manifest is not None else scan_bundle(bundle)
         concept_ids = {entry.concept_id for entry in resolved_manifest.concepts}
         resolved_links: list[ConceptLink] = []
@@ -168,10 +168,10 @@ def build_bundle_graph(
                 sorted(problems, key=lambda problem: (str(problem.path), problem.kind))
             ),
         )
-        pm.hook.okf_graph_end(bundle=bundle, graph=graph)
+        pm.hook.okf_end_graph(bundle=bundle, graph=graph)
         return graph
     except Exception:
-        pm.hook.okf_graph_abort(bundle=bundle)
+        pm.hook.okf_abort_graph(bundle=bundle)
         raise
 
 

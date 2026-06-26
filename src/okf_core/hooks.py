@@ -21,7 +21,7 @@ class OkfSpec:
     """Hook specifications for OKF operations."""
 
     @hookspec
-    def okf_scan_start(
+    def okf_start_scan(
         self,
         bundle: BundleConfig,
     ) -> None:
@@ -72,7 +72,7 @@ class OkfSpec:
         """Invoked after resolving links from a concept document, allowing plugins to cache or process them."""
 
     @hookspec
-    def okf_scan_end(
+    def okf_end_scan(
         self,
         bundle: BundleConfig,
         manifest: BundleManifest,
@@ -80,21 +80,21 @@ class OkfSpec:
         """Invoked at the end of a bundle scan, allowing cleanup/pruning of obsolete cache entries."""
 
     @hookspec
-    def okf_scan_abort(
+    def okf_abort_scan(
         self,
         bundle: BundleConfig,
     ) -> None:
         """Invoked if a bundle scan fails, allowing plugins to abort transactions/cleanup."""
 
     @hookspec
-    def okf_graph_start(
+    def okf_start_graph(
         self,
         bundle: BundleConfig,
     ) -> None:
         """Invoked at the beginning of a graph build operation, allowing plugins to open transactions/resources."""
 
     @hookspec
-    def okf_graph_end(
+    def okf_end_graph(
         self,
         bundle: BundleConfig,
         graph: BundleGraph,
@@ -102,7 +102,7 @@ class OkfSpec:
         """Invoked at the end of a graph build operation, allowing plugins to commit/close transactions."""
 
     @hookspec
-    def okf_graph_abort(
+    def okf_abort_graph(
         self,
         bundle: BundleConfig,
     ) -> None:
