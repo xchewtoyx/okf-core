@@ -122,37 +122,44 @@ def build_bundle_graph(
         for entry in resolved_manifest.concepts:
             pm.hook.okf_enter_resolve_links(entry=entry, bundle=bundle)
             entry_links = pm.hook.okf_fetch_resolve_links(entry=entry, bundle=bundle)
+            problem = None
             if entry_links is None:
                 try:
                     markdown = entry.content
                 except OSError as exc:
-                    problems.append(_graph_problem(entry, "read-error", exc))
-                    continue
+                    problem = _graph_problem(entry, "read-error", exc)
                 except UnicodeDecodeError as exc:
-                    problems.append(_graph_problem(entry, "decode-error", exc))
-                    continue
+                    problem = _graph_problem(entry, "decode-error", exc)
 
-                try:
-                    document = parse_concept_document(markdown)
-                except DocumentParseError as exc:
-                    problems.append(_graph_problem(entry, "parse-error", exc))
-                    continue
+                if problem is None:
+                    try:
+                        document = parse_concept_document(markdown)
+                    except DocumentParseError as exc:
+                        problem = _graph_problem(entry, "parse-error", exc)
 
-                resolved_extracted: list[ConceptLink] = []
-                for markdown_link in extract_markdown_links(document.body):
-                    link = _resolve_concept_link(bundle, entry, markdown_link)
-                    if link is not None:
-                        resolved_extracted.append(link)
-                entry_links = resolved_extracted
-
-            for link in entry_links:
-                if link.target_concept_id in concept_ids:
-                    resolved_links.append(link)
+                if problem is not None:
+                    problems.append(problem)
+                    entry_links = None
                 else:
-                    broken_links.append(link)
+                    resolved_extracted: list[ConceptLink] = []
+                    for markdown_link in extract_markdown_links(document.body):
+                        link = _resolve_concept_link(bundle, entry, markdown_link)
+                        if link is not None:
+                            resolved_extracted.append(link)
+                    entry_links = resolved_extracted
+
+            if entry_links is not None:
+                for link in entry_links:
+                    if link.target_concept_id in concept_ids:
+                        resolved_links.append(link)
+                    else:
+                        broken_links.append(link)
 
             pm.hook.okf_exit_resolve_links(
-                entry=entry, links=entry_links, bundle=bundle
+                entry=entry,
+                links=entry_links,
+                problem=problem,
+                bundle=bundle,
             )
 
         graph = BundleGraph(

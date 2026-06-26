@@ -46,8 +46,8 @@ from okf_core.config import BundleConfig
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from okf_core.manifest import BundleManifest, ConceptManifestEntry
-    from okf_core.graph import ConceptLink, BundleGraph
+    from okf_core.manifest import BundleManifest, ConceptManifestEntry, ManifestProblem
+    from okf_core.graph import ConceptLink, BundleGraph, GraphProblem
 
 hookspec = pluggy.HookspecMarker("okf")
 hookimpl = pluggy.HookimplMarker("okf")
@@ -91,16 +91,16 @@ class OkfSpec:
     @hookspec
     def okf_exit_scan_concept(
         self,
-        entry: ConceptManifestEntry,
+        entry: ConceptManifestEntry | None,
+        problem: ManifestProblem | None,
         path: Path,
         root: Path,
         bundle: BundleConfig,
     ) -> None:
-        """Invoked after a concept document is successfully processed.
+        """Invoked after a concept document is processed (either successfully or with errors).
 
-        Only called when a concept is successfully scanned/parsed or retrieved
-        from cache (skipped on read, decode, or parse failures). Allows plugins
-        to cache, record, or process the scanned entry.
+        Always fires at the end of each concept's scanning attempt. Provides both
+        the optional successful entry and/or any optional parsing problem.
         """
 
     @hookspec
@@ -127,14 +127,13 @@ class OkfSpec:
     def okf_exit_resolve_links(
         self,
         entry: ConceptManifestEntry,
-        links: Sequence[ConceptLink],
+        links: Sequence[ConceptLink] | None,
+        problem: GraphProblem | None,
         bundle: BundleConfig,
     ) -> None:
-        """Invoked after resolving links from a concept document.
+        """Invoked after resolving links from a concept document (either successfully or with errors).
 
-        Only called when links are successfully extracted or retrieved from cache
-        (skipped on read, decode, or parse failures). Allows plugins to cache or
-        process the resolved links.
+        Always fires at the end of each concept's link resolution attempt.
         """
 
     @hookspec

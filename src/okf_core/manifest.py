@@ -99,6 +99,7 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
 
             pm.hook.okf_enter_scan_concept(path=path, root=root, bundle=bundle)
             entry = pm.hook.okf_fetch_scan_concept(path=path, root=root, bundle=bundle)
+            problem = None
             if entry is None:
                 entry, problem = _scan_concept_path(path, root, bundle)
                 if problem is not None:
@@ -106,9 +107,14 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
 
             if entry is not None:
                 entries.append(entry)
-                pm.hook.okf_exit_scan_concept(
-                    entry=entry, path=path, root=root, bundle=bundle
-                )
+
+            pm.hook.okf_exit_scan_concept(
+                entry=entry,
+                problem=problem,
+                path=path,
+                root=root,
+                bundle=bundle,
+            )
 
         manifest = BundleManifest(
             bundle_name=bundle.name,

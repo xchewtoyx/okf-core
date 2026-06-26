@@ -481,9 +481,10 @@ def _write_concept(path: Path, frontmatter: str, *, body: str = "Body\n") -> Non
 
 
 def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
+    from typing import Any
     from collections.abc import Sequence
-    from okf_core.manifest import ConceptManifestEntry
-    from okf_core.graph import ConceptLink
+    from okf_core.manifest import ConceptManifestEntry, ManifestProblem
+    from okf_core.graph import ConceptLink, GraphProblem
 
     root = tmp_path / "docs"
     _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n", body="[B](b.md)\n")
@@ -501,7 +502,7 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
         okf_cache_dir=cache_dir,
     )
 
-    calls = []
+    calls: list[tuple[Any, ...]] = []
 
     class TrackingPlugin:
         from okf_core.hooks import hookimpl
@@ -521,12 +522,15 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
         @hookimpl
         def okf_exit_scan_concept(
             self,
-            entry: ConceptManifestEntry,
+            entry: ConceptManifestEntry | None,
+            problem: ManifestProblem | None,
             path: Path,
             root: Path,
             bundle: BundleConfig,
         ) -> None:
-            calls.append(("exit_scan", path.name))
+            calls.append(
+                ("exit_scan", path.name, entry is not None, problem is not None)
+            )
 
         @hookimpl
         def okf_enter_resolve_links(
@@ -544,10 +548,18 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
         def okf_exit_resolve_links(
             self,
             entry: ConceptManifestEntry,
-            links: Sequence[ConceptLink],
+            links: Sequence[ConceptLink] | None,
+            problem: GraphProblem | None,
             bundle: BundleConfig,
         ) -> None:
-            calls.append(("exit_resolve", entry.concept_id))
+            calls.append(
+                (
+                    "exit_resolve",
+                    entry.concept_id,
+                    links is not None,
+                    problem is not None,
+                )
+            )
 
     from okf_core import hooks
 
@@ -570,17 +582,17 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
         # Verify calls for a.md
         assert calls.count(("enter_scan", "a.md")) == 1
         assert calls.count(("fetch_scan", "a.md")) == 1
-        assert calls.count(("exit_scan", "a.md")) == 1
+        assert ("exit_scan", "a.md", True, False) in calls
 
         # Verify calls for b.md
         assert calls.count(("enter_scan", "b.md")) == 1
         assert calls.count(("fetch_scan", "b.md")) == 1
-        assert calls.count(("exit_scan", "b.md")) == 1
+        assert ("exit_scan", "b.md", True, False) in calls
 
         # Verify resolve calls for a
         assert calls.count(("enter_resolve", "a")) == 1
         assert calls.count(("fetch_resolve", "a")) == 1
-        assert calls.count(("exit_resolve", "a")) == 1
+        assert ("exit_resolve", "a", True, False) in calls
 
         calls.clear()
 
@@ -592,9 +604,50 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
         # Verify calls for a.md still fire symmetrically on cache hit
         assert calls.count(("enter_scan", "a.md")) == 1
         assert calls.count(("fetch_scan", "a.md")) == 1
-        assert calls.count(("exit_scan", "a.md")) == 1
+        assert ("exit_scan", "a.md", True, False) in calls
 
         # Verify resolve calls for a still fire symmetrically on cache hit
         assert calls.count(("enter_resolve", "a")) == 1
         assert calls.count(("fetch_resolve", "a")) == 1
-        assert calls.count(("exit_resolve", "a")) == 1
+        assert ("exit_resolve", "a", True, False) in calls
+
+        # 3. Third run: failure path testing
+        # Add a malformed concept file that causes parse-error during scanning
+        _write_concept(
+            root / "malformed.md", "type: concept\nmalformed_yaml:\n  - [abc\n"
+        )
+        calls.clear()
+
+        _manifest3 = scan_bundle(bundle)
+        # Verify that exit scan was called for malformed.md and it received the problem (entry=None, problem=True)
+        assert calls.count(("enter_scan", "malformed.md")) == 1
+        assert calls.count(("fetch_scan", "malformed.md")) == 1
+        assert ("exit_scan", "malformed.md", False, True) in calls
+
+        # 4. Fourth run: link resolution failure.
+        # We write c.md, scan it with a bundle config that has caching DISABLED.
+        _write_concept(root / "c.md", "type: concept\n")
+        no_cache_bundle = BundleConfig(
+            name="docs",
+            bundle_root=root,
+            include=("**/*.md",),
+            exclude=(),
+            reserved_filenames=("index.md", "log.md"),
+            concept_path_strategy="relative-path",
+            index_cache=root / ".cache",
+            okf_cache_dir=None,
+        )
+        manifest_no_cache = scan_bundle(no_cache_bundle)
+
+        # Clear the in-memory content cache of the entry for c to force a disk read
+        c_entry = next(e for e in manifest_no_cache.concepts if e.concept_id == "c")
+        object.__setattr__(c_entry, "_content_cache", None)
+
+        # Now delete c.md so that reading it raises OSError
+        (root / "c.md").unlink()
+        calls.clear()
+
+        # Build graph with caching ENABLED
+        _graph3 = build_bundle_graph(bundle, manifest=manifest_no_cache)
+        # We expect exit_resolve to be called for c with links=None, problem=True
+        assert ("exit_resolve", "c", False, True) in calls

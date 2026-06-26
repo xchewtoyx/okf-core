@@ -11,8 +11,13 @@ from typing import Any, Generator
 from urllib.parse import urlsplit
 
 from okf_core.config import BundleConfig
-from okf_core.manifest import BundleManifest, ConceptManifestEntry, _freeze_value
-from okf_core.graph import ConceptLink, BundleGraph
+from okf_core.manifest import (
+    BundleManifest,
+    ConceptManifestEntry,
+    ManifestProblem,
+    _freeze_value,
+)
+from okf_core.graph import ConceptLink, BundleGraph, GraphProblem
 from okf_core.hooks import hookimpl
 
 
@@ -303,11 +308,14 @@ class SqliteCachePlugin:
     @hookimpl
     def okf_exit_scan_concept(
         self,
-        entry: ConceptManifestEntry,
+        entry: ConceptManifestEntry | None,
+        problem: ManifestProblem | None,
         path: Path,
         root: Path,
         bundle: BundleConfig,
     ) -> None:
+        if entry is None:
+            return
         rel_path = path.relative_to(root).as_posix()
         fm_json = json.dumps(_unfreeze_value(entry.frontmatter))
 
@@ -398,9 +406,12 @@ class SqliteCachePlugin:
     def okf_exit_resolve_links(
         self,
         entry: ConceptManifestEntry,
-        links: Sequence[ConceptLink],
+        links: Sequence[ConceptLink] | None,
+        problem: GraphProblem | None,
         bundle: BundleConfig,
     ) -> None:
+        if links is None:
+            return
         with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
