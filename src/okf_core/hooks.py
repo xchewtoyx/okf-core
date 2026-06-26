@@ -96,9 +96,11 @@ class OkfSpec:
         root: Path,
         bundle: BundleConfig,
     ) -> None:
-        """Invoked after a concept document is processed. Always fires.
+        """Invoked after a concept document is successfully processed.
 
-        Allows plugins to cache, record, or process the scanned entry.
+        Only called when a concept is successfully scanned/parsed or retrieved
+        from cache (skipped on read, decode, or parse failures). Allows plugins
+        to cache, record, or process the scanned entry.
         """
 
     @hookspec
@@ -128,9 +130,11 @@ class OkfSpec:
         links: Sequence[ConceptLink],
         bundle: BundleConfig,
     ) -> None:
-        """Invoked after resolving links from a concept document. Always fires.
+        """Invoked after resolving links from a concept document.
 
-        Allows plugins to cache or process the resolved links.
+        Only called when links are successfully extracted or retrieved from cache
+        (skipped on read, decode, or parse failures). Allows plugins to cache or
+        process the resolved links.
         """
 
     @hookspec
