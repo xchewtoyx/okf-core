@@ -311,10 +311,11 @@ def _apply_overrides(
     defaults: ProjectDefaults,
     overrides: ConfigOverrides,
 ) -> ProjectDefaults:
+    defaults_fields = defaults.__class__.model_fields
     update = {
         name: value
         for name, value in overrides.model_dump().items()
-        if value is not None
+        if value is not None and name in defaults_fields
     }
     if not update:
         return defaults

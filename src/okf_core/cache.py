@@ -288,7 +288,7 @@ class SqliteCachePlugin:
             )
             row = cursor.fetchone()
             if row is not None:
-                concept_id, stable_id, sha256, fm_json = row
+                concept_id, _stable_id, sha256, fm_json = row
                 try:
                     frontmatter = json.loads(fm_json)
                 except json.JSONDecodeError:
