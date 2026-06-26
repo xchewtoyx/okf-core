@@ -105,19 +105,22 @@ def search_concepts(
 
 
 def _ensure_search_schema(conn: sqlite3.Connection) -> None:
-    conn.execute(
-        """
-        CREATE VIRTUAL TABLE IF NOT EXISTS concept_fts USING fts5(
-            concept_id UNINDEXED,
-            path UNINDEXED,
-            title,
-            description,
-            fields,
-            body,
-            tokenize = 'unicode61'
-        );
-        """
-    )
+    try:
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS concept_fts USING fts5(
+                concept_id UNINDEXED,
+                path UNINDEXED,
+                title,
+                description,
+                fields,
+                body,
+                tokenize = 'unicode61'
+            );
+            """)
+    except sqlite3.OperationalError as exc:
+        raise SearchConfigError(
+            "SQLite FTS5 is not available; install or use a Python SQLite build with FTS5 support"
+        ) from exc
 
 
 def _refresh_search_index(

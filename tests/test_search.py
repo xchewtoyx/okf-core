@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from okf_core import BundleConfig, SearchConfigError, scan_bundle, search_concepts
+from okf_core.search import _ensure_search_schema
 
 
 def test_search_creates_fts_schema_in_existing_cache_db(tmp_path: Path) -> None:
@@ -109,6 +110,7 @@ def test_search_backfills_missing_fts_rows_from_cached_concepts(
     bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
 
     scan_bundle(bundle)
+    assert search_concepts(bundle, "Cached").results
     assert bundle.okf_cache_dir is not None
     with sqlite3.connect(bundle.okf_cache_dir / "okf-cache.db") as conn:
         conn.execute("DELETE FROM concept_fts")
@@ -134,6 +136,15 @@ def test_search_requires_okf_cache_dir(tmp_path: Path) -> None:
 
     with pytest.raises(SearchConfigError, match="okf_cache_dir"):
         search_concepts(bundle, "Alpha")
+
+
+def test_fts5_schema_error_becomes_search_config_error() -> None:
+    class MissingFtsConnection:
+        def execute(self, _sql: str) -> None:
+            raise sqlite3.OperationalError("no such module: fts5")
+
+    with pytest.raises(SearchConfigError, match="SQLite FTS5 is not available"):
+        _ensure_search_schema(MissingFtsConnection())  # type: ignore[arg-type]
 
 
 def test_search_limit_and_deterministic_tiebreak(tmp_path: Path) -> None:

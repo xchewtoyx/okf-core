@@ -77,6 +77,29 @@ def test_cache_created_and_populated_when_enabled(tmp_path: Path) -> None:
         assert len(cursor.fetchall()) == 0
 
 
+def test_cache_initialization_does_not_create_search_schema(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=cache_dir,
+    )
+
+    scan_bundle(bundle)
+
+    with sqlite3.connect(cache_dir / "okf-cache.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT count(*) FROM sqlite_master WHERE name = 'concept_fts'")
+        assert cursor.fetchone()[0] == 0
+
+
 def test_cache_hits_skip_file_reads(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
