@@ -7,8 +7,11 @@ from pathlib import Path
 import pluggy
 
 from okf_core.config import BundleConfig
-from okf_core.manifest import BundleManifest, ConceptManifestEntry
-from okf_core.graph import ConceptLink
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from okf_core.manifest import BundleManifest, ConceptManifestEntry
+    from okf_core.graph import ConceptLink, BundleGraph
 
 hookspec = pluggy.HookspecMarker("okf")
 hookimpl = pluggy.HookimplMarker("okf")
@@ -16,6 +19,13 @@ hookimpl = pluggy.HookimplMarker("okf")
 
 class OkfSpec:
     """Hook specifications for OKF operations."""
+
+    @hookspec
+    def okf_scan_start(
+        self,
+        bundle: BundleConfig,
+    ) -> None:
+        """Invoked at the beginning of a bundle scan, allowing plugins to open transactions/resources."""
 
     @hookspec(firstresult=True)
     def okf_enter_scan_concept(
@@ -68,6 +78,21 @@ class OkfSpec:
         manifest: BundleManifest,
     ) -> None:
         """Invoked at the end of a bundle scan, allowing cleanup/pruning of obsolete cache entries."""
+
+    @hookspec
+    def okf_graph_start(
+        self,
+        bundle: BundleConfig,
+    ) -> None:
+        """Invoked at the beginning of a graph build operation, allowing plugins to open transactions/resources."""
+
+    @hookspec
+    def okf_graph_end(
+        self,
+        bundle: BundleConfig,
+        graph: BundleGraph,
+    ) -> None:
+        """Invoked at the end of a graph build operation, allowing plugins to commit/close transactions."""
 
 
 def get_hook_manager(bundle: BundleConfig) -> pluggy.PluginManager:

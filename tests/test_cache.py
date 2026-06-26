@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-import time
 from pathlib import Path
 
 import pytest
@@ -119,9 +118,16 @@ def test_cache_hits_skip_file_reads(
 
 
 def test_cache_invalidation_on_file_modification(tmp_path: Path) -> None:
+    import os
+
     root = tmp_path / "docs"
     a_path = root / "a.md"
-    _write_concept(a_path, "type: concept\ntitle: Alpha\n")
+    content1 = "type: concept\ntitle: Alpha\n"
+    _write_concept(a_path, content1)
+
+    # Get initial stat and explicit ns time to use
+    stat1 = a_path.stat()
+    mtime1 = stat1.st_mtime_ns
 
     cache_dir = tmp_path / "custom-cache"
     bundle = BundleConfig(
@@ -138,14 +144,19 @@ def test_cache_invalidation_on_file_modification(tmp_path: Path) -> None:
     # First scan
     scan_bundle(bundle)
 
-    # Update file size and mtime
-    time.sleep(0.01)  # Ensure modification time differs
-    _write_concept(a_path, "type: concept\ntitle: AlphaModified\n")
+    # Modify content without changing size (Alpha -> A_pha)
+    content2 = "type: concept\ntitle: A_pha\n"
+    assert len(content1) == len(content2)
+    _write_concept(a_path, content2)
+
+    # Explicitly advance mtime by 1 second (1,000,000,000 ns)
+    new_mtime_ns = mtime1 + 1000000000
+    os.utime(a_path, ns=(new_mtime_ns, new_mtime_ns))
 
     # Second scan: should detect change and update the cache
     manifest = scan_bundle(bundle)
     assert len(manifest.concepts) == 1
-    assert manifest.concepts[0].frontmatter["title"] == "AlphaModified"
+    assert manifest.concepts[0].frontmatter["title"] == "A_pha"
 
     # Query DB to check updated frontmatter
     db_path = cache_dir / "okf-cache.db"
@@ -153,7 +164,7 @@ def test_cache_invalidation_on_file_modification(tmp_path: Path) -> None:
         cursor = conn.cursor()
         cursor.execute("SELECT frontmatter FROM concepts WHERE concept_id = 'a'")
         fm_json = cursor.fetchone()[0]
-        assert "AlphaModified" in fm_json
+        assert "A_pha" in fm_json
 
 
 def test_cache_pruning_on_file_deletion(tmp_path: Path) -> None:
@@ -236,6 +247,80 @@ def test_links_caching_and_inbound_outbound(tmp_path: Path) -> None:
     assert graph2.links[0].source_concept_id == "a"
     assert graph2.links[0].target_concept_id == "b"
     assert graph2.links[0].text == "B"
+
+
+def test_pagerank_calculation_and_storage(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    # Create a small graph: A -> B -> C, and C -> A
+    _write_concept(root / "a.md", "type: concept\n", body="[B](b.md)\n")
+    _write_concept(root / "b.md", "type: concept\n", body="[C](c.md)\n")
+    _write_concept(root / "c.md", "type: concept\n", body="[A](a.md)\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        index_cache=root / ".cache",
+        okf_cache_dir=cache_dir,
+    )
+
+    manifest = scan_bundle(bundle)
+    build_bundle_graph(bundle, manifest=manifest)
+
+    # Verify PageRank values are computed and stored in the DB
+    db_path = cache_dir / "okf-cache.db"
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT concept_id, pagerank FROM concepts ORDER BY concept_id")
+        rows = cursor.fetchall()
+        assert len(rows) == 3
+        # Since it is a symmetric ring (A -> B -> C -> A), all PageRank values should be equal
+        # and non-zero (specifically around 0.333333)
+        assert rows[0][0] == "a"
+        assert rows[1][0] == "b"
+        assert rows[2][0] == "c"
+
+        pr_a, pr_b, pr_c = rows[0][1], rows[1][1], rows[2][1]
+        assert pr_a > 0.3
+        assert abs(pr_a - pr_b) < 1e-5
+        assert abs(pr_b - pr_c) < 1e-5
+
+
+def test_pagerank_calculation_with_orphans(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    # A -> B, and C is orphan
+    _write_concept(root / "a.md", "type: concept\n", body="[B](b.md)\n")
+    _write_concept(root / "b.md", "type: concept\n")
+    _write_concept(root / "c.md", "type: concept\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        index_cache=root / ".cache",
+        okf_cache_dir=cache_dir,
+    )
+
+    manifest = scan_bundle(bundle)
+    build_bundle_graph(bundle, manifest=manifest)
+
+    db_path = cache_dir / "okf-cache.db"
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT concept_id, pagerank FROM concepts ORDER BY concept_id")
+        rows = cursor.fetchall()
+        assert len(rows) == 3
+        # Every concept should have a PageRank score, and all should be > 0.
+        for concept_id, pr in rows:
+            assert pr > 0.0
 
 
 def _write_concept(path: Path, frontmatter: str, *, body: str = "Body\n") -> None:

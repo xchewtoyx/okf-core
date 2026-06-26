@@ -95,9 +95,14 @@ def build_bundle_graph(
     manifest: BundleManifest | None = None,
 ) -> BundleGraph:
     """Build a deterministic concept-link graph from a configured bundle."""
+    root = bundle.bundle_root.resolve(strict=False)
+    if not root.is_dir():
+        return BundleGraph(bundle_name=bundle.name)
+
     from okf_core.hooks import get_hook_manager
 
     pm = get_hook_manager(bundle)
+    pm.hook.okf_graph_start(bundle=bundle)
 
     resolved_manifest = manifest if manifest is not None else scan_bundle(bundle)
     concept_ids = {entry.concept_id for entry in resolved_manifest.concepts}
@@ -151,7 +156,7 @@ def build_bundle_graph(
 
         pm.hook.okf_exit_resolve_links(entry=entry, links=entry_links, bundle=bundle)
 
-    return BundleGraph(
+    graph = BundleGraph(
         bundle_name=resolved_manifest.bundle_name,
         concepts=resolved_manifest.concepts,
         links=tuple(sorted(resolved_links, key=_link_sort_key)),
@@ -160,6 +165,8 @@ def build_bundle_graph(
             sorted(problems, key=lambda problem: (str(problem.path), problem.kind))
         ),
     )
+    pm.hook.okf_graph_end(bundle=bundle, graph=graph)
+    return graph
 
 
 def links_from(graph: BundleGraph, concept_id: str) -> tuple[ConceptLink, ...]:

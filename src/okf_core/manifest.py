@@ -76,34 +76,41 @@ class BundleManifest:
 
 def scan_bundle(bundle: BundleConfig) -> BundleManifest:
     """Scan a configured bundle into concept entries and non-fatal problems."""
+    root = bundle.bundle_root.resolve(strict=False)
+    if not root.is_dir():
+        return BundleManifest(
+            bundle_name=bundle.name,
+            concepts=(),
+            problems=(),
+        )
+
     from okf_core.hooks import get_hook_manager
 
     pm = get_hook_manager(bundle)
+    pm.hook.okf_scan_start(bundle=bundle)
 
     entries: list[ConceptManifestEntry] = []
     problems: list[ManifestProblem] = []
-    root = bundle.bundle_root.resolve(strict=False)
 
-    if root.is_dir():
-        for path in _iter_included_paths(root, bundle):
-            if is_reserved_concept_path(path, bundle):
-                continue
+    for path in _iter_included_paths(root, bundle):
+        if is_reserved_concept_path(path, bundle):
+            continue
 
-            cached_entry = pm.hook.okf_enter_scan_concept(
-                path=path, root=root, bundle=bundle
+        cached_entry = pm.hook.okf_enter_scan_concept(
+            path=path, root=root, bundle=bundle
+        )
+        if cached_entry is not None:
+            entries.append(cached_entry)
+            continue
+
+        entry, problem = _scan_concept_path(path, root, bundle)
+        if entry is not None:
+            entries.append(entry)
+            pm.hook.okf_exit_scan_concept(
+                entry=entry, path=path, root=root, bundle=bundle
             )
-            if cached_entry is not None:
-                entries.append(cached_entry)
-                continue
-
-            entry, problem = _scan_concept_path(path, root, bundle)
-            if entry is not None:
-                entries.append(entry)
-                pm.hook.okf_exit_scan_concept(
-                    entry=entry, path=path, root=root, bundle=bundle
-                )
-            if problem is not None:
-                problems.append(problem)
+        if problem is not None:
+            problems.append(problem)
 
     manifest = BundleManifest(
         bundle_name=bundle.name,

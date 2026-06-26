@@ -2,16 +2,61 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
+from urllib.parse import urlsplit
 
 from okf_core.config import BundleConfig
 from okf_core.manifest import BundleManifest, ConceptManifestEntry, _freeze_value
-from okf_core.graph import ConceptLink
+from okf_core.graph import ConceptLink, BundleGraph
 from okf_core.hooks import hookimpl
+
+
+def compute_pagerank(
+    nodes: set[str],
+    edges: list[tuple[str, str]],
+    d: float = 0.85,
+    max_iter: int = 100,
+    tol: float = 1e-6,
+) -> dict[str, float]:
+    """Compute PageRank centrality scores for a directed graph."""
+    if not nodes:
+        return {}
+
+    n = len(nodes)
+    pr = {node: 1.0 / n for node in nodes}
+
+    out_links: dict[str, list[str]] = {node: [] for node in nodes}
+    in_links: dict[str, list[str]] = {node: [] for node in nodes}
+
+    for src, dst in edges:
+        if src in nodes and dst in nodes:
+            out_links[src].append(dst)
+            in_links[dst].append(src)
+
+    sinks = [node for node in nodes if not out_links[node]]
+
+    for _ in range(max_iter):
+        next_pr = {}
+        sink_sum = sum(pr[sink] for sink in sinks)
+
+        for node in nodes:
+            rank_sum = sum(
+                pr[neighbor] / len(out_links[neighbor]) for neighbor in in_links[node]
+            )
+            rank_sum += sink_sum / n
+            next_pr[node] = (1.0 - d) / n + d * rank_sum
+
+        err = sum(abs(next_pr[node] - pr[node]) for node in nodes)
+        pr = next_pr
+        if err < tol:
+            break
+
+    return pr
 
 
 class SqliteCachePlugin:
@@ -25,6 +70,7 @@ class SqliteCachePlugin:
         self.cache_dir = bundle.okf_cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.db_path = self.cache_dir / "okf-cache.db"
+        self._conn: sqlite3.Connection | None = None
         self._init_db()
 
     def _init_db(self) -> None:
@@ -40,7 +86,8 @@ class SqliteCachePlugin:
                     mtime_ns INTEGER NOT NULL,
                     size INTEGER NOT NULL,
                     frontmatter TEXT NOT NULL,
-                    links_resolved INTEGER DEFAULT 0
+                    links_resolved INTEGER DEFAULT 0,
+                    pagerank REAL DEFAULT 0.0
                 );
                 """)
             conn.execute("""
@@ -58,10 +105,89 @@ class SqliteCachePlugin:
                 "CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_concept_id);"
             )
 
-    def _get_connection(self) -> sqlite3.Connection:
-        conn = sqlite3.connect(self.db_path)
-        conn.execute("PRAGMA foreign_keys = ON;")
-        return conn
+    @contextlib.contextmanager
+    def _connection(self) -> Generator[sqlite3.Connection, None, None]:
+        if self._conn is not None:
+            yield self._conn
+        else:
+            with sqlite3.connect(self.db_path) as conn:
+                conn.execute("PRAGMA foreign_keys = ON;")
+                yield conn
+
+    @hookimpl
+    def okf_scan_start(
+        self,
+        bundle: BundleConfig,
+    ) -> None:
+        if self._conn is not None:
+            self._conn.close()
+        self._conn = sqlite3.connect(self.db_path)
+        self._conn.execute("PRAGMA foreign_keys = ON;")
+        self._conn.execute("BEGIN TRANSACTION;")
+
+    @hookimpl
+    def okf_scan_end(
+        self,
+        bundle: BundleConfig,
+        manifest: BundleManifest,
+    ) -> None:
+        active_ids = {entry.concept_id for entry in manifest.concepts}
+
+        with self._connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT concept_id FROM concepts")
+            cached_ids = {row[0] for row in cursor.fetchall()}
+
+            obsolete_ids = cached_ids - active_ids
+            if obsolete_ids:
+                placeholders = ",".join("?" for _ in obsolete_ids)
+                conn.execute(
+                    f"DELETE FROM concepts WHERE concept_id IN ({placeholders})",
+                    tuple(obsolete_ids),
+                )
+
+        if self._conn is not None:
+            self._conn.commit()
+            self._conn.close()
+            self._conn = None
+
+    @hookimpl
+    def okf_graph_start(
+        self,
+        bundle: BundleConfig,
+    ) -> None:
+        if self._conn is not None:
+            self._conn.close()
+        self._conn = sqlite3.connect(self.db_path)
+        self._conn.execute("PRAGMA foreign_keys = ON;")
+        self._conn.execute("BEGIN TRANSACTION;")
+
+    @hookimpl
+    def okf_graph_end(
+        self,
+        bundle: BundleConfig,
+        graph: BundleGraph,
+    ) -> None:
+        # Recompute PageRank
+        nodes = {entry.concept_id for entry in graph.concepts}
+        edges = []
+        for link in graph.links:
+            if link.target_concept_id:
+                edges.append((link.source_concept_id, link.target_concept_id))
+
+        pageranks = compute_pagerank(nodes, edges)
+
+        with self._connection() as conn:
+            for concept_id, pr_value in pageranks.items():
+                conn.execute(
+                    "UPDATE concepts SET pagerank = ? WHERE concept_id = ?",
+                    (pr_value, concept_id),
+                )
+
+        if self._conn is not None:
+            self._conn.commit()
+            self._conn.close()
+            self._conn = None
 
     @hookimpl
     def okf_enter_scan_concept(
@@ -70,7 +196,7 @@ class SqliteCachePlugin:
         root: Path,
         bundle: BundleConfig,
     ) -> ConceptManifestEntry | None:
-        rel_path = str(path.relative_to(root))
+        rel_path = path.relative_to(root).as_posix()
 
         try:
             stat = path.stat()
@@ -80,7 +206,7 @@ class SqliteCachePlugin:
             # File unreadable or absent
             return None
 
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 """
@@ -117,15 +243,15 @@ class SqliteCachePlugin:
         root: Path,
         bundle: BundleConfig,
     ) -> None:
-        rel_path = str(path.relative_to(root))
+        rel_path = path.relative_to(root).as_posix()
         fm_json = json.dumps(_unfreeze_value(entry.frontmatter))
         stable_id = None
 
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO concepts (concept_id, stable_id, path, sha256, mtime_ns, size, frontmatter, links_resolved)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 0)
+                INSERT OR REPLACE INTO concepts (concept_id, stable_id, path, sha256, mtime_ns, size, frontmatter, links_resolved, pagerank)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 0, 0.0)
                 """,
                 (
                     entry.concept_id,
@@ -144,7 +270,7 @@ class SqliteCachePlugin:
         entry: ConceptManifestEntry,
         bundle: BundleConfig,
     ) -> list[ConceptLink] | None:
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT links_resolved FROM concepts WHERE concept_id = ?",
@@ -163,12 +289,16 @@ class SqliteCachePlugin:
 
             links = []
             for target_concept_id, text, target in rows:
-                if target.startswith("/"):
-                    target_path = (bundle.bundle_root / target.lstrip("/")).resolve(
+                parsed = urlsplit(target)
+                target_path_str = parsed.path
+                if target_path_str.startswith("/"):
+                    target_path = (
+                        bundle.bundle_root / target_path_str.lstrip("/")
+                    ).resolve(strict=False)
+                else:
+                    target_path = (entry.path.parent / target_path_str).resolve(
                         strict=False
                     )
-                else:
-                    target_path = (entry.path.parent / target).resolve(strict=False)
 
                 links.append(
                     ConceptLink(
@@ -189,7 +319,7 @@ class SqliteCachePlugin:
         links: Sequence[ConceptLink],
         bundle: BundleConfig,
     ) -> None:
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             conn.execute(
                 "DELETE FROM links WHERE source_concept_id = ?", (entry.concept_id,)
             )
@@ -205,27 +335,6 @@ class SqliteCachePlugin:
                 "UPDATE concepts SET links_resolved = 1 WHERE concept_id = ?",
                 (entry.concept_id,),
             )
-
-    @hookimpl
-    def okf_scan_end(
-        self,
-        bundle: BundleConfig,
-        manifest: BundleManifest,
-    ) -> None:
-        active_ids = {entry.concept_id for entry in manifest.concepts}
-
-        with self._get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT concept_id FROM concepts")
-            cached_ids = {row[0] for row in cursor.fetchall()}
-
-            obsolete_ids = cached_ids - active_ids
-            if obsolete_ids:
-                placeholders = ",".join("?" for _ in obsolete_ids)
-                conn.execute(
-                    f"DELETE FROM concepts WHERE concept_id IN ({placeholders})",
-                    tuple(obsolete_ids),
-                )
 
 
 def get_cache_plugin(bundle: BundleConfig) -> SqliteCachePlugin:
