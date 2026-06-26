@@ -1,4 +1,32 @@
-"""Hook specifications and plugin manager for OKF operations."""
+"""Hook specifications and plugin manager for OKF operations.
+
+Hook Naming Convention
+----------------------
+All hooks in this module follow the ``okf_verb_noun`` naming pattern:
+
+* **Whole-phase lifecycle hooks** use ``start`` / ``end`` / ``abort`` as the verb.
+  These are called once at the beginning, successful completion, or failure of an
+  entire operation (e.g. a full bundle scan or graph build transaction)::
+
+      okf_start_scan   -- transaction opens
+      okf_end_scan     -- transaction commits
+      okf_abort_scan   -- transaction rolls back on error
+
+      okf_start_graph
+      okf_end_graph
+      okf_abort_graph
+
+* **Per-item hooks** use ``enter`` / ``exit`` as the verb.  These are called once
+  per concept document or link set within the scanning/resolution loop::
+
+      okf_enter_scan_concept   -- before processing one concept file
+      okf_exit_scan_concept    -- after processing one concept file
+
+      okf_enter_resolve_links  -- before resolving links from one concept
+      okf_exit_resolve_links   -- after resolving links from one concept
+
+Plugin authors implementing ``@hookimpl`` methods must use the exact names above.
+"""
 
 from __future__ import annotations
 
@@ -18,7 +46,10 @@ hookimpl = pluggy.HookimplMarker("okf")
 
 
 class OkfSpec:
-    """Hook specifications for OKF operations."""
+    """Hook specifications for OKF operations.
+
+    See the module docstring for the hook naming convention.
+    """
 
     @hookspec
     def okf_start_scan(
