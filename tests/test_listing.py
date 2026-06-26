@@ -288,7 +288,6 @@ def _bundle(root: Path, *, listing_fields: tuple[str, ...] = ()) -> BundleConfig
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         listing_fields=listing_fields,
     )
 

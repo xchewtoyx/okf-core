@@ -85,6 +85,8 @@ class SqliteCachePlugin:
 
     def _init_db(self) -> None:
         """Create tables if they do not exist."""
+        from okf_core.search import _ensure_search_schema
+
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute("""
@@ -125,6 +127,7 @@ class SqliteCachePlugin:
                 )
             except sqlite3.OperationalError:
                 pass
+            _ensure_search_schema(conn)
 
     def __del__(self) -> None:
         """Defensive fallback to close connection on garbage collection."""

@@ -61,6 +61,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "index" in result.stdout
     assert "graph" in result.stdout
     assert "list-concepts" in result.stdout
+    assert "search" in result.stdout
     assert "context" in result.stdout
     assert "list-bundles" in result.stdout
 
@@ -75,6 +76,10 @@ def test_validate_help_exits_zero() -> None:
 
 def test_list_concepts_help_exits_zero() -> None:
     assert _runner().invoke(cli, ["list-concepts", "--help"]).exit_code == 0
+
+
+def test_search_help_exits_zero() -> None:
+    assert _runner().invoke(cli, ["search", "--help"]).exit_code == 0
 
 
 def test_index_help_exits_zero() -> None:
@@ -525,6 +530,94 @@ def test_list_concepts_content_is_null_without_flag(tmp_path: Path) -> None:
     assert data["concepts"][0]["concept_id"] == "a"
     assert data["concepts"][0]["content"] is None
     assert data["problems"] == []
+
+
+# ---------------------------------------------------------------------------
+# okf search
+# ---------------------------------------------------------------------------
+
+
+def test_search_emits_json_results(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[bundles.default]
+bundle_root = "{tmp_path}"
+okf_cache_dir = ".okf-cache"
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "alpha.md", title="Alpha")
+
+    result = _runner().invoke(cli, ["search", "Alpha", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["bundle"] == "default"
+    assert data["query"] == "Alpha"
+    assert data["results"][0]["concept_id"] == "alpha"
+    assert data["results"][0]["path"] == str(tmp_path / "alpha.md")
+    assert data["results"][0]["snippets"]
+    assert data["problems"] == []
+
+
+def test_search_limit_option(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[bundles.default]
+bundle_root = "{tmp_path}"
+okf_cache_dir = ".okf-cache"
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "a.md", title="Same")
+    _write_concept(tmp_path / "b.md", title="Same")
+
+    result = _runner().invoke(
+        cli, ["search", "Same", "--config", str(config_path), "--limit", "1"]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert len(data["results"]) == 1
+
+
+def test_search_no_refresh_option_uses_existing_index(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[bundles.default]
+bundle_root = "{tmp_path}"
+okf_cache_dir = ".okf-cache"
+""".strip(),
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "alpha.md", title="Alpha")
+
+    stale = _runner().invoke(
+        cli,
+        ["search", "Alpha", "--config", str(config_path), "--no-refresh"],
+    )
+    fresh = _runner().invoke(cli, ["search", "Alpha", "--config", str(config_path)])
+
+    assert stale.exit_code == 0
+    assert json.loads(stale.stdout)["results"] == []
+    assert fresh.exit_code == 0
+    assert json.loads(fresh.stdout)["results"][0]["concept_id"] == "alpha"
+
+
+def test_search_missing_okf_cache_dir_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "alpha.md", title="Alpha")
+
+    result = _runner().invoke(cli, ["search", "Alpha", "--config", str(config_path)])
+
+    assert result.exit_code == 2
+    assert "okf_cache_dir" in result.stderr
 
 
 # ---------------------------------------------------------------------------

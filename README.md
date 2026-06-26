@@ -58,7 +58,6 @@ Supported `[defaults]` keys are:
 - `exclude`
 - `reserved_filenames`
 - `concept_path_strategy`
-- `index_cache`
 - `listing_fields`
 - `directory_metadata_file` (Non-Spec local tool enhancement: string, defaults to `"_directory.yml"`). The filename of the directory metadata sidecar file used to carry folder-level descriptions/titles.
 - `okf_version`
@@ -78,7 +77,6 @@ include = ["**/*.md"]
 exclude = []
 reserved_filenames = ["index.md", "log.md"]
 concept_path_strategy = "relative-path"
-index_cache = ".okf-cache"
 listing_fields = []
 directory_metadata_file = "_directory.yml"
 # okf_version = "0.1"
@@ -159,6 +157,22 @@ okf list-concepts [--config PATH] [--bundle NAME] [--with-graph-counts] [--with-
 Output: `{"bundle": "...", "concepts": [...], "problems": [...]}`
 
 Each concept entry includes `concept_id`, `path`, `type`, `title`, `description`, promoted `fields`, preserved `frontmatter`, optional `outbound_link_count` / `inbound_link_count`, and optional raw Markdown body `content` (with frontmatter stripped). Counts are `null` unless `--with-graph-counts` is supplied. `content` is `null` unless `--with-content` is supplied. Listing problems are non-fatal and include `concept_id`, `path`, `kind`, and `message`.
+
+### `okf search`
+
+Searches valid concept documents with local SQLite FTS5 lexical search:
+
+```sh
+okf search QUERY [--config PATH] [--bundle NAME] [--limit N] [--no-refresh]
+```
+
+Search requires bundle-level `okf_cache_dir` and reuses the existing `okf-cache.db` SQLite cache. It does not create a separate search database. By default the command refreshes the search index from the current bundle scan before querying; pass `--no-refresh` to search the current FTS rows only.
+
+Output: `{"bundle": "...", "query": "...", "results": [...], "problems": [...]}`
+
+Each result includes `concept_id`, `path`, `title`, `description`, `score`, and `snippets`. Search covers title, description, configured `listing_fields`, and Markdown body text. Search is intended for scale support and seed discovery before context packing; `index.md`, `list-concepts`, and explicit context seeds remain the primary progressive-disclosure surfaces.
+
+Missing `okf_cache_dir`, config errors, unknown bundles, and invalid limits exit `2`.
 
 ### `okf context`
 
@@ -276,6 +290,20 @@ bundle = config.bundles["default"]
 listing = list_concepts(bundle, with_content=True)
 # listing.concepts  — seed candidates with concept IDs, frontmatter, and content
 # listing.problems  — tuple of ListingProblem for skipped, malformed, or read-failed entries
+```
+
+### Lexical Search
+
+`search_concepts()` provides local FTS5 search over valid listed concepts. It requires `bundle.okf_cache_dir` and stores search rows in the same `okf-cache.db` used by scan and graph caching.
+
+```python
+from okf_core import load_config, search_concepts
+
+config = load_config()
+bundle = config.bundles["default"]
+results = search_concepts(bundle, "incident triage", limit=5)
+# results.results  — SearchResult entries with concept IDs, paths, metadata, scores, and snippets
+# results.problems — listing problems encountered while refreshing the search index
 ```
 
 ### Index Files

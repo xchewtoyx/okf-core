@@ -60,6 +60,12 @@ from okf_core.listing import (
     ListingProblem,
     list_concepts,
 )
+from okf_core.search import (
+    BundleSearchResults,
+    SearchConfigError,
+    SearchResult,
+    search_concepts,
+)
 from okf_core.context import (
     ContextEntry,
     ContextPack,
@@ -77,6 +83,7 @@ __all__ = [
     "BundleManifest",
     "BundleWriteSafetyProblem",
     "BundleListing",
+    "BundleSearchResults",
     "ConfigError",
     "ConfigOverrides",
     "ConceptDocument",
@@ -104,6 +111,8 @@ __all__ = [
     "IndexSection",
     "ListingProblem",
     "ParsedIndex",
+    "SearchConfigError",
+    "SearchResult",
     "backlinks_to",
     "build_bundle_graph",
     "build_context_pack",
@@ -124,6 +133,7 @@ __all__ = [
     "path_to_concept_id",
     "parse_concept_document",
     "scan_bundle",
+    "search_concepts",
     "render_index_document",
     "serialize_concept_document",
     "validate_concept_document",

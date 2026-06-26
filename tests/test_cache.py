@@ -24,7 +24,6 @@ def test_no_cache_created_when_disabled(tmp_path: Path) -> None:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=None,
     )
 
@@ -48,7 +47,6 @@ def test_cache_created_and_populated_when_enabled(tmp_path: Path) -> None:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -93,7 +91,6 @@ def test_cache_hits_skip_file_reads(
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -137,7 +134,6 @@ def test_cache_invalidation_on_file_modification(tmp_path: Path) -> None:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -182,7 +178,6 @@ def test_cache_pruning_on_file_deletion(tmp_path: Path) -> None:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -218,7 +213,6 @@ def test_links_caching_and_inbound_outbound(tmp_path: Path) -> None:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -264,7 +258,6 @@ def test_pagerank_calculation_and_storage(tmp_path: Path) -> None:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -305,7 +298,6 @@ def test_pagerank_calculation_with_orphans(tmp_path: Path) -> None:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -347,7 +339,6 @@ def test_cache_invalidation_on_metadata_change(
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -398,7 +389,6 @@ def test_transaction_rollback_on_scan_abort(
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -439,7 +429,6 @@ def test_graph_building_with_precomputed_manifest_without_cached_concepts(
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=None,
     )
     manifest = scan_bundle(no_cache_bundle)
@@ -455,7 +444,6 @@ def test_graph_building_with_precomputed_manifest_without_cached_concepts(
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -498,7 +486,6 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-        index_cache=root / ".cache",
         okf_cache_dir=cache_dir,
     )
 
@@ -573,7 +560,6 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
     from unittest.mock import patch
 
     with patch("okf_core.hooks.get_hook_manager", mock_get_hook_manager):
-
         # 1. First run: cache is empty
         manifest = scan_bundle(bundle)
         graph = build_bundle_graph(bundle, manifest=manifest)
@@ -634,7 +620,6 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
             exclude=(),
             reserved_filenames=("index.md", "log.md"),
             concept_path_strategy="relative-path",
-            index_cache=root / ".cache",
             okf_cache_dir=None,
         )
         manifest_no_cache = scan_bundle(no_cache_bundle)
