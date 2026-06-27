@@ -104,7 +104,9 @@ pip install -e .
 
 All commands load `okf-core.toml` by searching upward from the current working directory. Use `--config PATH` to specify a config file explicitly and `--bundle NAME` to select a named bundle (default: `default`).
 
-By default, commands emit machine-readable JSON on stdout and a one-line human-readable summary on stderr (except where noted, e.g. `okf validate --quiet`). Exit codes: `0` success, `1` errors or validation failures, `2` config or usage error.
+Call `okf --version` to print the package version.
+
+By default, commands emit machine-readable JSON on stdout and a one-line human-readable summary on stderr. The `--quiet` or `-q` option is supported on validation and file generation commands (`scan`, `validate`, `index`) to suppress command output and summary. Output-only query commands (such as `list-bundles`, `list-concepts`, `search`, `context`, and `graph`) intentionally do not support `--quiet` since running them quietly would result in a complete no-op. Exit codes: `0` success, `1` errors or validation failures, `2` config or usage error.
 
 ### `okf list-bundles`
 
@@ -125,12 +127,14 @@ Exits `2` on config or usage error.
 Scans a bundle and emits a manifest:
 
 ```sh
-okf scan [--config PATH] [--bundle NAME]
+okf scan [--config PATH] [--bundle NAME] [--quiet]
 ```
 
 Output: `{"bundle": "...", "concepts": [...], "problems": [...]}`
 
-Each concept entry includes `concept_id`, `path`, `size`, `sha256`, and `frontmatter`. Scan problems (parse errors, etc.) are non-fatal and appear in `problems` with `path`, `kind`, and `message` fields; exit code is always `0`.
+Each concept entry includes `concept_id`, `path`, `size`, `sha256`, and `frontmatter`. Scan problems (parse errors, etc.) are non-fatal and appear in `problems` with `path`, `kind`, and `message` fields; exit code is always `0` under normal execution.
+
+Use `--quiet` or `-q` to suppress command output and summary. When quiet mode is active, the command will exit `1` if any scan problems occurred. Configuration/load errors (which exit with code `2`) are not suppressed.
 
 ### `okf validate`
 
@@ -193,7 +197,7 @@ Unknown seeds and read problems appear in `problems` and exit `1`. Scan errors, 
 Generates `index.md` for a directory within a bundle:
 
 ```sh
-okf index [--config PATH] [--bundle NAME] [--directory PATH] [--force]
+okf index [--config PATH] [--bundle NAME] [--directory PATH] [--force] [--quiet]
 ```
 
 `--directory` defaults to the bundle root. Scans the bundle, collects concepts and immediate subdirectories for the target directory, calls `generate_index()`, and writes `index.md` to that directory. For the bundle root only, configured `okf_version` is emitted as frontmatter. Before writing any index in a bundle, the command checks the bundle-root `index.md`; if that file declares an unsupported, invalid, or unparsable `okf_version`, the command leaves the bundle untouched. Read-only commands such as `scan`, `list-concepts`, and `graph` continue best-effort consumption of newer-version bundles.
@@ -205,6 +209,8 @@ Output: `{"path": "...", "entries": N, "problems": [...], "scan_problems": [...]
 `entries` is the number of entries actually written (candidates minus skipped). `problems` lists index-level skipped entries (e.g. missing `type` field). `scan_problems` lists parse/read failures for files in the target directory that were silently omitted from the index.
 
 Exits `1` if any entries were skipped or any scan problems occurred in the target directory; exits `0` on clean generation.
+
+Use `--quiet` or `-q` to suppress command output and summary. Configuration/load errors (which exit with code `2`) are not suppressed.
 
 ### `okf graph`
 

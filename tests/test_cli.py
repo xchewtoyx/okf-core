@@ -500,6 +500,7 @@ def test_list_concepts_with_content_flag(tmp_path: Path) -> None:
     (tmp_path / "a.md").write_text(
         "---\ntype: concept\ntitle: Alpha\n---\nHello World\n",
         encoding="utf-8",
+        newline="\n",
     )
 
     result = _runner().invoke(
@@ -771,7 +772,7 @@ def test_context_budget_omits_entries_without_failing(tmp_path: Path) -> None:
         f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
     )
     a_content = "---\ntype: concept\ntitle: A\n---\nSee [B](b.md).\n"
-    (tmp_path / "a.md").write_text(a_content, encoding="utf-8")
+    (tmp_path / "a.md").write_text(a_content, encoding="utf-8", newline="\n")
     _write_concept(tmp_path / "b.md", title="B")
 
     result = _runner().invoke(
@@ -1465,3 +1466,71 @@ def test_list_bundles_stderr_summary_reports_count(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     assert "Found 2 bundle(s)" in result.stderr
+
+
+def test_version_option() -> None:
+    from okf_core import __version__
+
+    result = _runner().invoke(cli, ["--version"])
+    assert result.exit_code == 0
+    assert __version__ in result.stdout
+
+
+def test_scan_quiet(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8", newline="\n"
+    )
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    # Success case
+    result = _runner().invoke(cli, ["scan", "--config", str(config_path), "-q"])
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
+
+    # Failure case: Unterminated YAML frontmatter
+    (tmp_path / "b.md").write_text(
+        "---\ntype: concept\ntitle: Beta\n", encoding="utf-8", newline="\n"
+    )
+    result = _runner().invoke(cli, ["scan", "--config", str(config_path), "--quiet"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
+
+
+def test_index_quiet(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8", newline="\n"
+    )
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    # Success case
+    result = _runner().invoke(cli, ["index", "--config", str(config_path), "-q"])
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
+
+    # Failure case: write safety problem (index.md has newer unsupported version)
+    (tmp_path / "index.md").write_text(
+        "---\nokf_version: '0.2'\n---\n# Index\n", encoding="utf-8", newline="\n"
+    )
+    result = _runner().invoke(cli, ["index", "--config", str(config_path), "-q"])
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
+
+
+def test_quiet_option_config_error_does_not_suppress_stderr(tmp_path: Path) -> None:
+    # Fed with a bad/missing configuration, command should still output error on stderr and exit with code 2
+    result = _runner().invoke(
+        cli, ["scan", "--config", str(tmp_path / "nonexistent.toml"), "-q"]
+    )
+    assert result.exit_code == 2
+    assert result.stdout == ""
+    assert "Configuration error" in result.stderr

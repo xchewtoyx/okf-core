@@ -13,6 +13,7 @@ import click
 
 from okf_core import (
     ConfigError,
+    __version__,
     backlinks_to,
     build_context_pack,
     build_bundle_graph,
@@ -59,53 +60,9 @@ def _load(config_path: str | None, bundle_name: str) -> tuple[Any, Any]:
 
 
 @click.group()
+@click.version_option(version=__version__)
 def cli() -> None:
     """okf-core command-line tools for Open Knowledge Format bundles."""
-
-
-@cli.command()
-@click.option(
-    "--config",
-    "config_path",
-    default=None,
-    metavar="PATH",
-    help="Path to okf-core.toml (default: search upward from cwd).",
-)
-@click.option(
-    "--bundle",
-    "bundle_name",
-    default="default",
-    show_default=True,
-    metavar="NAME",
-    help="Named bundle from config.",
-)
-def scan(config_path: str | None, bundle_name: str) -> None:
-    """Scan a bundle and emit a JSON manifest."""
-    _, bundle = _load(config_path, bundle_name)
-    manifest = scan_bundle(bundle)
-    result = {
-        "bundle": bundle.name,
-        "concepts": [
-            {
-                "concept_id": c.concept_id,
-                "path": str(c.path),
-                "size": c.size,
-                "sha256": c.sha256,
-                "frontmatter": c.frontmatter,
-            }
-            for c in manifest.concepts
-        ],
-        "problems": [
-            {"path": str(p.path), "kind": p.kind, "message": p.message}
-            for p in manifest.problems
-        ],
-    }
-    click.echo(json.dumps(result, cls=_Encoder, indent=2))
-    click.echo(
-        f"Scanned bundle {bundle.name!r}: {len(manifest.concepts)} concepts, "
-        f"{len(manifest.problems)} problems",
-        err=True,
-    )
 
 
 @cli.command()
@@ -128,7 +85,61 @@ def scan(config_path: str | None, bundle_name: str) -> None:
     "--quiet",
     "-q",
     is_flag=True,
-    help="Suppress validation findings and summary output (does not suppress configuration/load errors).",
+    help="Suppress command output and summary (does not suppress configuration/load errors).",
+)
+def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
+    """Scan a bundle and emit a JSON manifest."""
+    _, bundle = _load(config_path, bundle_name)
+    manifest = scan_bundle(bundle)
+    if not quiet:
+        result = {
+            "bundle": bundle.name,
+            "concepts": [
+                {
+                    "concept_id": c.concept_id,
+                    "path": str(c.path),
+                    "size": c.size,
+                    "sha256": c.sha256,
+                    "frontmatter": c.frontmatter,
+                }
+                for c in manifest.concepts
+            ],
+            "problems": [
+                {"path": str(p.path), "kind": p.kind, "message": p.message}
+                for p in manifest.problems
+            ],
+        }
+        click.echo(json.dumps(result, cls=_Encoder, indent=2))
+        click.echo(
+            f"Scanned bundle {bundle.name!r}: {len(manifest.concepts)} concepts, "
+            f"{len(manifest.problems)} problems",
+            err=True,
+        )
+    if quiet and manifest.problems:
+        sys.exit(1)
+
+
+@cli.command()
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    help="Suppress command output and summary (does not suppress configuration/load errors).",
 )
 def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     """Validate a bundle.
@@ -456,7 +467,6 @@ def graph_cmd(
             "broken_links": [_link_dict(link) for link in graph.broken_links],
             "problems": [_graph_problem_dict(problem) for problem in graph.problems],
         }
-
     click.echo(json.dumps(result, cls=_Encoder, indent=2))
     click.echo(
         f"Built graph for bundle {bundle.name!r}: {len(graph.concepts)} concepts, "
@@ -491,7 +501,7 @@ def list_bundles_cmd(config_path: str | None) -> None:
         for bundle in sorted(cfg.bundles.values(), key=lambda b: b.name)
     ]
     result: dict[str, Any] = {
-        "config_path": str(cfg.config_path) if cfg.config_path is not None else None,
+        "config_path": (str(cfg.config_path) if cfg.config_path is not None else None),
         "bundles": bundles,
     }
     click.echo(json.dumps(result, cls=_Encoder, indent=2))
@@ -529,11 +539,18 @@ def list_bundles_cmd(config_path: str | None) -> None:
         "okf_version declaration when config omits okf_version."
     ),
 )
+@click.option(
+    "--quiet",
+    "-q",
+    is_flag=True,
+    help="Suppress command output and summary (does not suppress configuration/load errors).",
+)
 def index_cmd(
     config_path: str | None,
     bundle_name: str,
     directory: str | None,
     force: bool,
+    quiet: bool,
 ) -> None:
     """Generate index.md for a bundle directory."""
     config, bundle = _load(config_path, bundle_name)
@@ -553,14 +570,17 @@ def index_cmd(
     write_safety_problem = check_bundle_write_safety(bundle)
     if write_safety_problem is not None:
         index_path = target_dir / "index.md"
-        result = {
-            "path": str(index_path),
-            "entries": 0,
-            "problems": [{"concept_id": "", "message": write_safety_problem.message}],
-            "scan_problems": [],
-        }
-        click.echo(json.dumps(result, cls=_Encoder, indent=2))
-        click.echo(write_safety_problem.message, err=True)
+        if not quiet:
+            result = {
+                "path": str(index_path),
+                "entries": 0,
+                "problems": [
+                    {"concept_id": "", "message": write_safety_problem.message}
+                ],
+                "scan_problems": [],
+            }
+            click.echo(json.dumps(result, cls=_Encoder, indent=2))
+            click.echo(write_safety_problem.message, err=True)
         sys.exit(1)
 
     manifest = scan_bundle(bundle)
@@ -607,27 +627,28 @@ def index_cmd(
         okf_version=_okf_version_for_index_write(bundle, target_dir, force),
     )
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(body, encoding="utf-8")
+    index_path.write_text(body, encoding="utf-8", newline="\n")
 
-    result = {
-        "path": str(index_path),
-        "entries": entries_written,
-        "problems": [
-            {"concept_id": p.concept_id, "message": p.message}
-            for p in generated.problems
-        ],
-        "scan_problems": [
-            {"path": str(p.path), "kind": p.kind, "message": p.message}
-            for p in scan_problems_in_dir
-        ],
-    }
-    click.echo(json.dumps(result, cls=_Encoder, indent=2))
-    click.echo(
-        f"Wrote index.md for bundle {bundle.name!r}: "
-        f"{entries_written} entries, {len(generated.problems)} problems, "
-        f"{len(scan_problems_in_dir)} scan errors",
-        err=True,
-    )
+    if not quiet:
+        result = {
+            "path": str(index_path),
+            "entries": entries_written,
+            "problems": [
+                {"concept_id": p.concept_id, "message": p.message}
+                for p in generated.problems
+            ],
+            "scan_problems": [
+                {"path": str(p.path), "kind": p.kind, "message": p.message}
+                for p in scan_problems_in_dir
+            ],
+        }
+        click.echo(json.dumps(result, cls=_Encoder, indent=2))
+        click.echo(
+            f"Wrote index.md for bundle {bundle.name!r}: "
+            f"{entries_written} entries, {len(generated.problems)} problems, "
+            f"{len(scan_problems_in_dir)} scan errors",
+            err=True,
+        )
     if generated.problems or scan_problems_in_dir:
         sys.exit(1)
 

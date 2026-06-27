@@ -76,7 +76,12 @@ from okf_core.validation import validate_bundle
 from okf_core.versions import is_supported_okf_version, parse_okf_version
 from okf_core.write_safety import BundleWriteSafetyProblem, check_bundle_write_safety
 
-__version__ = "0.3.0"
+import importlib.metadata
+
+try:
+    __version__ = importlib.metadata.version("okf-core")
+except importlib.metadata.PackageNotFoundError:
+    __version__ = "0.0.0-dev"
 
 __all__ = [
     "BundleConfig",
