@@ -231,14 +231,14 @@ def main() -> None:
         # 1. Initial Indexing Build
         print("Running initial search indexing build (cold cache)...")
         start = time.perf_counter()
-        search_concepts(bundle, "commonword", refresh=True)
+        search_concepts(bundle, "commonword", refresh=True, limit=0)
         initial_build_time = time.perf_counter() - start
         print(f"Initial Indexing time: {initial_build_time:.4f} seconds\n")
 
         # 2. No-op Refresh
         print("Running subsequent refresh check (no changes, warm cache)...")
         start = time.perf_counter()
-        search_concepts(bundle, "commonword", refresh=True)
+        search_concepts(bundle, "commonword", refresh=True, limit=0)
         noop_refresh_time = time.perf_counter() - start
         print(f"No-op Refresh time: {noop_refresh_time:.4f} seconds\n")
 
@@ -254,7 +254,7 @@ def main() -> None:
         )
 
         start = time.perf_counter()
-        search_concepts(bundle, "commonword", refresh=True)
+        search_concepts(bundle, "commonword", refresh=True, limit=0)
         inc_refresh_time = time.perf_counter() - start
         print(f"Incremental Refresh time: {inc_refresh_time:.4f} seconds\n")
 
