@@ -85,7 +85,7 @@ def cli() -> None:
     "--quiet",
     "-q",
     is_flag=True,
-    help="Suppress output and rely on exit code.",
+    help="Suppress command output and summary (does not suppress configuration/load errors).",
 )
 def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     """Scan a bundle and emit a JSON manifest."""
@@ -139,7 +139,7 @@ def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     "--quiet",
     "-q",
     is_flag=True,
-    help="Suppress validation findings and summary output (does not suppress configuration/load errors).",
+    help="Suppress command output and summary (does not suppress configuration/load errors).",
 )
 def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     """Validate a bundle.
@@ -423,7 +423,7 @@ def context_cmd(
     "--quiet",
     "-q",
     is_flag=True,
-    help="Suppress output and rely on exit code.",
+    help="Suppress command output and summary (does not suppress configuration/load errors).",
 )
 def graph_cmd(
     config_path: str | None,
@@ -570,7 +570,7 @@ def list_bundles_cmd(config_path: str | None) -> None:
     "--quiet",
     "-q",
     is_flag=True,
-    help="Suppress output and rely on exit code.",
+    help="Suppress command output and summary (does not suppress configuration/load errors).",
 )
 def index_cmd(
     config_path: str | None,
