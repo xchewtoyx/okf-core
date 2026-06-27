@@ -321,7 +321,9 @@ def find_unlinked_mentions(
 
         if refresh:
             resolved_manifest = scan_bundle(bundle)
-            listing = list_concepts(bundle, manifest=resolved_manifest, with_content=True)
+            listing = list_concepts(
+                bundle, manifest=resolved_manifest, with_content=True
+            )
             _refresh_search_index(conn, bundle, listing)
 
         rows = conn.execute(
@@ -389,7 +391,9 @@ def find_unlinked_mentions(
                     )
                 )
 
-    return tuple(sorted(suggestions, key=lambda s: (s.source_concept_id, s.target_concept_id)))
+    return tuple(
+        sorted(suggestions, key=lambda s: (s.source_concept_id, s.target_concept_id))
+    )
 
 
 @dataclass
