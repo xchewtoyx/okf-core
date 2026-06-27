@@ -57,14 +57,21 @@ test: _require-venv
 test-matrix: _require-venv
     {{python}} .github/scripts/run_local_matrix.py
 
-# Run ruff, mypy, and actionlint static analysis
+# Run ruff and mypy static analysis
 lint: _require-venv
     {{python}} -m ruff check src tests .github/scripts/ scripts/
     {{python}} -m mypy src tests .github/scripts/ scripts/ --ignore-missing-imports
-    {{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml
+
+# Lint GitHub Actions workflows with actionlint (skipped if actionlint is unavailable)
+lint-actions: _require-venv
+    @if command -v {{actionlint}} > /dev/null 2>&1; then \
+        {{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml; \
+    else \
+        echo "actionlint not found; skipping workflow lint"; \
+    fi
 
 # Run check + lint + test (local superset of CI; also lints scripts/)
-ci: check lint test
+ci: check lint lint-actions test
 
 # Run search benchmarks
 benchmark-search: _require-venv
