@@ -170,9 +170,9 @@ Lists addressable concept documents for seed discovery:
 okf list-concepts [--config PATH] [--bundle NAME] [--with-graph-counts] [--with-content]
 ```
 
-Output: `{"bundle": "...", "concepts": [...], "problems": [...]}`
+Output: `{"bundle": "...", "concepts": [...], "problems": [...], "orphans": [...]}`
 
-Each concept entry includes `concept_id`, `path`, `type`, `title`, `description`, promoted `fields`, preserved `frontmatter`, optional `outbound_link_count` / `inbound_link_count`, and optional raw Markdown body `content` (with frontmatter stripped). Counts are `null` unless `--with-graph-counts` is supplied. `content` is `null` unless `--with-content` is supplied. Listing problems are non-fatal and include `concept_id`, `path`, `kind`, and `message`.
+Each concept entry includes `concept_id`, `path`, `type`, `title`, `description`, promoted `fields`, preserved `frontmatter`, optional `outbound_link_count` / `inbound_link_count`, optional `pagerank` score, and optional raw Markdown body `content` (with frontmatter stripped). Graph metrics (`outbound_link_count`, `inbound_link_count`, `pagerank`) are `null` unless `--with-graph-counts` is supplied. The top-level `orphans` array lists concept IDs with no inbound or outbound links; it is empty unless `--with-graph-counts` is supplied. `content` is `null` unless `--with-content` is supplied. Listing problems are non-fatal and include `concept_id`, `path`, `kind`, and `message`.
 
 ### `okf search`
 

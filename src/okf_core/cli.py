@@ -200,7 +200,7 @@ def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
 @click.option(
     "--with-graph-counts",
     is_flag=True,
-    help="Include resolved inbound/outbound concept-link counts.",
+    help="Include graph metrics: inbound/outbound link counts, PageRank scores, and orphan summary.",
 )
 @click.option(
     "--with-content",

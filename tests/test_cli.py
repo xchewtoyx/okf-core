@@ -463,6 +463,12 @@ def test_list_concepts_with_graph_counts(tmp_path: Path) -> None:
     assert by_id["a"]["inbound_link_count"] == 0
     assert by_id["b"]["outbound_link_count"] == 0
     assert by_id["b"]["inbound_link_count"] == 1
+    # pagerank: both concepts should have a positive normalised score
+    assert isinstance(by_id["a"]["pagerank"], float)
+    assert isinstance(by_id["b"]["pagerank"], float)
+    assert abs(by_id["a"]["pagerank"] + by_id["b"]["pagerank"] - 1.0) < 1e-4
+    # orphans: b has no outbound links but has an inbound link — neither is an orphan
+    assert data["orphans"] == []
 
 
 def test_list_concepts_config_error_exits_2(tmp_path: Path) -> None:

@@ -194,9 +194,13 @@ def test_list_concepts_populates_pagerank_when_graph_is_supplied(
 
     listing = list_concepts(bundle, manifest=manifest, graph=graph)
 
-    for concept in listing.concepts:
-        assert isinstance(concept.pagerank, float)
-        assert concept.pagerank > 0
+    by_id = {c.concept_id: c for c in listing.concepts}
+    assert isinstance(by_id["a"].pagerank, float)
+    assert isinstance(by_id["b"].pagerank, float)
+    # 2-node cycle: scores should be normalised (sum ≈ 1) and symmetric (a ≈ b)
+    total = by_id["a"].pagerank + by_id["b"].pagerank  # type: ignore[operator]
+    assert abs(total - 1.0) < 1e-4
+    assert abs(by_id["a"].pagerank - by_id["b"].pagerank) < 1e-4  # type: ignore[operator]
 
 
 def test_list_concepts_identifies_orphan_concepts(tmp_path: Path) -> None:

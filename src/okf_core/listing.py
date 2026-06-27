@@ -9,10 +9,9 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
-from okf_core.cache import compute_pagerank
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError
-from okf_core.graph import BundleGraph
+from okf_core.graph import BundleGraph, compute_pagerank
 from okf_core.manifest import BundleManifest, ConceptManifestEntry, scan_bundle
 
 
@@ -29,8 +28,8 @@ class ConceptListing:
     frontmatter: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     outbound_link_count: int | None = None
     inbound_link_count: int | None = None
-    pagerank: float | None = None
     content: str | None = None
+    pagerank: float | None = None
 
 
 @dataclass(frozen=True)
@@ -144,7 +143,7 @@ def list_concepts(
     problems.extend(_graph_listing_problems(graph, problems))
 
     orphans = (
-        _orphan_concept_ids(outbound_counts, inbound_counts)
+        _orphan_concept_ids(concepts, outbound_counts, inbound_counts)
         if graph is not None
         else ()
     )
@@ -202,12 +201,15 @@ def _graph_pageranks(graph: BundleGraph | None) -> dict[str, float]:
 
 
 def _orphan_concept_ids(
+    concepts: list[ConceptListing],
     outbound: dict[str, int],
     inbound: dict[str, int],
 ) -> tuple[str, ...]:
     return tuple(
         sorted(
-            cid for cid in outbound if outbound[cid] == 0 and inbound.get(cid, 0) == 0
+            c.concept_id
+            for c in concepts
+            if outbound.get(c.concept_id, 0) == 0 and inbound.get(c.concept_id, 0) == 0
         )
     )
 

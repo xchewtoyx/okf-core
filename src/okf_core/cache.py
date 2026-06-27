@@ -17,56 +17,8 @@ from okf_core.manifest import (
     ManifestProblem,
     _freeze_value,
 )
-from okf_core.graph import ConceptLink, BundleGraph, GraphProblem
+from okf_core.graph import ConceptLink, BundleGraph, GraphProblem, compute_pagerank
 from okf_core.hooks import hookimpl
-
-
-def compute_pagerank(
-    nodes: set[str],
-    edges: list[tuple[str, str]],
-    d: float = 0.85,
-    max_iter: int = 100,
-    tol: float = 1e-6,
-) -> dict[str, float]:
-    """Compute PageRank centrality scores for a directed graph."""
-    if not nodes:
-        return {}
-
-    n = len(nodes)
-    sorted_nodes = sorted(nodes)
-    pr = {node: 1.0 / n for node in sorted_nodes}
-
-    out_links: dict[str, list[str]] = {node: [] for node in sorted_nodes}
-    in_links: dict[str, list[str]] = {node: [] for node in sorted_nodes}
-
-    for src, dst in edges:
-        if src in nodes and dst in nodes:
-            out_links[src].append(dst)
-            in_links[dst].append(src)
-
-    for node in sorted_nodes:
-        out_links[node].sort()
-        in_links[node].sort()
-
-    sinks = [node for node in sorted_nodes if not out_links[node]]
-
-    for _ in range(max_iter):
-        next_pr = {}
-        sink_sum = sum(pr[sink] for sink in sinks)
-
-        for node in sorted_nodes:
-            rank_sum = sum(
-                pr[neighbor] / len(out_links[neighbor]) for neighbor in in_links[node]
-            )
-            rank_sum += sink_sum / n
-            next_pr[node] = (1.0 - d) / n + d * rank_sum
-
-        err = sum(abs(next_pr[node] - pr[node]) for node in sorted_nodes)
-        pr = next_pr
-        if err < tol:
-            break
-
-    return pr
 
 
 class SqliteCachePlugin:
