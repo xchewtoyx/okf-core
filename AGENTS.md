@@ -67,6 +67,7 @@ consume `okf-core`.
   become a required core dependency unless a future issue explicitly justifies
   that tradeoff.
 - Avoid over-engineering type/schema validation within core validation APIs. Core validation must focus on base OKF conformance (like the `type` string) and simple presence/non-emptiness checks for profile-required fields, leaving rich type/schema enforcement to the consuming project or custom workflow hooks.
+- **Opt-in Bundle Extensions:** Any non-standard or tool-specific configuration settings (such as `stable_id_field`) must be restricted to bundle-level configuration and explicitly excluded from `ProjectDefaults`. This ensures that global defaults remain strictly compliant with the base OKF specification, and any extensions must be opted-into explicitly per bundle.
 - **`pluggy` hook naming convention:** All hook names must follow the `okf_verb_noun` pattern.
   Use `start`/`end`/`abort` as the verb for whole-phase lifecycle hooks (called once at the
   beginning/end/failure of a scan or graph build transaction, e.g. `okf_start_scan`,

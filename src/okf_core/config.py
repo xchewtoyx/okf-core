@@ -89,6 +89,7 @@ class BundleConfig(BaseModel):
     profile: str | None = None
     directory_metadata_file: str = "_directory.yml"
     okf_cache_dir: Path | None = None
+    stable_id_field: str | None = None
 
     @field_validator("bundle_root", mode="after")
     @classmethod
@@ -151,6 +152,7 @@ class ConfigOverrides(BaseModel):
     directory_metadata_file: str | None = None
     okf_version: str | None = None
     okf_cache_dir: Path | None = None
+    stable_id_field: str | None = None
 
     @field_validator("okf_version")
     @classmethod
@@ -176,6 +178,7 @@ class _BundleInput(BaseModel):
     profile: str | None = None
     directory_metadata_file: str | None = None
     okf_cache_dir: Path | None = None
+    stable_id_field: str | None = None
 
     @field_validator("okf_version")
     @classmethod
@@ -356,6 +359,7 @@ def _resolve_bundles(
                     if okf_cache_dir is not None
                     else None
                 ),
+                stable_id_field=overrides.stable_id_field,
             )
         }
 
@@ -417,6 +421,11 @@ def _resolve_bundle(
         raw_bundle.okf_cache_dir,
         None,
     )
+    stable_id_field = _select_config_value(
+        overrides.stable_id_field,
+        raw_bundle.stable_id_field,
+        None,
+    )
 
     resolved_bundle_root = _normalize_path(bundle_root, project_root)
 
@@ -436,6 +445,7 @@ def _resolve_bundle(
             if okf_cache_dir is not None
             else None
         ),
+        stable_id_field=stable_id_field,
     )
 
 
