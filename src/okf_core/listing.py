@@ -9,6 +9,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Any
 
+from okf_core.cache import compute_pagerank
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError
 from okf_core.graph import BundleGraph
@@ -28,6 +29,7 @@ class ConceptListing:
     frontmatter: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
     outbound_link_count: int | None = None
     inbound_link_count: int | None = None
+    pagerank: float | None = None
     content: str | None = None
 
 
@@ -48,6 +50,7 @@ class BundleListing:
     bundle_name: str
     concepts: tuple[ConceptListing, ...] = ()
     problems: tuple[ListingProblem, ...] = ()
+    orphans: tuple[str, ...] = ()
 
 
 def list_concepts(
@@ -70,6 +73,7 @@ def list_concepts(
 
     resolved_manifest = _resolve_manifest(bundle, manifest, graph)
     outbound_counts, inbound_counts = _graph_counts(graph)
+    pageranks = _graph_pageranks(graph)
     concepts: list[ConceptListing] = []
     problems: list[ListingProblem] = [
         ListingProblem(path=p.path, kind=p.kind, message=p.message)
@@ -130,11 +134,16 @@ def list_concepts(
                 inbound_link_count=(
                     inbound_counts.get(entry.concept_id) if graph is not None else None
                 ),
+                pagerank=(
+                    pageranks.get(entry.concept_id) if graph is not None else None
+                ),
                 content=content_val,
             )
         )
 
     problems.extend(_graph_listing_problems(graph, problems))
+
+    orphans = _orphan_concept_ids(outbound_counts, inbound_counts) if graph is not None else ()
 
     return BundleListing(
         bundle_name=resolved_manifest.bundle_name,
@@ -142,6 +151,7 @@ def list_concepts(
         problems=tuple(
             sorted(problems, key=lambda p: (str(p.path), p.kind, p.concept_id))
         ),
+        orphans=orphans,
     )
 
 
@@ -173,6 +183,27 @@ def _graph_counts(
         if link.target_concept_id is not None:
             inbound[link.target_concept_id] = inbound.get(link.target_concept_id, 0) + 1
     return outbound, inbound
+
+
+def _graph_pageranks(graph: BundleGraph | None) -> dict[str, float]:
+    if graph is None:
+        return {}
+    nodes = {c.concept_id for c in graph.concepts}
+    edges = [
+        (lnk.source_concept_id, lnk.target_concept_id)
+        for lnk in graph.links
+        if lnk.target_concept_id is not None
+    ]
+    return compute_pagerank(nodes, edges)
+
+
+def _orphan_concept_ids(
+    outbound: dict[str, int],
+    inbound: dict[str, int],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(cid for cid in outbound if outbound[cid] == 0 and inbound.get(cid, 0) == 0)
+    )
 
 
 def _graph_listing_problems(
