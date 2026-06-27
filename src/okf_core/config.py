@@ -91,6 +91,16 @@ class BundleConfig(BaseModel):
     okf_cache_dir: Path | None = None
     stable_id_field: str | None = None
 
+    @field_validator("stable_id_field")
+    @classmethod
+    def _validate_stable_id_field(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        stripped = v.strip()
+        if not stripped:
+            raise ValueError("stable_id_field must not be empty or whitespace")
+        return stripped
+
     @field_validator("bundle_root", mode="after")
     @classmethod
     def _normalize_paths(cls, v: Path) -> Path:
