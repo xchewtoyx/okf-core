@@ -60,3 +60,7 @@ lint: _require-venv
 
 # Run check + lint + test (mirrors CI)
 ci: check lint test
+
+# Run search benchmarks
+benchmark-search: _require-venv
+    {{python}} scripts/benchmark_search.py
