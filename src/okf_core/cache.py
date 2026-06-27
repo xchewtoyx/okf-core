@@ -288,11 +288,22 @@ class SqliteCachePlugin:
             )
             row = cursor.fetchone()
             if row is not None:
-                concept_id, stable_id, sha256, fm_json = row
+                concept_id, _stored_stable_id, sha256, fm_json = row
                 try:
                     frontmatter = json.loads(fm_json)
                 except json.JSONDecodeError:
                     return None
+
+                # Re-derive stable_id from the cached frontmatter using the
+                # current bundle config so that changing stable_id_field takes
+                # effect without requiring a cache flush.
+                stable_id: str | None = None
+                if bundle.stable_id_field is not None:
+                    val = frontmatter.get(bundle.stable_id_field)
+                    if val is not None and not (
+                        isinstance(val, str) and not val.strip()
+                    ):
+                        stable_id = str(val).strip()
 
                 return ConceptManifestEntry(
                     concept_id=concept_id,
