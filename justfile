@@ -54,9 +54,13 @@ test-matrix: _require-venv
 
 # Run ruff, mypy, and actionlint static analysis
 lint: _require-venv
-    {{python}} -m ruff check src tests .github/scripts/
-    {{python}} -m mypy src tests .github/scripts/ --ignore-missing-imports
+    {{python}} -m ruff check src tests .github/scripts/ scripts/
+    {{python}} -m mypy src tests .github/scripts/ scripts/ --ignore-missing-imports
     {{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml
 
-# Run check + lint + test (mirrors CI)
+# Run check + lint + test (local superset of CI; also lints scripts/)
 ci: check lint test
+
+# Run search benchmarks
+benchmark-search: _require-venv
+    {{python}} scripts/benchmark_search.py
