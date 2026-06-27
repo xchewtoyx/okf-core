@@ -30,7 +30,7 @@ jobs:
           python -m mypy src tests .github/scripts/ --ignore-missing-imports
 
       - name: Lint workflows (actionlint)
-        run: actionlint .github/workflows/*.yml
+        uses: rhysd/action-actionlint@v1
 
   pytest:
     runs-on: ubuntu-latest

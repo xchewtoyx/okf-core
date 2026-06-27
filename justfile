@@ -12,8 +12,7 @@ install:
 _install-windows:
     @python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || (echo error: Python 3.11+ required >&2 && exit 1)
     python -m venv .venv
-    {{python}} -m pip install -e ".[test,dev]"
-    @if where actionlint >nul 2>&1 (echo actionlint found on PATH; skipping actionlint-py) else ({{python}} -m pip install -e ".[actionlint]" || echo warning: actionlint-py install failed; workflow linting will be skipped)
+    @if where actionlint >nul 2>&1 ({{python}} -m pip install -e ".[test,dev]") else ({{python}} -m pip install -e ".[test,dev,actionlint]")
 
 [private]
 _install-linux: _install-posix
@@ -24,11 +23,10 @@ _install-macos: _install-posix
 _install-posix:
     @python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || (echo "error: Python 3.11+ required" >&2 && exit 1)
     python3 -m venv .venv
-    {{python}} -m pip install -e ".[test,dev]"
     @if command -v actionlint > /dev/null 2>&1; then \
-        echo "actionlint found on PATH; skipping actionlint-py"; \
+        {{python}} -m pip install -e ".[test,dev]"; \
     else \
-        {{python}} -m pip install -e ".[actionlint]" || echo "warning: actionlint-py install failed; workflow linting will be skipped"; \
+        {{python}} -m pip install -e ".[test,dev,actionlint]"; \
     fi
 
 [private]
@@ -64,12 +62,12 @@ lint: _require-venv
     {{python}} -m ruff check src tests .github/scripts/ scripts/
     {{python}} -m mypy src tests .github/scripts/ scripts/ --ignore-missing-imports
 
-# Lint GitHub Actions workflows with actionlint (skipped if actionlint is unavailable)
+# Lint GitHub Actions workflows with actionlint (skipped in Claude cloud instances)
 lint-actions: _require-venv
-    @if command -v {{actionlint}} > /dev/null 2>&1; then \
-        {{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml; \
+    @if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && ! command -v {{actionlint}} > /dev/null 2>&1; then \
+        echo "actionlint not available in cloud instance; skipping workflow lint"; \
     else \
-        echo "actionlint not found; skipping workflow lint"; \
+        {{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml; \
     fi
 
 # Run check + lint + test (local superset of CI; also lints scripts/)
