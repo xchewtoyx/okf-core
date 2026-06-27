@@ -30,11 +30,11 @@ _require-venv:
 
 [private]
 _require-venv-windows:
-    @if not exist {{python}} (echo error: venv not found — run 'just install' first && exit 1)
+    @if not exist {{python}} (echo error: venv not found — run 'just install' first >&2 && exit 1)
 
 [private]
 _require-venv-posix:
-    @[ -f {{python}} ] || (echo "error: venv not found — run 'just install' first" && exit 1)
+    @[ -f {{python}} ] || (echo "error: venv not found — run 'just install' first" >&2 && exit 1)
 
 # Format code with black
 fmt: _require-venv

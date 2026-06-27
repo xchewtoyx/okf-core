@@ -91,24 +91,24 @@ def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     """Scan a bundle and emit a JSON manifest."""
     _, bundle = _load(config_path, bundle_name)
     manifest = scan_bundle(bundle)
-    result = {
-        "bundle": bundle.name,
-        "concepts": [
-            {
-                "concept_id": c.concept_id,
-                "path": str(c.path),
-                "size": c.size,
-                "sha256": c.sha256,
-                "frontmatter": c.frontmatter,
-            }
-            for c in manifest.concepts
-        ],
-        "problems": [
-            {"path": str(p.path), "kind": p.kind, "message": p.message}
-            for p in manifest.problems
-        ],
-    }
     if not quiet:
+        result = {
+            "bundle": bundle.name,
+            "concepts": [
+                {
+                    "concept_id": c.concept_id,
+                    "path": str(c.path),
+                    "size": c.size,
+                    "sha256": c.sha256,
+                    "frontmatter": c.frontmatter,
+                }
+                for c in manifest.concepts
+            ],
+            "problems": [
+                {"path": str(p.path), "kind": p.kind, "message": p.message}
+                for p in manifest.problems
+            ],
+        }
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(
             f"Scanned bundle {bundle.name!r}: {len(manifest.concepts)} concepts, "
@@ -224,12 +224,16 @@ def list_concepts_cmd(
         bundle, manifest=manifest, graph=graph, with_content=with_content
     )
 
-    result = {
-        "bundle": listing.bundle_name,
-        "concepts": [_concept_listing_dict(concept) for concept in listing.concepts],
-        "problems": [_listing_problem_dict(problem) for problem in listing.problems],
-    }
     if not quiet:
+        result = {
+            "bundle": listing.bundle_name,
+            "concepts": [
+                _concept_listing_dict(concept) for concept in listing.concepts
+            ],
+            "problems": [
+                _listing_problem_dict(problem) for problem in listing.problems
+            ],
+        }
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(
             f"Listed bundle {bundle.name!r}: {len(listing.concepts)} concepts, "
@@ -297,18 +301,18 @@ def search_cmd(
         click.echo(f"Search configuration error: {exc}", err=True)
         sys.exit(2)
 
-    result = {
-        "bundle": search_results.bundle_name,
-        "query": search_results.query,
-        "results": [
-            _search_result_dict(search_result)
-            for search_result in search_results.results
-        ],
-        "problems": [
-            _listing_problem_dict(problem) for problem in search_results.problems
-        ],
-    }
     if not quiet:
+        result = {
+            "bundle": search_results.bundle_name,
+            "query": search_results.query,
+            "results": [
+                _search_result_dict(search_result)
+                for search_result in search_results.results
+            ],
+            "problems": [
+                _listing_problem_dict(problem) for problem in search_results.problems
+            ],
+        }
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(
             f"Searched bundle {bundle.name!r}: {len(search_results.results)} results, "
@@ -390,14 +394,14 @@ def context_cmd(
         budget_chars=budget_chars,
     )
 
-    result = {
-        "bundle": pack.bundle_name,
-        "seeds": list(pack.seeds),
-        "entries": [_context_entry_dict(entry) for entry in pack.entries],
-        "omitted_concept_ids": list(pack.omitted_concept_ids),
-        "problems": [_context_problem_dict(problem) for problem in pack.problems],
-    }
     if not quiet:
+        result = {
+            "bundle": pack.bundle_name,
+            "seeds": list(pack.seeds),
+            "entries": [_context_entry_dict(entry) for entry in pack.entries],
+            "omitted_concept_ids": list(pack.omitted_concept_ids),
+            "problems": [_context_problem_dict(problem) for problem in pack.problems],
+        }
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(
             f"Built context pack for bundle {bundle.name!r}: "
@@ -472,38 +476,45 @@ def graph_cmd(
         )
         sys.exit(2)
 
-    if broken_only:
-        result: dict[str, Any] = {
-            "bundle": bundle.name,
-            "broken_links": [_link_dict(link) for link in graph.broken_links],
-            "problems": [_graph_problem_dict(problem) for problem in graph.problems],
-        }
-    elif concept_id is not None:
-        result = {
-            "bundle": bundle.name,
-            "concept_id": concept_id,
-            "outbound_links": [
-                _link_dict(link) for link in links_from(graph, concept_id)
-            ],
-            "backlinks": [_link_dict(link) for link in backlinks_to(graph, concept_id)],
-            "neighborhood": list(neighborhood(graph, concept_id, depth)),
-            "broken_links": [
-                _link_dict(link)
-                for link in graph.broken_links
-                if link.source_concept_id == concept_id
-            ],
-            "problems": [_graph_problem_dict(problem) for problem in graph.problems],
-        }
-    else:
-        result = {
-            "bundle": bundle.name,
-            "concepts": [concept.concept_id for concept in graph.concepts],
-            "links": [_link_dict(link) for link in graph.links],
-            "broken_links": [_link_dict(link) for link in graph.broken_links],
-            "problems": [_graph_problem_dict(problem) for problem in graph.problems],
-        }
-
     if not quiet:
+        if broken_only:
+            result: dict[str, Any] = {
+                "bundle": bundle.name,
+                "broken_links": [_link_dict(link) for link in graph.broken_links],
+                "problems": [
+                    _graph_problem_dict(problem) for problem in graph.problems
+                ],
+            }
+        elif concept_id is not None:
+            result = {
+                "bundle": bundle.name,
+                "concept_id": concept_id,
+                "outbound_links": [
+                    _link_dict(link) for link in links_from(graph, concept_id)
+                ],
+                "backlinks": [
+                    _link_dict(link) for link in backlinks_to(graph, concept_id)
+                ],
+                "neighborhood": list(neighborhood(graph, concept_id, depth)),
+                "broken_links": [
+                    _link_dict(link)
+                    for link in graph.broken_links
+                    if link.source_concept_id == concept_id
+                ],
+                "problems": [
+                    _graph_problem_dict(problem) for problem in graph.problems
+                ],
+            }
+        else:
+            result = {
+                "bundle": bundle.name,
+                "concepts": [concept.concept_id for concept in graph.concepts],
+                "links": [_link_dict(link) for link in graph.links],
+                "broken_links": [_link_dict(link) for link in graph.broken_links],
+                "problems": [
+                    _graph_problem_dict(problem) for problem in graph.problems
+                ],
+            }
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(
             f"Built graph for bundle {bundle.name!r}: {len(graph.concepts)} concepts, "
@@ -536,20 +547,22 @@ def list_bundles_cmd(config_path: str | None, quiet: bool) -> None:
         click.echo(f"Configuration error: {exc}", err=True)
         sys.exit(2)
 
-    bundles = [
-        {
-            "name": bundle.name,
-            "bundle_root": str(bundle.bundle_root),
-            "profile": bundle.profile,
-            "okf_version": bundle.okf_version,
-        }
-        for bundle in sorted(cfg.bundles.values(), key=lambda b: b.name)
-    ]
-    result: dict[str, Any] = {
-        "config_path": str(cfg.config_path) if cfg.config_path is not None else None,
-        "bundles": bundles,
-    }
     if not quiet:
+        bundles = [
+            {
+                "name": bundle.name,
+                "bundle_root": str(bundle.bundle_root),
+                "profile": bundle.profile,
+                "okf_version": bundle.okf_version,
+            }
+            for bundle in sorted(cfg.bundles.values(), key=lambda b: b.name)
+        ]
+        result: dict[str, Any] = {
+            "config_path": (
+                str(cfg.config_path) if cfg.config_path is not None else None
+            ),
+            "bundles": bundles,
+        }
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(f"Found {len(bundles)} bundle(s)", err=True)
 
@@ -616,13 +629,15 @@ def index_cmd(
     write_safety_problem = check_bundle_write_safety(bundle)
     if write_safety_problem is not None:
         index_path = target_dir / "index.md"
-        result = {
-            "path": str(index_path),
-            "entries": 0,
-            "problems": [{"concept_id": "", "message": write_safety_problem.message}],
-            "scan_problems": [],
-        }
         if not quiet:
+            result = {
+                "path": str(index_path),
+                "entries": 0,
+                "problems": [
+                    {"concept_id": "", "message": write_safety_problem.message}
+                ],
+                "scan_problems": [],
+            }
             click.echo(json.dumps(result, cls=_Encoder, indent=2))
             click.echo(write_safety_problem.message, err=True)
         sys.exit(1)
@@ -673,19 +688,19 @@ def index_cmd(
     index_path.parent.mkdir(parents=True, exist_ok=True)
     index_path.write_text(body, encoding="utf-8")
 
-    result = {
-        "path": str(index_path),
-        "entries": entries_written,
-        "problems": [
-            {"concept_id": p.concept_id, "message": p.message}
-            for p in generated.problems
-        ],
-        "scan_problems": [
-            {"path": str(p.path), "kind": p.kind, "message": p.message}
-            for p in scan_problems_in_dir
-        ],
-    }
     if not quiet:
+        result = {
+            "path": str(index_path),
+            "entries": entries_written,
+            "problems": [
+                {"concept_id": p.concept_id, "message": p.message}
+                for p in generated.problems
+            ],
+            "scan_problems": [
+                {"path": str(p.path), "kind": p.kind, "message": p.message}
+                for p in scan_problems_in_dir
+            ],
+        }
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(
             f"Wrote index.md for bundle {bundle.name!r}: "
