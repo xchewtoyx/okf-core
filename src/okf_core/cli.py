@@ -203,18 +203,11 @@ def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     is_flag=True,
     help="Include raw Markdown body of valid concepts (with YAML frontmatter stripped).",
 )
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Suppress output and rely on exit code.",
-)
 def list_concepts_cmd(
     config_path: str | None,
     bundle_name: str,
     with_graph_counts: bool,
     with_content: bool,
-    quiet: bool,
 ) -> None:
     """List addressable concepts for seed discovery."""
     _, bundle = _load(config_path, bundle_name)
@@ -224,24 +217,17 @@ def list_concepts_cmd(
         bundle, manifest=manifest, graph=graph, with_content=with_content
     )
 
-    if not quiet:
-        result = {
-            "bundle": listing.bundle_name,
-            "concepts": [
-                _concept_listing_dict(concept) for concept in listing.concepts
-            ],
-            "problems": [
-                _listing_problem_dict(problem) for problem in listing.problems
-            ],
-        }
-        click.echo(json.dumps(result, cls=_Encoder, indent=2))
-        click.echo(
-            f"Listed bundle {bundle.name!r}: {len(listing.concepts)} concepts, "
-            f"{len(listing.problems)} problems",
-            err=True,
-        )
-    if quiet and listing.problems:
-        sys.exit(1)
+    result = {
+        "bundle": listing.bundle_name,
+        "concepts": [_concept_listing_dict(concept) for concept in listing.concepts],
+        "problems": [_listing_problem_dict(problem) for problem in listing.problems],
+    }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(
+        f"Listed bundle {bundle.name!r}: {len(listing.concepts)} concepts, "
+        f"{len(listing.problems)} problems",
+        err=True,
+    )
 
 
 @cli.command("search")
@@ -274,19 +260,12 @@ def list_concepts_cmd(
     is_flag=True,
     help="Search the current FTS index without scanning and refreshing first.",
 )
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Suppress output and rely on exit code.",
-)
 def search_cmd(
     query: str,
     config_path: str | None,
     bundle_name: str,
     limit: int,
     no_refresh: bool,
-    quiet: bool,
 ) -> None:
     """Search indexed bundle concepts with SQLite FTS5."""
     _, bundle = _load(config_path, bundle_name)
@@ -301,26 +280,23 @@ def search_cmd(
         click.echo(f"Search configuration error: {exc}", err=True)
         sys.exit(2)
 
-    if not quiet:
-        result = {
-            "bundle": search_results.bundle_name,
-            "query": search_results.query,
-            "results": [
-                _search_result_dict(search_result)
-                for search_result in search_results.results
-            ],
-            "problems": [
-                _listing_problem_dict(problem) for problem in search_results.problems
-            ],
-        }
-        click.echo(json.dumps(result, cls=_Encoder, indent=2))
-        click.echo(
-            f"Searched bundle {bundle.name!r}: {len(search_results.results)} results, "
-            f"{len(search_results.problems)} problems",
-            err=True,
-        )
-    if quiet and search_results.problems:
-        sys.exit(1)
+    result = {
+        "bundle": search_results.bundle_name,
+        "query": search_results.query,
+        "results": [
+            _search_result_dict(search_result)
+            for search_result in search_results.results
+        ],
+        "problems": [
+            _listing_problem_dict(problem) for problem in search_results.problems
+        ],
+    }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(
+        f"Searched bundle {bundle.name!r}: {len(search_results.results)} results, "
+        f"{len(search_results.problems)} problems",
+        err=True,
+    )
 
 
 @cli.command("context")
@@ -369,12 +345,6 @@ def search_cmd(
     metavar="N",
     help="Approximate character budget for included content.",
 )
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Suppress output and rely on exit code.",
-)
 def context_cmd(
     config_path: str | None,
     bundle_name: str,
@@ -382,7 +352,6 @@ def context_cmd(
     depth: int,
     direction: str,
     budget_chars: int | None,
-    quiet: bool,
 ) -> None:
     """Build a deterministic context pack from seed concept IDs."""
     _, bundle = _load(config_path, bundle_name)
@@ -394,21 +363,20 @@ def context_cmd(
         budget_chars=budget_chars,
     )
 
-    if not quiet:
-        result = {
-            "bundle": pack.bundle_name,
-            "seeds": list(pack.seeds),
-            "entries": [_context_entry_dict(entry) for entry in pack.entries],
-            "omitted_concept_ids": list(pack.omitted_concept_ids),
-            "problems": [_context_problem_dict(problem) for problem in pack.problems],
-        }
-        click.echo(json.dumps(result, cls=_Encoder, indent=2))
-        click.echo(
-            f"Built context pack for bundle {bundle.name!r}: "
-            f"{len(pack.entries)} entries, {len(pack.omitted_concept_ids)} omitted, "
-            f"{len(pack.problems)} problems",
-            err=True,
-        )
+    result = {
+        "bundle": pack.bundle_name,
+        "seeds": list(pack.seeds),
+        "entries": [_context_entry_dict(entry) for entry in pack.entries],
+        "omitted_concept_ids": list(pack.omitted_concept_ids),
+        "problems": [_context_problem_dict(problem) for problem in pack.problems],
+    }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(
+        f"Built context pack for bundle {bundle.name!r}: "
+        f"{len(pack.entries)} entries, {len(pack.omitted_concept_ids)} omitted, "
+        f"{len(pack.problems)} problems",
+        err=True,
+    )
     if pack.problems:
         sys.exit(1)
 
@@ -533,13 +501,7 @@ def graph_cmd(
     metavar="PATH",
     help="Path to okf-core.toml (default: search upward from cwd).",
 )
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Suppress output.",
-)
-def list_bundles_cmd(config_path: str | None, quiet: bool) -> None:
+def list_bundles_cmd(config_path: str | None) -> None:
     """List all configured bundles."""
     try:
         cfg = load_config(config_path=config_path)
@@ -547,24 +509,21 @@ def list_bundles_cmd(config_path: str | None, quiet: bool) -> None:
         click.echo(f"Configuration error: {exc}", err=True)
         sys.exit(2)
 
-    if not quiet:
-        bundles = [
-            {
-                "name": bundle.name,
-                "bundle_root": str(bundle.bundle_root),
-                "profile": bundle.profile,
-                "okf_version": bundle.okf_version,
-            }
-            for bundle in sorted(cfg.bundles.values(), key=lambda b: b.name)
-        ]
-        result: dict[str, Any] = {
-            "config_path": (
-                str(cfg.config_path) if cfg.config_path is not None else None
-            ),
-            "bundles": bundles,
+    bundles = [
+        {
+            "name": bundle.name,
+            "bundle_root": str(bundle.bundle_root),
+            "profile": bundle.profile,
+            "okf_version": bundle.okf_version,
         }
-        click.echo(json.dumps(result, cls=_Encoder, indent=2))
-        click.echo(f"Found {len(bundles)} bundle(s)", err=True)
+        for bundle in sorted(cfg.bundles.values(), key=lambda b: b.name)
+    ]
+    result: dict[str, Any] = {
+        "config_path": (str(cfg.config_path) if cfg.config_path is not None else None),
+        "bundles": bundles,
+    }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(f"Found {len(bundles)} bundle(s)", err=True)
 
 
 @cli.command("index")

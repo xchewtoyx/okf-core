@@ -1499,86 +1499,6 @@ def test_scan_quiet(tmp_path: Path) -> None:
     assert result.stderr == ""
 
 
-def test_list_concepts_quiet(tmp_path: Path) -> None:
-    config_path = tmp_path / "okf-core.toml"
-    config_path.write_text(
-        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8", newline="\n"
-    )
-    _write_concept(tmp_path / "a.md", title="Alpha")
-
-    # Success case
-    result = _runner().invoke(
-        cli, ["list-concepts", "--config", str(config_path), "-q"]
-    )
-    assert result.exit_code == 0
-    assert result.stdout == ""
-    assert result.stderr == ""
-
-    # Failure case: missing required 'type' field in frontmatter
-    (tmp_path / "b.md").write_text(
-        "---\ntitle: Beta\n---\nBody\n", encoding="utf-8", newline="\n"
-    )
-    result = _runner().invoke(
-        cli, ["list-concepts", "--config", str(config_path), "-q"]
-    )
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert result.stderr == ""
-
-
-def test_search_quiet(tmp_path: Path) -> None:
-    config_path = tmp_path / "okf-core.toml"
-    config_path.write_text(
-        f'[bundles.default]\nbundle_root = "{tmp_path}"\nokf_cache_dir = ".okf-cache"\n',
-        encoding="utf-8",
-        newline="\n",
-    )
-    _write_concept(tmp_path / "a.md", title="Alpha")
-
-    # Success case (even with 0 matches)
-    result = _runner().invoke(
-        cli, ["search", "--config", str(config_path), "Beta", "-q"]
-    )
-    assert result.exit_code == 0
-    assert result.stdout == ""
-    assert result.stderr == ""
-
-    # Failure case: missing required 'type' field in frontmatter during search refresh
-    (tmp_path / "b.md").write_text(
-        "---\ntitle: Beta\n---\nBody\n", encoding="utf-8", newline="\n"
-    )
-    result = _runner().invoke(
-        cli, ["search", "--config", str(config_path), "Alpha", "-q"]
-    )
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert result.stderr == ""
-
-
-def test_context_quiet(tmp_path: Path) -> None:
-    config_path = tmp_path / "okf-core.toml"
-    config_path.write_text(
-        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8", newline="\n"
-    )
-    _write_concept(tmp_path / "a.md", title="Alpha")
-
-    # Success case
-    result = _runner().invoke(
-        cli, ["context", "--config", str(config_path), "--seed", "a", "-q"]
-    )
-    assert result.exit_code == 0
-    assert result.stdout == ""
-    assert result.stderr == ""
-
-    # Failure case: unknown seed
-    result = _runner().invoke(
-        cli, ["context", "--config", str(config_path), "--seed", "missing", "-q"]
-    )
-    assert result.exit_code == 1
-    assert result.stdout == ""
-    assert result.stderr == ""
-
-
 def test_graph_quiet(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
@@ -1600,19 +1520,6 @@ def test_graph_quiet(tmp_path: Path) -> None:
     )
     result = _runner().invoke(cli, ["graph", "--config", str(config_path), "-q"])
     assert result.exit_code == 1
-    assert result.stdout == ""
-    assert result.stderr == ""
-
-
-def test_list_bundles_quiet(tmp_path: Path) -> None:
-    config_path = tmp_path / "okf-core.toml"
-    config_path.write_text(
-        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8", newline="\n"
-    )
-
-    # Success case
-    result = _runner().invoke(cli, ["list-bundles", "--config", str(config_path), "-q"])
-    assert result.exit_code == 0
     assert result.stdout == ""
     assert result.stderr == ""
 
