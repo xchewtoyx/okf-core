@@ -58,7 +58,7 @@ lint: _require-venv
     {{python}} -m mypy src tests .github/scripts/ scripts/ --ignore-missing-imports
     {{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml
 
-# Run check + lint + test (mirrors CI)
+# Run check + lint + test (local superset of CI; also lints scripts/)
 ci: check lint test
 
 # Run search benchmarks
