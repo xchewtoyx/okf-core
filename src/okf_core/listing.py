@@ -143,7 +143,11 @@ def list_concepts(
 
     problems.extend(_graph_listing_problems(graph, problems))
 
-    orphans = _orphan_concept_ids(outbound_counts, inbound_counts) if graph is not None else ()
+    orphans = (
+        _orphan_concept_ids(outbound_counts, inbound_counts)
+        if graph is not None
+        else ()
+    )
 
     return BundleListing(
         bundle_name=resolved_manifest.bundle_name,
@@ -202,7 +206,9 @@ def _orphan_concept_ids(
     inbound: dict[str, int],
 ) -> tuple[str, ...]:
     return tuple(
-        sorted(cid for cid in outbound if outbound[cid] == 0 and inbound.get(cid, 0) == 0)
+        sorted(
+            cid for cid in outbound if outbound[cid] == 0 and inbound.get(cid, 0) == 0
+        )
     )
 
 
