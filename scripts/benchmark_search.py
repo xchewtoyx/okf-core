@@ -129,8 +129,9 @@ def write_mock_concept(
     """Write a mock concept document with a specified title and body length."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
-    # Generate ~500 words of body text
-    words = [random.choice(body_words) for _ in range(480)]
+    # Generate exactly 500 words total (random body + controlled keywords)
+    word_count = max(0, 500 - len(extra_keywords))
+    words = [random.choice(body_words) for _ in range(word_count)]
     # Mix in the specific query keywords
     words.extend(extra_keywords)
     random.shuffle(words)
@@ -161,8 +162,8 @@ def run_query_benchmark(
         raise ValueError("iterations must be >= 1")
     latencies = []
 
-    # Warm up FTS5 query execution
-    search_concepts(bundle, query, refresh=False, limit=10)
+    # Warm up FTS5 query execution; also initialises results before the loop
+    results = search_concepts(bundle, query, refresh=False, limit=10)
 
     for _ in range(iterations):
         start = time.perf_counter()
@@ -293,7 +294,7 @@ def main() -> None:
 
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
-        print("Cleaned up benchmark files.")
+        print("Benchmark complete (temp files removed best-effort).")
         print("=" * 60)
 
 
