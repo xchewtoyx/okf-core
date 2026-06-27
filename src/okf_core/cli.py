@@ -524,7 +524,7 @@ def stable_id_cmd(
         click.echo(str(uuid.uuid4()))
         return
 
-    cfg, bundle = _load(config_path, bundle_name)
+    _, bundle = _load(config_path, bundle_name)
 
     if bundle.stable_id_field is None:
         click.echo(
@@ -560,7 +560,6 @@ def stable_id_cmd(
         return
 
     new_id = str(uuid.uuid4())
-    click.echo(new_id)
 
     if write:
         write_safety_problem = check_bundle_write_safety(bundle)
@@ -572,10 +571,13 @@ def stable_id_cmd(
         try:
             serialized = serialize_concept_document(document)
             path.write_text(serialized, encoding="utf-8", newline="\n")
-            click.echo(f"Wrote stable ID {new_id} to {path}", err=True)
         except Exception as exc:
             click.echo(f"Error writing concept document: {exc}", err=True)
             sys.exit(1)
+        click.echo(new_id)
+        click.echo(f"Wrote stable ID {new_id} to {path}", err=True)
+    else:
+        click.echo(new_id)
 
 
 @cli.command("list-bundles")

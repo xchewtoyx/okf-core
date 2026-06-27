@@ -227,7 +227,7 @@ def _scan_concept_path(
                 message=f"Missing required stable ID field '{bundle.stable_id_field}'",
             )
         else:
-            stable_id = str(val)
+            stable_id = str(val).strip()
 
     entry = ConceptManifestEntry(
         concept_id=concept_id,
