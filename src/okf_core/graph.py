@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections import deque
 from collections.abc import Sequence
 import dataclasses
@@ -102,6 +103,17 @@ class GraphProblem:
     path: Path
     kind: str
     message: str
+
+
+@dataclass(frozen=True)
+class LinkSuggestion:
+    """A candidate link: concept title mentioned in body without a Markdown link."""
+
+    source_concept_id: str
+    source_path: Path
+    target_concept_id: str
+    target_path: Path
+    matched_text: str
 
 
 @dataclass(frozen=True)
@@ -275,6 +287,117 @@ def neighborhood(
             queue.append((next_id, current_depth + 1))
 
     return tuple(sorted(seen))
+
+
+def find_unlinked_mentions(
+    bundle: BundleConfig,
+    *,
+    refresh: bool = True,
+) -> tuple[LinkSuggestion, ...]:
+    """Return concept titles mentioned in other concepts' bodies without a Markdown link.
+
+    Requires ``bundle.okf_cache_dir`` to be configured; raises
+    ``SearchConfigError`` otherwise.  Pass ``refresh=False`` to skip FTS index
+    refresh and query the existing cache directly.
+    """
+    from okf_core.listing import list_concepts
+    from okf_core.search import (
+        SearchConfigError,
+        _build_fts_query,
+        _ensure_search_schema,
+        _refresh_search_index,
+    )
+
+    if bundle.okf_cache_dir is None:
+        raise SearchConfigError(
+            "okf_cache_dir is not configured; enable bundle-level caching to use find_unlinked_mentions"
+        )
+
+    bundle.okf_cache_dir.mkdir(parents=True, exist_ok=True)
+    db_path = bundle.okf_cache_dir / "okf-cache.db"
+
+    with sqlite3.connect(db_path) as conn:
+        _ensure_search_schema(conn)
+
+        if refresh:
+            resolved_manifest = scan_bundle(bundle)
+            listing = list_concepts(bundle, manifest=resolved_manifest, with_content=True)
+            _refresh_search_index(conn, bundle, listing)
+
+        rows = conn.execute(
+            "SELECT concept_id, path, title FROM concept_fts"
+        ).fetchall()
+
+    all_concepts = {
+        concept_id: (bundle.bundle_root / rel_path, title or "")
+        for concept_id, rel_path, title in rows
+    }
+
+    # Build set of already-linked (source, target) pairs
+    linked_pairs: set[tuple[str, str]] = set()
+    for source_id, (source_path, _) in all_concepts.items():
+        try:
+            content = source_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for md_link in extract_markdown_links(content):
+            link = _resolve_concept_link(
+                bundle,
+                _MinimalEntry(source_id, source_path),
+                md_link,
+            )
+            if link is not None and link.target_concept_id is not None:
+                linked_pairs.add((source_id, link.target_concept_id))
+
+    # For each target concept, query FTS for its title in other concepts' bodies
+    seen_pairs: set[tuple[str, str]] = set()
+    suggestions: list[LinkSuggestion] = []
+
+    with sqlite3.connect(db_path) as conn:
+        for target_id, (target_path, title) in sorted(all_concepts.items()):
+            if not title:
+                continue
+            fts_query = _build_fts_query(title)
+            if fts_query is None:
+                continue
+
+            hits = conn.execute(
+                """
+                SELECT
+                    concept_id,
+                    path,
+                    snippet(concept_fts, -1, '[', ']', '...', 16) AS snippet
+                FROM concept_fts
+                WHERE concept_fts MATCH ? AND concept_id != ?
+                ORDER BY concept_id
+                """,
+                (fts_query, target_id),
+            ).fetchall()
+
+            for source_id, rel_path, snippet in hits:
+                pair = (source_id, target_id)
+                if pair in seen_pairs or pair in linked_pairs:
+                    continue
+                seen_pairs.add(pair)
+                suggestions.append(
+                    LinkSuggestion(
+                        source_concept_id=source_id,
+                        source_path=bundle.bundle_root / rel_path,
+                        target_concept_id=target_id,
+                        target_path=target_path,
+                        matched_text=snippet or title,
+                    )
+                )
+
+    return tuple(sorted(suggestions, key=lambda s: (s.source_concept_id, s.target_concept_id)))
+
+
+@dataclass
+class _MinimalEntry:
+    """Minimal duck-typed stand-in for ConceptManifestEntry used in link resolution."""
+
+    concept_id: str
+    path: Path
 
 
 def _collect_link_text(children: Sequence[Any]) -> str:
