@@ -294,4 +294,4 @@ def _bundle(root: Path, *, listing_fields: tuple[str, ...] = ()) -> BundleConfig
 
 def _write_concept(path: Path, frontmatter: str, *, body: str = "Body\n") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"---\n{frontmatter}---\n{body}", encoding="utf-8")
+    path.write_text(f"---\n{frontmatter}---\n{body}", encoding="utf-8", newline="\n")

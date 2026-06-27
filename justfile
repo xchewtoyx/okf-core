@@ -1,25 +1,19 @@
-python := ".venv/bin/python"
+system-python := if os() == "windows" { "python" } else { "python3" }
+python := if os() == "windows" { ".venv\\Scripts\\python.exe" } else { ".venv/bin/python" }
+venv-bin := if os() == "windows" { ".venv\\Scripts" } else { ".venv/bin" }
+sep := if os() == "windows" { "\\" } else { "/" }
+
+set windows-shell := ["cmd.exe", "/c"]
 
 # Create venv and install package with test deps
 install:
-    #!/usr/bin/env bash
-    set -euo pipefail
-    # Developer setup requires Python 3.11+ to use the standard library's tomllib.
-    # The package runtime compatibility still supports Python 3.10+ (via tomli fallback).
-    if ! python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)"; then
-        echo "error: Python 3.11+ required, got $(python3 --version)" >&2
-        exit 1
-    fi
-    python3 -m venv .venv
+    {{ if os() == "windows" { "@python -c \"import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)\" || (echo error: Python 3.11+ required && exit 1)" } else { "@python3 -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)' || (echo \"error: Python 3.11+ required\" && exit 1)" } }}
+    {{system-python}} -m venv .venv
     {{python}} -m pip install -e ".[test,dev]"
 
 [private]
 _require-venv:
-    #!/usr/bin/env bash
-    if [ ! -x "{{python}}" ]; then
-        echo "error: venv not found — run 'just install' first" >&2
-        exit 1
-    fi
+    {{ if os() == "windows" { "@if not exist " + python + " (echo error: venv not found — run 'just install' first && exit 1)" } else { "@[ -f " + python + " ] || (echo \"error: venv not found — run 'just install' first\" && exit 1)" } }}
 
 # Format code with black
 fmt: _require-venv
@@ -42,7 +36,7 @@ test-matrix: _require-venv
 lint: _require-venv
     {{python}} -m ruff check src tests .github/scripts/
     {{python}} -m mypy src tests .github/scripts/ --ignore-missing-imports
-    .venv/bin/actionlint .github/workflows/*.yml
+    {{venv-bin}}{{sep}}actionlint .github/workflows/publish.yml .github/workflows/test.yml
 
 # Run check + lint + test (mirrors CI)
 ci: check lint test
