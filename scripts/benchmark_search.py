@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import math
 import random
 import shutil
 import statistics
@@ -156,6 +157,8 @@ def run_query_benchmark(
     iterations: int = 100,
 ) -> dict[str, Any]:
     """Execute a query repeatedly and return latency statistics in milliseconds."""
+    if iterations < 1:
+        raise ValueError("iterations must be >= 1")
     latencies = []
 
     # Warm up FTS5 query execution
@@ -175,7 +178,7 @@ def run_query_benchmark(
         "max": max(latencies),
         "mean": statistics.mean(latencies),
         "median": statistics.median(latencies),
-        "p95": sorted(latencies)[int(iterations * 0.95)],
+        "p95": sorted(latencies)[math.ceil(iterations * 0.95) - 1],
     }
 
 
@@ -193,6 +196,7 @@ def main() -> None:
         cache_dir.mkdir(parents=True, exist_ok=True)
 
         words = generate_word_list()
+        random.seed(42)
 
         print("Generating 1,000 mock concepts (~500 words each)...")
         start_gen = time.perf_counter()
@@ -266,11 +270,15 @@ def main() -> None:
             run_query_benchmark(bundle, "nonexistentword", "Zero Matches (0 matches)"),
         ]
 
-        print("\n" + "-" * 88)
-        print(
-            f"{'Query Type':<30} | {'Query':<15} | {'Results':<7} | {'Min (ms)':<8} | {'Mean (ms)':<9} | {'Median (ms)':<11} | {'p95 (ms)':<8}"
+        separator = "-" * 88
+        header = (
+            f"{'Query Type':<30} | {'Query':<15} | {'Results':<7}"
+            f" | {'Min (ms)':<8} | {'Mean (ms)':<9}"
+            f" | {'Median (ms)':<11} | {'p95 (ms)':<8}"
         )
-        print("-" * 88)
+        print("\n" + separator)
+        print(header)
+        print(separator)
         for b in benchmarks:
             print(
                 f"{b['type']:<30} | "
