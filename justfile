@@ -23,7 +23,7 @@ _install-macos: _install-posix
 _install-posix:
     @python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || (echo "error: Python 3.11+ required" >&2 && exit 1)
     python3 -m venv .venv
-    @if command -v actionlint > /dev/null 2>&1; then \
+    @if command -v actionlint > /dev/null 2>&1 || [ "${CLAUDE_CODE_REMOTE:-}" = "true" ]; then \
         {{python}} -m pip install -e ".[test,dev]"; \
     else \
         {{python}} -m pip install -e ".[test,dev,actionlint]"; \
