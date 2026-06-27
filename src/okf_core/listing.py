@@ -11,13 +11,18 @@ from typing import Any
 
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError
-from okf_core.graph import BundleGraph
+from okf_core.graph import BundleGraph, compute_pagerank
 from okf_core.manifest import BundleManifest, ConceptManifestEntry, scan_bundle
 
 
 @dataclass(frozen=True)
 class ConceptListing:
-    """A concept candidate for task-specific seed selection."""
+    """A concept candidate for task-specific seed selection.
+
+    Graph-derived fields (``outbound_link_count``, ``inbound_link_count``,
+    ``pagerank``) are ``None`` unless a ``BundleGraph`` is supplied to
+    ``list_concepts()``.
+    """
 
     concept_id: str
     path: Path
@@ -29,6 +34,7 @@ class ConceptListing:
     outbound_link_count: int | None = None
     inbound_link_count: int | None = None
     content: str | None = None
+    pagerank: float | None = None
 
 
 @dataclass(frozen=True)
@@ -43,11 +49,17 @@ class ListingProblem:
 
 @dataclass(frozen=True)
 class BundleListing:
-    """A deterministic listing of concept candidates for one configured bundle."""
+    """A deterministic listing of concept candidates for one configured bundle.
+
+    ``orphans`` is empty unless a ``BundleGraph`` is supplied to
+    ``list_concepts()``, in which case it contains the concept IDs of valid
+    listed concepts with no inbound or outbound links.
+    """
 
     bundle_name: str
     concepts: tuple[ConceptListing, ...] = ()
     problems: tuple[ListingProblem, ...] = ()
+    orphans: tuple[str, ...] = ()
 
 
 def list_concepts(
@@ -66,10 +78,16 @@ def list_concepts(
 
     If ``with_content`` is True, the raw Markdown body of each valid concept
     is populated in the ``content`` field of the listing entries.
+
+    If ``graph`` is supplied, each entry's ``pagerank`` score is populated and
+    ``BundleListing.orphans`` lists the concept IDs of valid listed concepts
+    with no inbound or outbound links.  Both default to ``None``/empty when
+    ``graph`` is ``None``.
     """
 
     resolved_manifest = _resolve_manifest(bundle, manifest, graph)
     outbound_counts, inbound_counts = _graph_counts(graph)
+    pageranks = _graph_pageranks(graph)
     concepts: list[ConceptListing] = []
     problems: list[ListingProblem] = [
         ListingProblem(path=p.path, kind=p.kind, message=p.message)
@@ -130,11 +148,20 @@ def list_concepts(
                 inbound_link_count=(
                     inbound_counts.get(entry.concept_id) if graph is not None else None
                 ),
+                pagerank=(
+                    pageranks.get(entry.concept_id) if graph is not None else None
+                ),
                 content=content_val,
             )
         )
 
     problems.extend(_graph_listing_problems(graph, problems))
+
+    orphans = (
+        _orphan_concept_ids(concepts, outbound_counts, inbound_counts)
+        if graph is not None
+        else ()
+    )
 
     return BundleListing(
         bundle_name=resolved_manifest.bundle_name,
@@ -142,6 +169,7 @@ def list_concepts(
         problems=tuple(
             sorted(problems, key=lambda p: (str(p.path), p.kind, p.concept_id))
         ),
+        orphans=orphans,
     )
 
 
@@ -173,6 +201,32 @@ def _graph_counts(
         if link.target_concept_id is not None:
             inbound[link.target_concept_id] = inbound.get(link.target_concept_id, 0) + 1
     return outbound, inbound
+
+
+def _graph_pageranks(graph: BundleGraph | None) -> dict[str, float]:
+    if graph is None:
+        return {}
+    nodes = {c.concept_id for c in graph.concepts}
+    edges = [
+        (lnk.source_concept_id, lnk.target_concept_id)
+        for lnk in graph.links
+        if lnk.target_concept_id is not None
+    ]
+    return compute_pagerank(nodes, edges)
+
+
+def _orphan_concept_ids(
+    concepts: list[ConceptListing],
+    outbound: dict[str, int],
+    inbound: dict[str, int],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            c.concept_id
+            for c in concepts
+            if outbound.get(c.concept_id, 0) == 0 and inbound.get(c.concept_id, 0) == 0
+        )
+    )
 
 
 def _graph_listing_problems(

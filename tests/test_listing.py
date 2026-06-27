@@ -179,6 +179,54 @@ def test_list_concepts_omits_graph_counts_by_default(tmp_path: Path) -> None:
 
     assert listing.concepts[0].outbound_link_count is None
     assert listing.concepts[0].inbound_link_count is None
+    assert listing.concepts[0].pagerank is None
+
+
+def test_list_concepts_populates_pagerank_when_graph_is_supplied(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n", body="See [B](b.md).\n")
+    _write_concept(root / "b.md", "type: concept\n", body="See [A](a.md).\n")
+    bundle = _bundle(root)
+    manifest = scan_bundle(bundle)
+    graph = build_bundle_graph(bundle, manifest=manifest)
+
+    listing = list_concepts(bundle, manifest=manifest, graph=graph)
+
+    by_id = {c.concept_id: c for c in listing.concepts}
+    assert isinstance(by_id["a"].pagerank, float)
+    assert isinstance(by_id["b"].pagerank, float)
+    # 2-node cycle: scores should be normalised (sum ≈ 1) and symmetric (a ≈ b)
+    total = by_id["a"].pagerank + by_id["b"].pagerank  # type: ignore[operator]
+    assert abs(total - 1.0) < 1e-4
+    assert abs(by_id["a"].pagerank - by_id["b"].pagerank) < 1e-4  # type: ignore[operator]
+
+
+def test_list_concepts_identifies_orphan_concepts(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n", body="See [B](b.md).\n")
+    _write_concept(root / "b.md", "type: concept\n")
+    _write_concept(root / "c.md", "type: concept\n")
+    bundle = _bundle(root)
+    manifest = scan_bundle(bundle)
+    graph = build_bundle_graph(bundle, manifest=manifest)
+
+    listing = list_concepts(bundle, manifest=manifest, graph=graph)
+
+    # c has no inbound or outbound links; a has outbound, b has inbound
+    assert "c" in listing.orphans
+    assert "a" not in listing.orphans
+    assert "b" not in listing.orphans
+
+
+def test_list_concepts_orphans_empty_without_graph(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n")
+
+    listing = list_concepts(_bundle(root))
+
+    assert listing.orphans == ()
 
 
 def test_list_concepts_populates_content_when_with_content_is_true(

@@ -200,7 +200,7 @@ def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
 @click.option(
     "--with-graph-counts",
     is_flag=True,
-    help="Include resolved inbound/outbound concept-link counts.",
+    help="Include graph metrics: inbound/outbound link counts, PageRank scores, and orphan summary.",
 )
 @click.option(
     "--with-content",
@@ -225,11 +225,13 @@ def list_concepts_cmd(
         "bundle": listing.bundle_name,
         "concepts": [_concept_listing_dict(concept) for concept in listing.concepts],
         "problems": [_listing_problem_dict(problem) for problem in listing.problems],
+        "orphans": list(listing.orphans),
     }
     click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    orphan_info = f", {len(listing.orphans)} orphans" if with_graph_counts else ""
     click.echo(
         f"Listed bundle {bundle.name!r}: {len(listing.concepts)} concepts, "
-        f"{len(listing.problems)} problems",
+        f"{len(listing.problems)} problems{orphan_info}",
         err=True,
     )
 
@@ -806,6 +808,7 @@ def _concept_listing_dict(concept: Any) -> dict[str, Any]:
         "frontmatter": concept.frontmatter,
         "outbound_link_count": concept.outbound_link_count,
         "inbound_link_count": concept.inbound_link_count,
+        "pagerank": concept.pagerank,
         "content": concept.content,
     }
 

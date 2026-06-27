@@ -31,3 +31,6 @@ ENV/
 # Tool/runtime caches
 .cache/
 .agent-cache/
+
+# Local agent guidance (not committed)
+CLAUDE.md
