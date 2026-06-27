@@ -641,3 +641,33 @@ def test_okf_cache_dir_configuration(tmp_path: Path) -> None:
         config_path=config_path, overrides={"okf_cache_dir": ".api-cache"}
     )
     assert config.bundles["b1"].okf_cache_dir == tmp_path / "b1" / ".api-cache"
+
+
+def test_stable_id_field_configuration(tmp_path: Path) -> None:
+    # 1. Verify default is None
+    config = load_config(project_root=tmp_path)
+    assert not hasattr(config.defaults, "stable_id_field")
+    assert config.bundles["default"].stable_id_field is None
+
+    # 2. Verify setting defaults.stable_id_field raises ConfigError (not supported)
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        "[defaults]\nstable_id_field = 'id'\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError):
+        load_config(config_path=config_path)
+
+    # 3. Verify bundle-level stable_id_field configuration
+    config_path.write_text(
+        "[bundles.b1]\nbundle_root = 'b1'\nstable_id_field = 'my-stable-id'\n",
+        encoding="utf-8",
+    )
+    config = load_config(config_path=config_path)
+    assert config.bundles["b1"].stable_id_field == "my-stable-id"
+
+    # 4. Verify overrides parameter
+    config = load_config(
+        config_path=config_path, overrides={"stable_id_field": "overridden-id"}
+    )
+    assert config.bundles["b1"].stable_id_field == "overridden-id"

@@ -659,3 +659,42 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
         _graph3 = build_bundle_graph(bundle, manifest=manifest_no_cache)
         # We expect exit_resolve to be called for c with links=None, problem=True
         assert ("exit_resolve", "c", False, True) in calls
+
+
+def test_cache_stores_and_retrieves_stable_id(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\ntitle: Alpha\nid: uuid-123\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=cache_dir,
+        stable_id_field="id",
+    )
+
+    # First scan: database is created, parsed and stable_id is populated
+    manifest = scan_bundle(bundle)
+    assert len(manifest.concepts) == 1
+    assert manifest.concepts[0].stable_id == "uuid-123"
+
+    db_path = cache_dir / "okf-cache.db"
+    assert db_path.is_file()
+
+    # Query database directly to verify stable_id is in database
+    with sqlite3.connect(db_path) as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT concept_id, stable_id FROM concepts")
+        rows = cursor.fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == "a"
+        assert rows[0][1] == "uuid-123"
+
+    # Second scan: should fetch from cache and retain stable_id
+    manifest2 = scan_bundle(bundle)
+    assert len(manifest2.concepts) == 1
+    assert manifest2.concepts[0].stable_id == "uuid-123"

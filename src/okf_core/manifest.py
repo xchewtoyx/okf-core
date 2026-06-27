@@ -30,6 +30,7 @@ class ConceptManifestEntry:
     size: int
     sha256: str
     frontmatter: Mapping[str, Any] = field(default_factory=lambda: MappingProxyType({}))
+    stable_id: str | None = None
     _content_cache: str | None = field(
         default=None, init=False, repr=False, compare=False
     )
@@ -104,6 +105,15 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
                 entry, problem = _scan_concept_path(path, root, bundle)
                 if problem is not None:
                     problems.append(problem)
+            else:
+                if bundle.stable_id_field is not None:
+                    if entry.stable_id is None:
+                        problem = ManifestProblem(
+                            path=path,
+                            kind="stable-id-missing",
+                            message=f"Missing required stable ID field '{bundle.stable_id_field}'",
+                        )
+                        problems.append(problem)
 
             if entry is not None:
                 entries.append(entry)
@@ -115,6 +125,31 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
                 root=root,
                 bundle=bundle,
             )
+
+        # Check for duplicate stable IDs
+        if bundle.stable_id_field is not None:
+            stable_id_to_paths: dict[str, list[Path]] = {}
+            for entry in entries:
+                if entry.stable_id is not None:
+                    stable_id_to_paths.setdefault(entry.stable_id, []).append(
+                        entry.path
+                    )
+
+            for stable_id, paths in stable_id_to_paths.items():
+                if len(paths) > 1:
+                    for path in paths:
+                        others = [
+                            str(p.relative_to(root).as_posix())
+                            for p in paths
+                            if p != path
+                        ]
+                        problems.append(
+                            ManifestProblem(
+                                path=path,
+                                kind="stable-id-conflict",
+                                message=f"Duplicate stable ID '{stable_id}' shared with: {', '.join(others)}",
+                            )
+                        )
 
         manifest = BundleManifest(
             bundle_name=bundle.name,
@@ -181,6 +216,19 @@ def _scan_concept_path(
     except DocumentParseError as exc:
         return None, ManifestProblem(path=path, kind="parse-error", message=str(exc))
 
+    stable_id = None
+    problem = None
+    if bundle.stable_id_field is not None:
+        val = document.frontmatter.get(bundle.stable_id_field)
+        if val is None or (isinstance(val, str) and not val.strip()):
+            problem = ManifestProblem(
+                path=path,
+                kind="stable-id-missing",
+                message=f"Missing required stable ID field '{bundle.stable_id_field}'",
+            )
+        else:
+            stable_id = str(val).strip()
+
     entry = ConceptManifestEntry(
         concept_id=concept_id,
         path=path,
@@ -189,10 +237,11 @@ def _scan_concept_path(
         size=len(content),
         sha256=sha256(content).hexdigest(),
         frontmatter=_freeze_value(document.frontmatter),
+        stable_id=stable_id,
     )
     object.__setattr__(entry, "_content_cache", markdown)
     object.__setattr__(entry, "_body_cache", document.body)
-    return entry, None
+    return entry, problem
 
 
 def _freeze_value(value: Any) -> Any:

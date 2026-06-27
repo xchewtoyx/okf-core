@@ -28,6 +28,10 @@ from okf_core import (
     search_concepts,
     SearchConfigError,
     validate_bundle,
+    concept_id_to_path,
+    ConceptPathError,
+    parse_concept_document,
+    serialize_concept_document,
 )
 from okf_core.write_safety import check_bundle_write_safety
 
@@ -473,6 +477,107 @@ def graph_cmd(
         f"{len(graph.links)} links, {len(graph.broken_links)} broken",
         err=True,
     )
+
+
+@cli.command("stable-id")
+@click.argument("concept_id", required=False, default=None)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--force",
+    is_flag=True,
+    help="Generate a new stable ID even if one already exists.",
+)
+@click.option(
+    "--write",
+    is_flag=True,
+    help="Write the generated stable ID back to the document frontmatter.",
+)
+def stable_id_cmd(
+    concept_id: str | None,
+    config_path: str | None,
+    bundle_name: str,
+    force: bool,
+    write: bool,
+) -> None:
+    """Retrieve, generate, or write a stable ID for a concept."""
+    import uuid
+
+    if concept_id is None:
+        if write:
+            raise click.UsageError("Cannot specify --write without a CONCEPT_ID")
+        if force:
+            raise click.UsageError("Cannot specify --force without a CONCEPT_ID")
+        click.echo(str(uuid.uuid4()))
+        return
+
+    _, bundle = _load(config_path, bundle_name)
+
+    if bundle.stable_id_field is None:
+        click.echo(
+            f"stable_id_field is not configured for bundle {bundle.name!r}",
+            err=True,
+        )
+        sys.exit(2)
+
+    try:
+        path = concept_id_to_path(concept_id, bundle)
+    except ConceptPathError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(2)
+
+    if not path.is_file():
+        click.echo(f"Concept file not found: {path}", err=True)
+        sys.exit(1)
+
+    try:
+        content = path.read_bytes().decode("utf-8")
+        document = parse_concept_document(content)
+    except Exception as exc:
+        click.echo(f"Error reading/parsing concept document: {exc}", err=True)
+        sys.exit(1)
+
+    existing_id = document.frontmatter.get(bundle.stable_id_field)
+    has_valid_id = existing_id is not None and not (
+        isinstance(existing_id, str) and not existing_id.strip()
+    )
+
+    if has_valid_id and not force:
+        click.echo(str(existing_id).strip())
+        return
+
+    new_id = str(uuid.uuid4())
+
+    if write:
+        write_safety_problem = check_bundle_write_safety(bundle)
+        if write_safety_problem is not None:
+            click.echo(write_safety_problem.message, err=True)
+            sys.exit(1)
+
+        document.frontmatter[bundle.stable_id_field] = new_id
+        try:
+            serialized = serialize_concept_document(document)
+            path.write_text(serialized, encoding="utf-8", newline="\n")
+        except Exception as exc:
+            click.echo(f"Error writing concept document: {exc}", err=True)
+            sys.exit(1)
+        click.echo(new_id)
+        click.echo(f"Wrote stable ID {new_id} to {path}", err=True)
+    else:
+        click.echo(new_id)
 
 
 @cli.command("list-bundles")

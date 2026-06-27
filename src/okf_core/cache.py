@@ -288,11 +288,22 @@ class SqliteCachePlugin:
             )
             row = cursor.fetchone()
             if row is not None:
-                concept_id, _stable_id, sha256, fm_json = row
+                concept_id, _stored_stable_id, sha256, fm_json = row
                 try:
                     frontmatter = json.loads(fm_json)
                 except json.JSONDecodeError:
                     return None
+
+                # Re-derive stable_id from the cached frontmatter using the
+                # current bundle config so that changing stable_id_field takes
+                # effect without requiring a cache flush.
+                stable_id: str | None = None
+                if bundle.stable_id_field is not None:
+                    val = frontmatter.get(bundle.stable_id_field)
+                    if val is not None and not (
+                        isinstance(val, str) and not val.strip()
+                    ):
+                        stable_id = str(val).strip()
 
                 return ConceptManifestEntry(
                     concept_id=concept_id,
@@ -302,6 +313,7 @@ class SqliteCachePlugin:
                     size=size,
                     sha256=sha256,
                     frontmatter=_freeze_value(frontmatter),
+                    stable_id=stable_id,
                 )
         return None
 
@@ -319,8 +331,7 @@ class SqliteCachePlugin:
         rel_path = path.relative_to(root).as_posix()
         fm_json = json.dumps(_unfreeze_value(entry.frontmatter))
 
-        # TODO(https://github.com/xchewtoyx/okf-core/issues/60): Derive stable_id alias from frontmatter/config in a future ticket
-        stable_id = None
+        stable_id = entry.stable_id
 
         try:
             ctime_ns = path.stat().st_ctime_ns
@@ -330,11 +341,21 @@ class SqliteCachePlugin:
         with self._connection() as conn:
             cursor = conn.cursor()
             cursor.execute(
-                "SELECT 1 FROM concepts WHERE concept_id = ? AND mtime_ns = ? AND size = ? AND ctime_ns = ?",
+                "SELECT stable_id FROM concepts WHERE concept_id = ? AND mtime_ns = ? AND size = ? AND ctime_ns = ?",
                 (entry.concept_id, entry.mtime_ns, entry.size, ctime_ns),
             )
-            if cursor.fetchone() is not None:
+            row = cursor.fetchone()
+            if row is not None and row[0] == stable_id:
                 # Already cached and up to date; avoid redundant write (and resetting links_resolved to 0)
+                return
+
+            if row is not None:
+                # File is unchanged but stable_id drifted (e.g. config change); update only
+                # stable_id so links_resolved/pagerank are preserved.
+                conn.execute(
+                    "UPDATE concepts SET stable_id = ? WHERE concept_id = ? AND mtime_ns = ? AND size = ? AND ctime_ns = ?",
+                    (stable_id, entry.concept_id, entry.mtime_ns, entry.size, ctime_ns),
+                )
                 return
 
             conn.execute(

@@ -1534,3 +1534,142 @@ def test_quiet_option_config_error_does_not_suppress_stderr(tmp_path: Path) -> N
     assert result.exit_code == 2
     assert result.stdout == ""
     assert "Configuration error" in result.stderr
+
+
+def test_cli_stable_id_disconnected() -> None:
+    # 1. Pure generation
+    result = _runner().invoke(cli, ["stable-id"])
+    assert result.exit_code == 0
+    import uuid
+
+    # Verify stdout is a valid UUID
+    val = result.stdout.strip()
+    uuid.UUID(val)
+
+    # 2. Invalid options without CONCEPT_ID
+    result = _runner().invoke(cli, ["stable-id", "--write"])
+    assert result.exit_code == 2
+    assert "Cannot specify --write without a CONCEPT_ID" in result.stderr
+
+    result = _runner().invoke(cli, ["stable-id", "--force"])
+    assert result.exit_code == 2
+    assert "Cannot specify --force without a CONCEPT_ID" in result.stderr
+
+
+def test_cli_stable_id_with_concept(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[bundles.default]\nbundle_root = "{tmp_path}"\nstable_id_field = "id"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    # 1. No concept exists yet
+    result = _runner().invoke(cli, ["stable-id", "a", "--config", str(config_path)])
+    assert result.exit_code == 1
+    assert "Concept file not found" in result.stderr
+
+    # Concept ID escapes bundle root
+    result = _runner().invoke(
+        cli, ["stable-id", "../outside", "--config", str(config_path)]
+    )
+    assert result.exit_code == 2
+    assert (
+        "Concept ID escapes bundle root" in result.stderr
+        or "Concept path is outside" in result.stderr
+        or "Unsafe concept ID" in result.stderr
+    )
+
+    # Create the concept file
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    # 2. Get stable ID when missing in frontmatter (generates a new one in memory but doesn't write)
+    result = _runner().invoke(cli, ["stable-id", "a", "--config", str(config_path)])
+    assert result.exit_code == 0
+    val1 = result.stdout.strip()
+    import uuid
+
+    uuid.UUID(val1)
+
+    # Since it wasn't written, running it again generates a different one
+    result2 = _runner().invoke(cli, ["stable-id", "a", "--config", str(config_path)])
+    assert result2.exit_code == 0
+    val2 = result2.stdout.strip()
+    assert val1 != val2
+
+    # 3. Write option
+    result = _runner().invoke(
+        cli, ["stable-id", "a", "--config", str(config_path), "--write"]
+    )
+    assert result.exit_code == 0
+    written_id = result.stdout.strip()
+    uuid.UUID(written_id)
+    assert "Wrote stable ID" in result.stderr
+
+    # Read file to verify
+    from okf_core import parse_concept_document
+
+    doc = parse_concept_document((tmp_path / "a.md").read_text(encoding="utf-8"))
+    assert doc.frontmatter.get("id") == written_id
+
+    # 4. Running it again now returns the same ID since it was written
+    result = _runner().invoke(cli, ["stable-id", "a", "--config", str(config_path)])
+    assert result.exit_code == 0
+    assert result.stdout.strip() == written_id
+
+    # 5. Using --force generates a new one
+    result = _runner().invoke(
+        cli, ["stable-id", "a", "--config", str(config_path), "--force"]
+    )
+    assert result.exit_code == 0
+    forced_id = result.stdout.strip()
+    assert forced_id != written_id
+
+    # Since we didn't specify --write, the file still has written_id
+    doc = parse_concept_document((tmp_path / "a.md").read_text(encoding="utf-8"))
+    assert doc.frontmatter.get("id") == written_id
+
+    # 6. Force and write
+    result = _runner().invoke(
+        cli, ["stable-id", "a", "--config", str(config_path), "--force", "--write"]
+    )
+    assert result.exit_code == 0
+    forced_written_id = result.stdout.strip()
+    assert forced_written_id != written_id
+    assert "Wrote stable ID" in result.stderr
+
+    doc = parse_concept_document((tmp_path / "a.md").read_text(encoding="utf-8"))
+    assert doc.frontmatter.get("id") == forced_written_id
+
+
+def test_cli_stable_id_not_configured(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[bundles.default]\nbundle_root = "{tmp_path}"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    result = _runner().invoke(cli, ["stable-id", "a", "--config", str(config_path)])
+    assert result.exit_code == 2
+    assert "stable_id_field is not configured" in result.stderr
+
+
+def test_cli_stable_id_write_safety_refused(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[bundles.default]\nbundle_root = "{tmp_path}"\nstable_id_field = "id"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    _write_concept(tmp_path / "a.md", title="Alpha")
+    (tmp_path / "index.md").write_text(
+        "---\nokf_version: '0.2'\n---\n# Index\n", encoding="utf-8", newline="\n"
+    )
+
+    result = _runner().invoke(
+        cli, ["stable-id", "a", "--config", str(config_path), "--write"]
+    )
+    assert result.exit_code == 1
+    assert "Refusing to write" in result.stderr

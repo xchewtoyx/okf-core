@@ -307,3 +307,84 @@ def _write_concept(path: Path, *, title: str, extra: str | None = None) -> str:
     content = f"---\ntype: concept\ntitle: {title}\n{extra_line}---\nBody\n"
     path.write_text(content, encoding="utf-8", newline="\n")
     return content
+
+
+def test_scan_bundle_extracts_stable_id(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", title="Alpha", extra="uuid-123")
+
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        stable_id_field="extra",
+    )
+
+    manifest = scan_bundle(bundle)
+    assert len(manifest.concepts) == 1
+    assert manifest.concepts[0].stable_id == "uuid-123"
+    assert manifest.problems == ()
+
+
+def test_scan_bundle_reports_missing_stable_id(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", title="Alpha")  # missing "extra" field
+    _write_concept(root / "b.md", title="Beta", extra="  ")  # empty/whitespace
+
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        stable_id_field="extra",
+    )
+
+    manifest = scan_bundle(bundle)
+    assert len(manifest.concepts) == 2
+    assert manifest.concepts[0].stable_id is None
+    assert manifest.concepts[1].stable_id is None
+
+    assert len(manifest.problems) == 2
+    problems = sorted(manifest.problems, key=lambda p: p.path.name)
+    assert problems[0].kind == "stable-id-missing"
+    assert problems[0].path.name == "a.md"
+    assert problems[1].kind == "stable-id-missing"
+    assert problems[1].path.name == "b.md"
+
+
+def test_scan_bundle_reports_stable_id_conflicts(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", title="Alpha", extra="shared-uuid")
+    _write_concept(root / "b.md", title="Beta", extra="shared-uuid")
+    _write_concept(root / "c.md", title="Gamma", extra="shared-uuid")
+    _write_concept(root / "d.md", title="Delta", extra="unique-uuid")
+
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        stable_id_field="extra",
+    )
+
+    manifest = scan_bundle(bundle)
+    assert len(manifest.concepts) == 4
+
+    # Check that a, b, c generate stable-id-conflict problems
+    conflict_problems = [p for p in manifest.problems if p.kind == "stable-id-conflict"]
+    assert len(conflict_problems) == 3
+    conflict_paths = {p.path.name for p in conflict_problems}
+    assert conflict_paths == {"a.md", "b.md", "c.md"}
+
+    # Check message contains the other conflicting files
+    a_problem = next(p for p in conflict_problems if p.path.name == "a.md")
+    assert "b.md" in a_problem.message
+    assert "c.md" in a_problem.message
+    assert "d.md" not in a_problem.message
