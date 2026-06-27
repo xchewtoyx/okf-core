@@ -106,7 +106,7 @@ All commands load `okf-core.toml` by searching upward from the current working d
 
 Call `okf --version` to print the package version.
 
-By default, commands emit machine-readable JSON on stdout and a one-line human-readable summary on stderr. The `--quiet` or `-q` option is supported on validation and file generation commands (`scan`, `validate`, `index`) to suppress command output and summary. Exit codes: `0` success, `1` errors or validation failures, `2` config or usage error.
+By default, commands emit machine-readable JSON on stdout and a one-line human-readable summary on stderr. The `--quiet` or `-q` option is supported on validation and file generation commands (`scan`, `validate`, `index`) to suppress command output and summary. Output-only query commands (such as `list-bundles`, `list-concepts`, `search`, `context`, and `graph`) intentionally do not support `--quiet` since running them quietly would result in a complete no-op. Exit codes: `0` success, `1` errors or validation failures, `2` config or usage error.
 
 ### `okf list-bundles`
 

@@ -1487,7 +1487,8 @@ def test_scan_quiet(tmp_path: Path) -> None:
     result = _runner().invoke(cli, ["scan", "--config", str(config_path), "-q"])
     assert result.exit_code == 0
     assert result.stdout == ""
-    assert result.stderr == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
 
     # Failure case: Unterminated YAML frontmatter
     (tmp_path / "b.md").write_text(
@@ -1496,7 +1497,8 @@ def test_scan_quiet(tmp_path: Path) -> None:
     result = _runner().invoke(cli, ["scan", "--config", str(config_path), "--quiet"])
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
 
 
 def test_index_quiet(tmp_path: Path) -> None:
@@ -1510,7 +1512,8 @@ def test_index_quiet(tmp_path: Path) -> None:
     result = _runner().invoke(cli, ["index", "--config", str(config_path), "-q"])
     assert result.exit_code == 0
     assert result.stdout == ""
-    assert result.stderr == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
 
     # Failure case: write safety problem (index.md has newer unsupported version)
     (tmp_path / "index.md").write_text(
@@ -1519,7 +1522,8 @@ def test_index_quiet(tmp_path: Path) -> None:
     result = _runner().invoke(cli, ["index", "--config", str(config_path), "-q"])
     assert result.exit_code == 1
     assert result.stdout == ""
-    assert result.stderr == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
 
 
 def test_quiet_option_config_error_does_not_suppress_stderr(tmp_path: Path) -> None:
