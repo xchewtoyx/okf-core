@@ -12,7 +12,8 @@ install:
 _install-windows:
     @python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || (echo error: Python 3.11+ required >&2 && exit 1)
     python -m venv .venv
-    @if where actionlint >nul 2>&1 ({{python}} -m pip install -e ".[test,dev]") else ({{python}} -m pip install -e ".[test,dev,actionlint]")
+    {{python}} -m pip install -e ".[test,dev]"
+    @if where actionlint >nul 2>&1 (echo actionlint found on PATH; skipping actionlint-py) else ({{python}} -m pip install -e ".[actionlint]" || echo warning: actionlint-py install failed; workflow linting will be skipped)
 
 [private]
 _install-linux: _install-posix
@@ -23,10 +24,11 @@ _install-macos: _install-posix
 _install-posix:
     @python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || (echo "error: Python 3.11+ required" >&2 && exit 1)
     python3 -m venv .venv
+    {{python}} -m pip install -e ".[test,dev]"
     @if command -v actionlint > /dev/null 2>&1; then \
-        {{python}} -m pip install -e ".[test,dev]"; \
+        echo "actionlint found on PATH; skipping actionlint-py"; \
     else \
-        {{python}} -m pip install -e ".[test,dev,actionlint]"; \
+        {{python}} -m pip install -e ".[actionlint]" || echo "warning: actionlint-py install failed; workflow linting will be skipped"; \
     fi
 
 [private]
