@@ -349,6 +349,15 @@ class SqliteCachePlugin:
                 # Already cached and up to date; avoid redundant write (and resetting links_resolved to 0)
                 return
 
+            if row is not None:
+                # File is unchanged but stable_id drifted (e.g. config change); update only
+                # stable_id so links_resolved/pagerank are preserved.
+                conn.execute(
+                    "UPDATE concepts SET stable_id = ? WHERE concept_id = ? AND mtime_ns = ? AND size = ? AND ctime_ns = ?",
+                    (stable_id, entry.concept_id, entry.mtime_ns, entry.size, ctime_ns),
+                )
+                return
+
             conn.execute(
                 """
                 INSERT OR REPLACE INTO concepts (concept_id, stable_id, path, sha256, mtime_ns, size, frontmatter, links_resolved, pagerank, ctime_ns)

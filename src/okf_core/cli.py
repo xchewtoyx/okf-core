@@ -556,7 +556,7 @@ def stable_id_cmd(
     )
 
     if has_valid_id and not force:
-        click.echo(str(existing_id))
+        click.echo(str(existing_id).strip())
         return
 
     new_id = str(uuid.uuid4())
