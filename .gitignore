@@ -31,7 +31,6 @@ ENV/
 # Tool/runtime caches
 .cache/
 .agent-cache/
-.pip/
 
 # Local agent guidance (not committed)
 CLAUDE.md
