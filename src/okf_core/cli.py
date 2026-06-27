@@ -419,19 +419,12 @@ def context_cmd(
     is_flag=True,
     help="Emit only broken internal concept links.",
 )
-@click.option(
-    "--quiet",
-    "-q",
-    is_flag=True,
-    help="Suppress command output and summary (does not suppress configuration/load errors).",
-)
 def graph_cmd(
     config_path: str | None,
     bundle_name: str,
     concept_id: str | None,
     depth: int,
     broken_only: bool,
-    quiet: bool,
 ) -> None:
     """Inspect Markdown links and graph traversal for a bundle."""
     _, bundle = _load(config_path, bundle_name)
@@ -444,62 +437,42 @@ def graph_cmd(
         )
         sys.exit(2)
 
-    if not quiet:
-        if broken_only:
-            result: dict[str, Any] = {
-                "bundle": bundle.name,
-                "broken_links": [_link_dict(link) for link in graph.broken_links],
-                "problems": [
-                    _graph_problem_dict(problem) for problem in graph.problems
-                ],
-            }
-        elif concept_id is not None:
-            result = {
-                "bundle": bundle.name,
-                "concept_id": concept_id,
-                "outbound_links": [
-                    _link_dict(link) for link in links_from(graph, concept_id)
-                ],
-                "backlinks": [
-                    _link_dict(link) for link in backlinks_to(graph, concept_id)
-                ],
-                "neighborhood": list(neighborhood(graph, concept_id, depth)),
-                "broken_links": [
-                    _link_dict(link)
-                    for link in graph.broken_links
-                    if link.source_concept_id == concept_id
-                ],
-                "problems": [
-                    _graph_problem_dict(problem) for problem in graph.problems
-                ],
-            }
-        else:
-            result = {
-                "bundle": bundle.name,
-                "concepts": [concept.concept_id for concept in graph.concepts],
-                "links": [_link_dict(link) for link in graph.links],
-                "broken_links": [_link_dict(link) for link in graph.broken_links],
-                "problems": [
-                    _graph_problem_dict(problem) for problem in graph.problems
-                ],
-            }
-        click.echo(json.dumps(result, cls=_Encoder, indent=2))
-        click.echo(
-            f"Built graph for bundle {bundle.name!r}: {len(graph.concepts)} concepts, "
-            f"{len(graph.links)} links, {len(graph.broken_links)} broken",
-            err=True,
-        )
-    if quiet:
-        if concept_id is not None:
-            has_problems = any(p.concept_id == concept_id for p in graph.problems)
-            has_broken = any(
-                link.source_concept_id == concept_id for link in graph.broken_links
-            )
-            if has_problems or has_broken:
-                sys.exit(1)
-        else:
-            if graph.problems or graph.broken_links:
-                sys.exit(1)
+    if broken_only:
+        result: dict[str, Any] = {
+            "bundle": bundle.name,
+            "broken_links": [_link_dict(link) for link in graph.broken_links],
+            "problems": [_graph_problem_dict(problem) for problem in graph.problems],
+        }
+    elif concept_id is not None:
+        result = {
+            "bundle": bundle.name,
+            "concept_id": concept_id,
+            "outbound_links": [
+                _link_dict(link) for link in links_from(graph, concept_id)
+            ],
+            "backlinks": [_link_dict(link) for link in backlinks_to(graph, concept_id)],
+            "neighborhood": list(neighborhood(graph, concept_id, depth)),
+            "broken_links": [
+                _link_dict(link)
+                for link in graph.broken_links
+                if link.source_concept_id == concept_id
+            ],
+            "problems": [_graph_problem_dict(problem) for problem in graph.problems],
+        }
+    else:
+        result = {
+            "bundle": bundle.name,
+            "concepts": [concept.concept_id for concept in graph.concepts],
+            "links": [_link_dict(link) for link in graph.links],
+            "broken_links": [_link_dict(link) for link in graph.broken_links],
+            "problems": [_graph_problem_dict(problem) for problem in graph.problems],
+        }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(
+        f"Built graph for bundle {bundle.name!r}: {len(graph.concepts)} concepts, "
+        f"{len(graph.links)} links, {len(graph.broken_links)} broken",
+        err=True,
+    )
 
 
 @cli.command("list-bundles")
