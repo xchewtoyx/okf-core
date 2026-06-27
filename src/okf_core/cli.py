@@ -645,7 +645,7 @@ def index_cmd(
         okf_version=_okf_version_for_index_write(bundle, target_dir, force),
     )
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(body, encoding="utf-8")
+    index_path.write_text(body, encoding="utf-8", newline="\n")
 
     if not quiet:
         result = {

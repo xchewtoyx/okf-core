@@ -34,7 +34,7 @@ _require-venv-windows:
 
 [private]
 _require-venv-posix:
-    @[ -f {{python}} ] || (echo "error: venv not found — run 'just install' first" >&2 && exit 1)
+    @[ -x {{python}} ] || (echo "error: venv not found — run 'just install' first" >&2 && exit 1)
 
 # Format code with black
 fmt: _require-venv
