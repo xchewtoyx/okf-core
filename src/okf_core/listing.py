@@ -17,7 +17,12 @@ from okf_core.manifest import BundleManifest, ConceptManifestEntry, scan_bundle
 
 @dataclass(frozen=True)
 class ConceptListing:
-    """A concept candidate for task-specific seed selection."""
+    """A concept candidate for task-specific seed selection.
+
+    Graph-derived fields (``outbound_link_count``, ``inbound_link_count``,
+    ``pagerank``) are ``None`` unless a ``BundleGraph`` is supplied to
+    ``list_concepts()``.
+    """
 
     concept_id: str
     path: Path
@@ -44,7 +49,12 @@ class ListingProblem:
 
 @dataclass(frozen=True)
 class BundleListing:
-    """A deterministic listing of concept candidates for one configured bundle."""
+    """A deterministic listing of concept candidates for one configured bundle.
+
+    ``orphans`` is empty unless a ``BundleGraph`` is supplied to
+    ``list_concepts()``, in which case it contains the concept IDs of valid
+    listed concepts with no inbound or outbound links.
+    """
 
     bundle_name: str
     concepts: tuple[ConceptListing, ...] = ()
@@ -68,6 +78,11 @@ def list_concepts(
 
     If ``with_content`` is True, the raw Markdown body of each valid concept
     is populated in the ``content`` field of the listing entries.
+
+    If ``graph`` is supplied, each entry's ``pagerank`` score is populated and
+    ``BundleListing.orphans`` lists the concept IDs of valid listed concepts
+    with no inbound or outbound links.  Both default to ``None``/empty when
+    ``graph`` is ``None``.
     """
 
     resolved_manifest = _resolve_manifest(bundle, manifest, graph)

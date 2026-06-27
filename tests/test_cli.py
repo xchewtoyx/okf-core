@@ -422,6 +422,8 @@ listing_fields = ["activity"]
     assert data["concepts"][0]["fields"] == {"activity": ["debug", "repair"]}
     assert data["concepts"][0]["frontmatter"]["activity"] == ["debug", "repair"]
     assert data["concepts"][0]["outbound_link_count"] is None
+    assert data["concepts"][0]["pagerank"] is None
+    assert data["orphans"] == []
     assert data["problems"] == []
 
 
