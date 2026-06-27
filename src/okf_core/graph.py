@@ -8,7 +8,7 @@ from collections.abc import Sequence
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, cast, runtime_checkable
+from typing import Any, Union, cast
 from urllib.parse import urlsplit
 
 from markdown_it import MarkdownIt
@@ -396,12 +396,6 @@ def find_unlinked_mentions(
     )
 
 
-@runtime_checkable
-class _ConceptLinkSource(Protocol):
-    concept_id: str
-    path: Path
-
-
 @dataclass
 class _MinimalEntry:
     concept_id: str
@@ -434,7 +428,7 @@ def _graph_problem(
 
 def _resolve_concept_link(
     bundle: BundleConfig,
-    source: _ConceptLinkSource,
+    source: Union[ConceptManifestEntry, _MinimalEntry],
     markdown_link: MarkdownLink,
 ) -> ConceptLink | None:
     target = markdown_link.target.strip()
