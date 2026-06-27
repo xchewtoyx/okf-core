@@ -1523,6 +1523,22 @@ def test_graph_quiet(tmp_path: Path) -> None:
     assert result.stdout == ""
     assert result.stderr == ""
 
+    # Concept-specific success (a.md has no problems/broken links)
+    result = _runner().invoke(
+        cli, ["graph", "--config", str(config_path), "--concept", "a", "-q"]
+    )
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+    # Concept-specific failure (b.md has a broken link)
+    result = _runner().invoke(
+        cli, ["graph", "--config", str(config_path), "--concept", "b", "-q"]
+    )
+    assert result.exit_code == 1
+    assert result.stdout == ""
+    assert result.stderr == ""
+
 
 def test_index_quiet(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"

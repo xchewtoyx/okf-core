@@ -489,8 +489,17 @@ def graph_cmd(
             f"{len(graph.links)} links, {len(graph.broken_links)} broken",
             err=True,
         )
-    if quiet and (graph.problems or graph.broken_links):
-        sys.exit(1)
+    if quiet:
+        if concept_id is not None:
+            has_problems = any(p.concept_id == concept_id for p in graph.problems)
+            has_broken = any(
+                link.source_concept_id == concept_id for link in graph.broken_links
+            )
+            if has_problems or has_broken:
+                sys.exit(1)
+        else:
+            if graph.problems or graph.broken_links:
+                sys.exit(1)
 
 
 @cli.command("list-bundles")
