@@ -1,5 +1,6 @@
 python := if os() == "windows" { ".venv\\Scripts\\python.exe" } else { ".venv/bin/python" }
-actionlint := if os() == "windows" { ".venv\\Scripts\\actionlint.exe" } else { ".venv/bin/actionlint" }
+_venv_actionlint := if os() == "windows" { ".venv\\Scripts\\actionlint.exe" } else { ".venv/bin/actionlint" }
+actionlint := if path_exists(_venv_actionlint) == "true" { _venv_actionlint } else { "actionlint" }
 
 set windows-shell := ["cmd.exe", "/c"]
 
@@ -11,7 +12,7 @@ install:
 _install-windows:
     @python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || (echo error: Python 3.11+ required >&2 && exit 1)
     python -m venv .venv
-    {{python}} -m pip install -e ".[test,dev]"
+    @if where actionlint >nul 2>&1 ({{python}} -m pip install -e ".[test,dev]") else ({{python}} -m pip install -e ".[test,dev,actionlint]")
 
 [private]
 _install-linux: _install-posix
@@ -22,7 +23,11 @@ _install-macos: _install-posix
 _install-posix:
     @python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || (echo "error: Python 3.11+ required" >&2 && exit 1)
     python3 -m venv .venv
-    {{python}} -m pip install -e ".[test,dev]"
+    @if command -v actionlint > /dev/null 2>&1; then \
+        {{python}} -m pip install -e ".[test,dev]"; \
+    else \
+        {{python}} -m pip install -e ".[test,dev,actionlint]"; \
+    fi
 
 [private]
 _require-venv:
