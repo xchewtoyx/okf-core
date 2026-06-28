@@ -307,7 +307,9 @@ def find_unlinked_mentions(
     Searches the body text only; matches in titles or frontmatter fields are not
     reported.  Requires ``bundle.okf_cache_dir`` to be configured; raises
     ``SearchConfigError`` otherwise.  Pass ``refresh=False`` to skip FTS index
-    refresh and query the existing cache directly.
+    refresh and query the existing cache directly.  Regardless of ``refresh``,
+    concept files are read from disk to compute already-linked pairs, so
+    read/decode/parse errors may appear in ``problems`` in either mode.
 
     Non-fatal failures (unreadable or unparseable concepts) are collected in
     ``UnlinkedMentionsResult.problems`` rather than raised or silently dropped.
@@ -454,7 +456,9 @@ def find_unlinked_mentions(
                 suggestions, key=lambda s: (s.source_concept_id, s.target_concept_id)
             )
         ),
-        problems=tuple(problems),
+        problems=tuple(
+            sorted(problems, key=lambda p: (str(p.path), p.kind, p.concept_id))
+        ),
     )
 
 
