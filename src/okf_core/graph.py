@@ -427,7 +427,7 @@ def find_unlinked_mentions(
                 SELECT
                     concept_id,
                     path,
-                    snippet(concept_fts, 5, '[', ']', '...', 16) AS snippet
+                    snippet(concept_fts, -1, '[', ']', '...', 16) AS snippet
                 FROM concept_fts
                 WHERE concept_fts MATCH ? AND concept_id != ?
                 ORDER BY concept_id
