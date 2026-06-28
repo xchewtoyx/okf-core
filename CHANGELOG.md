@@ -20,7 +20,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`okf --version`** at the root CLI entry point. (#81)
 - **Consistent `--quiet` / `-q` flag** on `scan`, `validate`, and `index`: suppresses all output and relies solely on exit code. (#81)
 - **Search scaling benchmark** (`scripts/benchmark_search.py`, `just benchmark-search`): generates a 1,000-concept synthetic bundle and measures cold build, warm refresh, and FTS query latency. Excluded from CI. (#58)
-- **Windows support in `justfile`**: platform-specific private recipes for install, venv checks, and lint; no WSL or shell shebang required. (#81)
+
+### Changed
+
+- `justfile` refactored to support Windows (`cmd.exe`) natively via platform-specific private recipes; no WSL or shell shebang required. (#81)
 
 ### Fixed
 
