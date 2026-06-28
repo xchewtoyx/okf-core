@@ -339,12 +339,6 @@ def find_unlinked_mentions(
                 bundle, manifest=resolved_manifest, with_content=True
             )
             _refresh_search_index(conn, bundle, listing)
-            for mp in resolved_manifest.problems:
-                problems.append(
-                    GraphProblem(
-                        concept_id="", path=mp.path, kind=mp.kind, message=mp.message
-                    )
-                )
             for lp in listing.problems:
                 problems.append(
                     GraphProblem(
