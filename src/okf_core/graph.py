@@ -422,8 +422,10 @@ def find_unlinked_mentions(
             if fts_query is None:
                 continue
 
-            # Scope to the body column so title/description/fields matches are excluded
-            body_query = f"body : {fts_query}"
+            # Scope to the body column so title/description/fields matches are excluded.
+            # Parentheses ensure the entire expression (including AND terms) is restricted
+            # to body when fts_query contains boolean operators.
+            body_query = f"body : ({fts_query})"
             hits = conn.execute(
                 """
                 SELECT
