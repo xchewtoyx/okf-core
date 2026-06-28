@@ -31,7 +31,7 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload ${{ github.ref_name }} dist/* --clobber
+        run: gh release upload ${{ github.event.release.tag_name }} dist/* --clobber
 
       - name: Generate Pages index
         env:
