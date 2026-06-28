@@ -18,11 +18,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`okf --version`** at the root CLI entry point. (#81)
 - **Consistent `--quiet` / `-q` flag** on `scan`, `validate`, and `index`: suppresses all output and relies solely on exit code. (#81)
 - **Search scaling benchmark** (`scripts/benchmark_search.py`, `just benchmark-search`): generates a 1,000-concept synthetic bundle and measures cold build, warm refresh, and FTS query latency. Excluded from CI. (#58)
+- **Windows support in `justfile`**: platform-specific private recipes for install, venv checks, and lint; no WSL or shell shebang required. (#81)
 
-### Changed
+### Fixed
 
-- `justfile` refactored to support Windows (`cmd.exe`) natively via platform-specific private recipes. (#81)
-- `actionlint-py` split into its own `[actionlint]` optional dependency group; `just install` falls back to a system `actionlint` binary when present to avoid binary-download failures in restricted environments. (#56)
+- `actionlint-py` split into its own `[actionlint]` optional dependency group; `just install` falls back to a system `actionlint` binary when present, avoiding binary-download failures in network-restricted environments. (#56)
 - Generated `index.md` files are always written with LF line endings regardless of platform. (#81)
 
 ---
