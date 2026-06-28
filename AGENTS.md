@@ -95,6 +95,16 @@ consume `okf-core`.
   primary problem channel — they are invisible to library callers and
   untestable without patching.
 
+## Changelog
+
+The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
+
+- The `[Unreleased]` section at the top accumulates entries for work merged to `main` but not yet tagged. Add entries there as features and fixes land, not at release time.
+- On release, rename `[Unreleased]` to the new version with its date (e.g. `## [0.5.0] - 2026-09-01`), add a fresh empty `[Unreleased]` section above it, and add a comparison link at the bottom of the file.
+- Use the standard Keep a Changelog categories within each version block: `### Added`, `### Changed`, `### Deprecated`, `### Removed`, `### Fixed`, `### Security`. Only include a category heading if it has entries.
+- Each entry should be a single bullet naming the feature or fix, the public API surface affected if any, and the closing issue number in parentheses.
+- Do not restate what the diff already shows. An entry should give a reader enough context to understand what changed and why it matters, not describe the implementation.
+
 ## Delivery Rules
 
 - Tests are mandatory for delivered behavior.
