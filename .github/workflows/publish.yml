@@ -3,6 +3,11 @@ name: Publish
 on:
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to upload assets to (e.g. v0.4.0)"
+        required: true
 
 permissions:
   contents: write
@@ -31,7 +36,7 @@ jobs:
       - name: Upload release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload ${{ github.event.release.tag_name }} dist/* --clobber
+        run: gh release upload ${{ github.event.release.tag_name || inputs.tag_name }} dist/* --clobber
 
       - name: Generate Pages index
         env:
