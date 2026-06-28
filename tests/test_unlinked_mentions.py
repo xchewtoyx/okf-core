@@ -4,7 +4,12 @@ from pathlib import Path
 
 import pytest
 
-from okf_core import BundleConfig, SearchConfigError, find_unlinked_mentions
+from okf_core import (
+    BundleConfig,
+    SearchConfigError,
+    find_unlinked_mentions,
+    UnlinkedMentionsResult,
+)
 
 
 def _bundle(root: Path, *, okf_cache_dir: Path | None) -> BundleConfig:
@@ -33,10 +38,11 @@ def test_unlinked_mention_is_suggested(tmp_path: Path) -> None:
     _write_concept(root / "beta.md", title="Beta", body="See Alpha for details.\n")
     bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
 
-    suggestions = find_unlinked_mentions(bundle)
+    result = find_unlinked_mentions(bundle)
 
-    assert len(suggestions) == 1
-    s = suggestions[0]
+    assert isinstance(result, UnlinkedMentionsResult)
+    assert len(result.suggestions) == 1
+    s = result.suggestions[0]
     assert s.source_concept_id == "beta"
     assert s.target_concept_id == "alpha"
 
@@ -51,9 +57,9 @@ def test_existing_link_suppresses_suggestion(tmp_path: Path) -> None:
     )
     bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
 
-    suggestions = find_unlinked_mentions(bundle)
+    result = find_unlinked_mentions(bundle)
 
-    assert suggestions == ()
+    assert result.suggestions == ()
 
 
 def test_no_mention_produces_no_suggestion(tmp_path: Path) -> None:
@@ -62,7 +68,7 @@ def test_no_mention_produces_no_suggestion(tmp_path: Path) -> None:
     _write_concept(root / "beta.md", title="Beta", body="Nothing relevant here.\n")
     bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
 
-    assert find_unlinked_mentions(bundle) == ()
+    assert find_unlinked_mentions(bundle).suggestions == ()
 
 
 def test_self_mention_is_not_suggested(tmp_path: Path) -> None:
@@ -70,7 +76,7 @@ def test_self_mention_is_not_suggested(tmp_path: Path) -> None:
     _write_concept(root / "alpha.md", title="Alpha", body="Alpha is a concept.\n")
     bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
 
-    assert find_unlinked_mentions(bundle) == ()
+    assert find_unlinked_mentions(bundle).suggestions == ()
 
 
 def test_no_cache_dir_raises(tmp_path: Path) -> None:
@@ -82,14 +88,27 @@ def test_no_cache_dir_raises(tmp_path: Path) -> None:
         find_unlinked_mentions(bundle)
 
 
+def test_title_match_in_metadata_not_suggested(tmp_path: Path) -> None:
+    """A target title appearing only in another concept's title should not be suggested."""
+    root = tmp_path / "docs"
+    _write_concept(root / "alpha.md", title="Alpha")
+    # beta's title contains "Alpha" but its body does not mention it
+    _write_concept(
+        root / "beta.md", title="Alpha Beta", body="Nothing relevant here.\n"
+    )
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    assert find_unlinked_mentions(bundle).suggestions == ()
+
+
 def test_mutual_unlinked_mentions_both_suggested(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "alpha.md", title="Alpha", body="Beta is related.\n")
     _write_concept(root / "beta.md", title="Beta", body="Alpha is related.\n")
     bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
 
-    suggestions = find_unlinked_mentions(bundle)
+    result = find_unlinked_mentions(bundle)
 
-    pairs = {(s.source_concept_id, s.target_concept_id) for s in suggestions}
+    pairs = {(s.source_concept_id, s.target_concept_id) for s in result.suggestions}
     assert ("alpha", "beta") in pairs
     assert ("beta", "alpha") in pairs

@@ -117,6 +117,14 @@ class LinkSuggestion:
 
 
 @dataclass(frozen=True)
+class UnlinkedMentionsResult:
+    """Result of :func:`find_unlinked_mentions`."""
+
+    suggestions: tuple[LinkSuggestion, ...]
+    problems: tuple[GraphProblem, ...]
+
+
+@dataclass(frozen=True)
 class BundleGraph:
     """A deterministic directed graph for one configured OKF bundle."""
 
@@ -293,12 +301,16 @@ def find_unlinked_mentions(
     bundle: BundleConfig,
     *,
     refresh: bool = True,
-) -> tuple[LinkSuggestion, ...]:
+) -> UnlinkedMentionsResult:
     """Return concept titles mentioned in other concepts' bodies without a Markdown link.
 
-    Requires ``bundle.okf_cache_dir`` to be configured; raises
+    Searches the body text only; matches in titles or frontmatter fields are not
+    reported.  Requires ``bundle.okf_cache_dir`` to be configured; raises
     ``SearchConfigError`` otherwise.  Pass ``refresh=False`` to skip FTS index
     refresh and query the existing cache directly.
+
+    Non-fatal failures (unreadable or unparseable concepts) are collected in
+    ``UnlinkedMentionsResult.problems`` rather than raised or silently dropped.
     """
     from okf_core.listing import list_concepts
     from okf_core.search import (
@@ -335,14 +347,45 @@ def find_unlinked_mentions(
         for concept_id, rel_path, title in rows
     }
 
-    # Build set of already-linked (source, target) pairs
+    # Build set of already-linked (source, target) pairs by parsing each concept
+    # body (same scope as build_bundle_graph — frontmatter links do not count).
     linked_pairs: set[tuple[str, str]] = set()
+    problems: list[GraphProblem] = []
     for source_id, (source_path, _) in all_concepts.items():
         try:
             content = source_path.read_text(encoding="utf-8")
-        except OSError:
+            doc = parse_concept_document(content)
+        except OSError as exc:
+            problems.append(
+                GraphProblem(
+                    concept_id=source_id,
+                    path=source_path,
+                    kind="read-error",
+                    message=str(exc),
+                )
+            )
             continue
-        for md_link in extract_markdown_links(content):
+        except UnicodeDecodeError as exc:
+            problems.append(
+                GraphProblem(
+                    concept_id=source_id,
+                    path=source_path,
+                    kind="decode-error",
+                    message=str(exc),
+                )
+            )
+            continue
+        except DocumentParseError as exc:
+            problems.append(
+                GraphProblem(
+                    concept_id=source_id,
+                    path=source_path,
+                    kind="parse-error",
+                    message=str(exc),
+                )
+            )
+            continue
+        for md_link in extract_markdown_links(doc.body):
             link = _resolve_concept_link(
                 bundle,
                 _MinimalEntry(source_id, source_path),
@@ -351,7 +394,7 @@ def find_unlinked_mentions(
             if link is not None and link.target_concept_id is not None:
                 linked_pairs.add((source_id, link.target_concept_id))
 
-    # For each target concept, query FTS for its title in other concepts' bodies
+    # For each target concept, query FTS body column for its title in other concepts
     seen_pairs: set[tuple[str, str]] = set()
     suggestions: list[LinkSuggestion] = []
 
@@ -363,17 +406,19 @@ def find_unlinked_mentions(
             if fts_query is None:
                 continue
 
+            # Scope to the body column so title/description/fields matches are excluded
+            body_query = f"body : {fts_query}"
             hits = conn.execute(
                 """
                 SELECT
                     concept_id,
                     path,
-                    snippet(concept_fts, -1, '[', ']', '...', 16) AS snippet
+                    snippet(concept_fts, 5, '[', ']', '...', 16) AS snippet
                 FROM concept_fts
                 WHERE concept_fts MATCH ? AND concept_id != ?
                 ORDER BY concept_id
                 """,
-                (fts_query, target_id),
+                (body_query, target_id),
             ).fetchall()
 
             for source_id, rel_path, snippet in hits:
@@ -391,8 +436,13 @@ def find_unlinked_mentions(
                     )
                 )
 
-    return tuple(
-        sorted(suggestions, key=lambda s: (s.source_concept_id, s.target_concept_id))
+    return UnlinkedMentionsResult(
+        suggestions=tuple(
+            sorted(
+                suggestions, key=lambda s: (s.source_concept_id, s.target_concept_id)
+            )
+        ),
+        problems=tuple(problems),
     )
 
 

@@ -408,14 +408,20 @@ External URLs, fragment-only links, `mailto:` links, non-Markdown assets, and co
 
 `links_from(graph, concept_id)`, `backlinks_to(graph, concept_id)`, and `neighborhood(graph, concept_id, depth=1)` provide deterministic traversal over resolved links. Neighborhood traversal treats links as bidirectional for discovery while preserving directed edges in the underlying graph. It raises `ValueError` for unknown concept IDs or negative depths.
 
+`find_unlinked_mentions(bundle, *, refresh=True)` scans concept bodies for plain-text mentions of other concept titles that are not already Markdown links, returning an `UnlinkedMentionsResult` with `suggestions` (a tuple of `LinkSuggestion`) and `problems` (non-fatal read/parse failures). Each `LinkSuggestion` identifies the source and target concept and the matched body text. Requires `bundle.okf_cache_dir` to be configured (raises `SearchConfigError` otherwise); pass `refresh=False` to query the existing FTS cache without rebuilding it.
+
 ```python
-from okf_core import backlinks_to, build_bundle_graph, links_from, load_config
+from okf_core import backlinks_to, build_bundle_graph, find_unlinked_mentions, links_from, load_config
 
 config = load_config()
 bundle = config.bundles["default"]
 graph = build_bundle_graph(bundle)
 outbound = links_from(graph, "topics/example")
 inbound = backlinks_to(graph, "topics/example")
+
+result = find_unlinked_mentions(bundle)
+for suggestion in result.suggestions:
+    print(f"{suggestion.source_concept_id} mentions '{suggestion.matched_text}' → {suggestion.target_concept_id}")
 ```
 
 ## Development Expectations

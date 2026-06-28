@@ -148,15 +148,16 @@ consume `okf-core`.
   # or without just:
   black src tests
   ```
-- **Static Analysis**: During development, use `just lint` to run ruff, mypy, and actionlint:
+- **Static Analysis**: During development, use `just lint` to run ruff and mypy, and `just lint-actions` to run actionlint on workflow files:
   ```sh
-  just lint
+  just lint          # ruff + mypy
+  just lint-actions  # actionlint (skipped automatically in Claude cloud instances)
   # or without just (requires venv activated or using venv binaries directly):
   python -m ruff check src tests .github/scripts/
   python -m mypy src tests .github/scripts/ --ignore-missing-imports
   .venv/bin/actionlint .github/workflows/*.yml
   ```
-  `ruff` checks Python style and common bugs in the codebase and scripts; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. All three are included in `.[dev]` deps and run in CI. Note: `just lint` does not include the Black formatting check — use `just ci` before pushing.
+  `ruff` checks Python style and common bugs in the codebase and scripts; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. `actionlint` is in the `.[actionlint]` optional dep group (installed automatically by `just install` unless a system `actionlint` is found on PATH). Note: `just lint` does not include the Black formatting check — use `just ci` before pushing.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
 - **Before pushing**, always run `just ci` — it is the definitive local equivalent of the full CI pipeline:
   ```sh

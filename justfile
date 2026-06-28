@@ -64,11 +64,24 @@ lint: _require-venv
 
 # Lint GitHub Actions workflows with actionlint (skipped in Claude cloud instances)
 lint-actions: _require-venv
+    @just --justfile {{justfile()}} _lint-actions-{{os()}}
+
+[private]
+_lint-actions-linux: _lint-actions-posix
+[private]
+_lint-actions-macos: _lint-actions-posix
+
+[private]
+_lint-actions-posix:
     @if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && ! command -v {{actionlint}} > /dev/null 2>&1; then \
         echo "actionlint not available in cloud instance; skipping workflow lint"; \
     else \
         {{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml; \
     fi
+
+[private]
+_lint-actions-windows:
+    @if "%CLAUDE_CODE_REMOTE%" == "true" (where actionlint >nul 2>&1 || (echo actionlint not available in cloud instance; skipping workflow lint && exit /b 0)) else ({{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml)
 
 # Run check + lint + test (local superset of CI; also lints scripts/)
 ci: check lint lint-actions test
