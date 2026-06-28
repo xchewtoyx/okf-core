@@ -101,6 +101,22 @@ def test_title_match_in_metadata_not_suggested(tmp_path: Path) -> None:
     assert find_unlinked_mentions(bundle).suggestions == ()
 
 
+def test_read_error_surfaces_in_problems(tmp_path: Path) -> None:
+    """A missing concept file surfaces as a read-error problem, not a crash."""
+    root = tmp_path / "docs"
+    _write_concept(root / "alpha.md", title="Alpha", body="Beta is related.\n")
+    _write_concept(root / "beta.md", title="Beta")
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    # Build the FTS index with both concepts present, then delete one so the
+    # linked_pairs read fails on the next call.
+    find_unlinked_mentions(bundle)
+    (root / "beta.md").unlink()
+    result = find_unlinked_mentions(bundle, refresh=False)
+
+    assert any(p.kind == "read-error" for p in result.problems)
+
+
 def test_mutual_unlinked_mentions_both_suggested(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "alpha.md", title="Alpha", body="Beta is related.\n")

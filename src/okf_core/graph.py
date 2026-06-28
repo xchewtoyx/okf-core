@@ -8,7 +8,7 @@ from collections.abc import Sequence
 import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Union, cast
+from typing import Any, cast
 from urllib.parse import urlsplit
 
 from markdown_it import MarkdownIt
@@ -328,6 +328,8 @@ def find_unlinked_mentions(
     bundle.okf_cache_dir.mkdir(parents=True, exist_ok=True)
     db_path = bundle.okf_cache_dir / "okf-cache.db"
 
+    problems: list[GraphProblem] = []
+
     with sqlite3.connect(db_path) as conn:
         _ensure_search_schema(conn)
 
@@ -337,6 +339,21 @@ def find_unlinked_mentions(
                 bundle, manifest=resolved_manifest, with_content=True
             )
             _refresh_search_index(conn, bundle, listing)
+            for mp in resolved_manifest.problems:
+                problems.append(
+                    GraphProblem(
+                        concept_id="", path=mp.path, kind=mp.kind, message=mp.message
+                    )
+                )
+            for lp in listing.problems:
+                problems.append(
+                    GraphProblem(
+                        concept_id=lp.concept_id,
+                        path=lp.path,
+                        kind=lp.kind,
+                        message=lp.message,
+                    )
+                )
 
         rows = conn.execute(
             "SELECT concept_id, path, title FROM concept_fts"
@@ -350,7 +367,6 @@ def find_unlinked_mentions(
     # Build set of already-linked (source, target) pairs by parsing each concept
     # body (same scope as build_bundle_graph — frontmatter links do not count).
     linked_pairs: set[tuple[str, str]] = set()
-    problems: list[GraphProblem] = []
     for source_id, (source_path, _) in all_concepts.items():
         try:
             content = source_path.read_text(encoding="utf-8")
@@ -478,7 +494,7 @@ def _graph_problem(
 
 def _resolve_concept_link(
     bundle: BundleConfig,
-    source: Union[ConceptManifestEntry, _MinimalEntry],
+    source: ConceptManifestEntry | _MinimalEntry,
     markdown_link: MarkdownLink,
 ) -> ConceptLink | None:
     target = markdown_link.target.strip()
