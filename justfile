@@ -1,5 +1,6 @@
 python := if os() == "windows" { ".venv\\Scripts\\python.exe" } else { ".venv/bin/python" }
-actionlint := if os() == "windows" { ".venv\\Scripts\\actionlint.exe" } else { ".venv/bin/actionlint" }
+_venv_actionlint := if os() == "windows" { ".venv\\Scripts\\actionlint.exe" } else { ".venv/bin/actionlint" }
+actionlint := if path_exists(_venv_actionlint) == "true" { _venv_actionlint } else { "actionlint" }
 
 set windows-shell := ["cmd.exe", "/c"]
 
@@ -11,7 +12,7 @@ install:
 _install-windows:
     @python -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || (echo error: Python 3.11+ required >&2 && exit 1)
     python -m venv .venv
-    {{python}} -m pip install -e ".[test,dev]"
+    @if where actionlint >nul 2>&1 ({{python}} -m pip install -e ".[test,dev]") else ({{python}} -m pip install -e ".[test,dev,actionlint]")
 
 [private]
 _install-linux: _install-posix
@@ -22,7 +23,11 @@ _install-macos: _install-posix
 _install-posix:
     @python3 -c "import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)" || (echo "error: Python 3.11+ required" >&2 && exit 1)
     python3 -m venv .venv
-    {{python}} -m pip install -e ".[test,dev]"
+    @if command -v actionlint > /dev/null 2>&1 || [ "${CLAUDE_CODE_REMOTE:-}" = "true" ]; then \
+        {{python}} -m pip install -e ".[test,dev]"; \
+    else \
+        {{python}} -m pip install -e ".[test,dev,actionlint]"; \
+    fi
 
 [private]
 _require-venv:
@@ -52,14 +57,34 @@ test: _require-venv
 test-matrix: _require-venv
     {{python}} .github/scripts/run_local_matrix.py
 
-# Run ruff, mypy, and actionlint static analysis
+# Run ruff and mypy static analysis
 lint: _require-venv
     {{python}} -m ruff check src tests .github/scripts/ scripts/
     {{python}} -m mypy src tests .github/scripts/ scripts/ --ignore-missing-imports
-    {{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml
+
+# Lint GitHub Actions workflows with actionlint (skipped in Claude cloud instances)
+lint-actions: _require-venv
+    @just --justfile {{justfile()}} _lint-actions-{{os()}}
+
+[private]
+_lint-actions-linux: _lint-actions-posix
+[private]
+_lint-actions-macos: _lint-actions-posix
+
+[private]
+_lint-actions-posix:
+    @if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && ! command -v {{actionlint}} > /dev/null 2>&1; then \
+        echo "actionlint not available in cloud instance; skipping workflow lint"; \
+    else \
+        {{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml; \
+    fi
+
+[private]
+_lint-actions-windows:
+    @if "%CLAUDE_CODE_REMOTE%" == "true" (where actionlint >nul 2>&1 || (echo actionlint not available in cloud instance; skipping workflow lint && exit /b 0)) else ({{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml)
 
 # Run check + lint + test (local superset of CI; also lints scripts/)
-ci: check lint test
+ci: check lint lint-actions test
 
 # Run search benchmarks
 benchmark-search: _require-venv
