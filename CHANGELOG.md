@@ -105,6 +105,7 @@ Initial release.
 - **`generate_index()` / `parse_index()`**: produce and parse conformant `index.md` files; entries grouped by type and sorted alphabetically; round-trips without loss.
 - **CLI (`okf`)**: `scan`, `validate`, `index` commands. JSON to stdout, summary to stderr, exit 2 on config/usage errors.
 
+[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/xchewtoyx/okf-core/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/xchewtoyx/okf-core/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/xchewtoyx/okf-core/compare/v0.2.0...v0.2.1
