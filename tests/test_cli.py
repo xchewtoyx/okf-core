@@ -1118,6 +1118,7 @@ def test_index_force_does_not_bypass_unsupported_root_version(
     assert result.exit_code == 1
     assert (tmp_path / "index.md").read_text(encoding="utf-8") == original
     assert "unsupported bundle root okf_version" in result.stdout
+    assert json.loads(result.stdout)["excluded_reserved_files"] == []
 
 
 def test_index_does_not_write_version_frontmatter_for_subdirectory(

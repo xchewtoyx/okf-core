@@ -698,6 +698,7 @@ def index_cmd(
                     {"concept_id": "", "message": write_safety_problem.message}
                 ],
                 "scan_problems": [],
+                "excluded_reserved_files": [],
             }
             click.echo(json.dumps(result, cls=_Encoder, indent=2))
             click.echo(write_safety_problem.message, err=True)
