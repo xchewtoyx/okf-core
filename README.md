@@ -265,7 +265,7 @@ Shows onboarding and orientation guidance for OKF bundles:
 okf orient
 ```
 
-Emits a well-structured Markdown document outlining common commands, arguments, configuration options, and developer/agent onboarding guidelines.
+Emits a well-structured Markdown document providing an onboarding overview, a common configuration example, and discovery pointers for further commands and options.
 
 ## Python Library API
 

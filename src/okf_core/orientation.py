@@ -5,12 +5,12 @@ ORIENTATION_GUIDE = """# OKF Bundle Agent & Developer Orientation
 Welcome! This guide provides the core information needed for developers and automated agents to quickly onboard and integrate with an Open Knowledge Format (OKF) bundle.
 
 ## 1. What is an OKF Bundle?
-An OKF bundle is a structured folder containing knowledge assets. At its minimum, it consists of:
+An OKF bundle is a structured folder containing knowledge assets. At a minimum, it consists of:
 - **Concept Documents**: Markdown files containing YAML frontmatter defining their metadata (specifically the `type` field).
 - **Configuration**: An optional `okf-core.toml` file defining defaults and named bundles.
 
 ## 2. Configuration (`okf-core.toml`)
-A bundle is configured using an optional `okf-core.toml` file at the root. Here is an annotated example of all supported options:
+A bundle is configured using an optional `okf-core.toml` file at the root. Here is an example of common configuration options (the full reference is in README.md):
 ```toml
 [defaults]
 # Relative path to the folder containing concept markdown files (default: ".")
