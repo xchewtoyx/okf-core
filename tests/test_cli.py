@@ -631,6 +631,116 @@ def test_search_missing_okf_cache_dir_exits_2(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# okf unlinked-mentions
+# ---------------------------------------------------------------------------
+
+
+def _write_unlinked_mentions_config(tmp_path: Path) -> Path:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[bundles.default]
+bundle_root = "{tmp_path.as_posix()}"
+okf_cache_dir = ".okf-cache"
+""".strip(),
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def _write_unlinked_mention_pair(tmp_path: Path) -> None:
+    _write_concept(tmp_path / "alpha.md", title="Alpha")
+    (tmp_path / "source.md").write_text(
+        "---\ntype: concept\ntitle: Source\n---\nSee Alpha for details.\n",
+        encoding="utf-8",
+    )
+
+
+def test_unlinked_mentions_emits_structured_suggestions(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_unlinked_mention_pair(tmp_path)
+
+    result = _runner().invoke(cli, ["unlinked-mentions", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["bundle"] == "default"
+    assert data["suggestions"] == [
+        {
+            "source_concept_id": "source",
+            "source_path": str(tmp_path / "source.md"),
+            "target_concept_id": "alpha",
+            "target_path": str(tmp_path / "alpha.md"),
+            "matched_text": "See [Alpha] for details.\n",
+        }
+    ]
+    assert data["problems"] == []
+    assert "1 unlinked mention suggestion(s)" in result.stderr
+
+
+def test_unlinked_mentions_no_refresh_uses_existing_index(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_unlinked_mention_pair(tmp_path)
+
+    stale = _runner().invoke(
+        cli,
+        ["unlinked-mentions", "--config", str(config_path), "--no-refresh"],
+    )
+    fresh = _runner().invoke(cli, ["unlinked-mentions", "--config", str(config_path)])
+
+    assert stale.exit_code == 0
+    assert json.loads(stale.stdout)["suggestions"] == []
+    assert fresh.exit_code == 0
+    assert len(json.loads(fresh.stdout)["suggestions"]) == 1
+
+
+def test_unlinked_mentions_missing_cache_dir_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "alpha.md", title="Alpha")
+
+    result = _runner().invoke(cli, ["unlinked-mentions", "--config", str(config_path)])
+
+    assert result.exit_code == 2
+    assert "okf_cache_dir" in result.stderr
+
+
+def test_unlinked_mentions_reports_non_fatal_problems(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_unlinked_mention_pair(tmp_path)
+    initial = _runner().invoke(cli, ["unlinked-mentions", "--config", str(config_path)])
+    assert initial.exit_code == 0
+    (tmp_path / "alpha.md").unlink()
+
+    result = _runner().invoke(
+        cli,
+        ["unlinked-mentions", "--config", str(config_path), "--no-refresh"],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert any(
+        problem["concept_id"] == "alpha" and problem["kind"] == "read-error"
+        for problem in data["problems"]
+    )
+
+
+def test_unlinked_mentions_empty_result_succeeds(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_concept(tmp_path / "alpha.md", title="Alpha")
+
+    result = _runner().invoke(cli, ["unlinked-mentions", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["suggestions"] == []
+    assert data["problems"] == []
+
+
+# ---------------------------------------------------------------------------
 # okf context
 # ---------------------------------------------------------------------------
 
@@ -1948,3 +2058,4 @@ def test_cli_orient_prints_guidance() -> None:
     assert "okf-core.toml" in result.stdout
     assert "okf list-concepts" in result.stdout
     assert "okf --help" in result.stdout
+    assert "okf unlinked-mentions --help" in result.stdout
