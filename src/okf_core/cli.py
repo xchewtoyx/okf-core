@@ -63,6 +63,19 @@ def _load(config_path: str | None, bundle_name: str) -> tuple[Any, Any]:
     return cfg, cfg.bundles[bundle_name]
 
 
+def _reserved_files_in_directory(directory: Path, bundle: Any) -> list[dict[str, str]]:
+    """Return reserved regular files directly under ``directory`` for CLI diagnostics."""
+    reserved_filenames = {filename.casefold() for filename in bundle.reserved_filenames}
+    if not reserved_filenames or not directory.is_dir():
+        return []
+
+    excluded = []
+    for child in sorted(directory.iterdir(), key=lambda p: p.name.casefold()):
+        if child.is_file() and child.name.casefold() in reserved_filenames:
+            excluded.append({"path": str(child), "filename": child.name})
+    return excluded
+
+
 @click.group()
 @click.version_option(version=__version__)
 def cli() -> None:
@@ -685,12 +698,14 @@ def index_cmd(
                     {"concept_id": "", "message": write_safety_problem.message}
                 ],
                 "scan_problems": [],
+                "excluded_reserved_files": [],
             }
             click.echo(json.dumps(result, cls=_Encoder, indent=2))
             click.echo(write_safety_problem.message, err=True)
         sys.exit(1)
 
     manifest = scan_bundle(bundle)
+    excluded_reserved_files = _reserved_files_in_directory(target_dir, bundle)
 
     direct_entries = [c for c in manifest.concepts if c.path.parent == target_dir]
 
@@ -748,6 +763,7 @@ def index_cmd(
                 {"path": str(p.path), "kind": p.kind, "message": p.message}
                 for p in scan_problems_in_dir
             ],
+            "excluded_reserved_files": excluded_reserved_files,
         }
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(
@@ -756,6 +772,14 @@ def index_cmd(
             f"{len(scan_problems_in_dir)} scan errors",
             err=True,
         )
+        if entries_written == 0 and excluded_reserved_files:
+            filenames = ", ".join(item["filename"] for item in excluded_reserved_files)
+            click.echo(
+                "No index entries were written; "
+                f"{len(excluded_reserved_files)} file(s) in the target directory "
+                f"were excluded by reserved_filenames: {filenames}",
+                err=True,
+            )
     if generated.problems or scan_problems_in_dir:
         sys.exit(1)
 
