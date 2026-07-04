@@ -209,18 +209,19 @@ Unknown seeds and read problems appear in `problems` and exit `1`. Scan errors, 
 Generates `index.md` for a directory within a bundle:
 
 ```sh
-okf index [--config PATH] [--bundle NAME] [--directory PATH] [--force] [--quiet]
+okf index [--config PATH] [--bundle NAME] [--directory PATH] [--force] [--quiet] [--recurse]
 ```
 
-`--directory` defaults to the bundle root. Scans the bundle, collects concepts and immediate subdirectories for the target directory, calls `generate_index()`, and writes `index.md` to that directory. For the bundle root only, configured `okf_version` is emitted as frontmatter. Before writing any index in a bundle, the command checks the bundle-root `index.md`; if that file declares an unsupported, invalid, or unparsable `okf_version`, the command leaves the bundle untouched. Read-only commands such as `scan`, `list-concepts`, and `graph` continue best-effort consumption of newer-version bundles.
+`--directory` defaults to the bundle root. Scans the bundle, collects concepts and immediate subdirectories for the target directory, calls `generate_index()`, and writes `index.md` to that directory. If `--recurse` is provided, it recursively generates or updates `index.md` for the target directory and all nested subdirectories that contain concept documents recursively (non-concept-bearing directories that contain no concepts directly or recursively are ignored, and do not have an `index.md` generated). For the bundle root only, configured `okf_version` is emitted as frontmatter. Before writing any index in a bundle, the command checks the bundle-root `index.md`; if that file declares an unsupported, invalid, or unparsable `okf_version`, the command leaves the bundle untouched. Read-only commands such as `scan`, `list-concepts`, and `graph` continue best-effort consumption of newer-version bundles.
 
 When config omits `okf_version`, root index generation preserves an existing supported root `okf_version` declaration by default. `--force` intentionally overwrites the root index without preserving that declaration, but it does not bypass unsupported-version write safety.
 
-Output: `{"path": "...", "entries": N, "problems": [...], "scan_problems": [...], "excluded_reserved_files": [...]}`
+Output: A JSON status dictionary, or a JSON array of status dictionaries when `--recurse` is specified:
+`{"path": "...", "entries": N, "problems": [...], "scan_problems": [...], "excluded_reserved_files": [...]}`
 
 `entries` is the number of entries actually written (candidates minus skipped). `problems` lists index-level skipped entries (e.g. missing `type` field). `scan_problems` lists parse/read failures for files in the target directory that were silently omitted from the index. `excluded_reserved_files` lists regular files directly in the target directory whose filenames matched configured or spec-reserved names and were therefore ignored as concept documents; when no entries are written and reserved files were present, the stderr summary calls this out so users can distinguish an empty directory from one containing only reserved files.
 
-Exits `1` if any entries were skipped or any scan problems occurred in the target directory; exits `0` on clean generation.
+Exits `1` if any entries were skipped or any scan problems occurred in any targeted directories; exits `0` on clean generation.
 
 Use `--quiet` or `-q` to suppress command output and summary. Configuration/load errors (which exit with code `2`) are not suppressed.
 

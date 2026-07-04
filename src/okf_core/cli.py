@@ -678,7 +678,13 @@ def index_cmd(
     quiet: bool,
     recurse: bool,
 ) -> None:
-    """Generate index.md for a bundle directory."""
+    """Generate index.md for a bundle directory.
+
+    If recurse is True, recursively generates index.md files for the target
+    directory and all nested subdirectories that contain concepts. Subdirectories
+    that do not contain any concepts directly or recursively are considered
+    non-concept-bearing and are skipped.
+    """
     config, bundle = _load(config_path, bundle_name)
     target_dir = (
         Path(directory).resolve() if directory is not None else bundle.bundle_root
