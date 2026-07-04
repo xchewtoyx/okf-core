@@ -47,7 +47,7 @@ class ContextPack:
     problems: tuple[ContextPackProblem, ...]
 
 
-def build_context_pack(  # noqa: C901
+def build_context_pack(  # noqa: C901 -- see #123
     bundle: BundleConfig,
     seed_concept_ids: Sequence[str],
     *,

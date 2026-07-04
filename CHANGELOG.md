@@ -8,7 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
-- **Cyclomatic complexity linting**: `ruff`'s `C901` (mccabe) rule is now enabled with `max-complexity = 14`, catching overly complex functions as part of `just lint` / CI. The threshold sits one above the lowest score among the pre-existing functions whose complexity comes from tangled logic rather than the task itself, so it clears the two functions where complexity is inherent (a hand-rolled token-stream parser and a flat CLI guard-clause chain) without silently exempting any of the ones that should genuinely be refactored. The one remaining pre-existing function still over threshold — a link/description state machine where splitting would only relocate shared mutable state — keeps its `# noqa: C901` with an inline justification; new `# noqa: C901` suppressions require the same.
+- **Cyclomatic complexity linting**: `ruff`'s `C901` (mccabe) rule enabled with `max-complexity = 14` as part of `just lint` / CI. (#125)
 
 ## [0.4.1] - 2026-07-04
 

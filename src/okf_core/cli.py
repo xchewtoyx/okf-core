@@ -727,7 +727,7 @@ def orient_cmd() -> None:
     is_flag=True,
     help="Recursively generate index.md for the target directory and nested subdirectories, only where concepts exist.",
 )
-def index_cmd(  # noqa: C901
+def index_cmd(  # noqa: C901 -- see #118
     config_path: str | None,
     bundle_name: str,
     directory: str | None,

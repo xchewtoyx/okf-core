@@ -75,7 +75,7 @@ class BundleManifest:
     problems: tuple[ManifestProblem, ...] = ()
 
 
-def scan_bundle(bundle: BundleConfig) -> BundleManifest:  # noqa: C901
+def scan_bundle(bundle: BundleConfig) -> BundleManifest:  # noqa: C901 -- see #124
     """Scan a configured bundle into concept entries and non-fatal problems."""
     root = bundle.bundle_root.resolve(strict=False)
     if not root.is_dir():

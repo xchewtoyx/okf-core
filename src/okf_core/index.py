@@ -169,7 +169,7 @@ def parse_index(content: str) -> ParsedIndex:
     return ParsedIndex(sections=tuple(sections), problems=tuple(problems))
 
 
-def generate_index(  # noqa: C901
+def generate_index(  # noqa: C901 -- see #122
     directory: Path,
     entries: Sequence[ConceptManifestEntry],
     subdirectories: Sequence[Path] = (),
