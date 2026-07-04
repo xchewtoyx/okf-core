@@ -118,7 +118,7 @@ def validate_concept_document(
     return ()
 
 
-def validate_concept_document_with_profile(
+def validate_concept_document_with_profile(  # noqa: C901 -- see #119
     document: ConceptDocument,
     profile: ProfileConfig,
     project_taxonomy: TaxonomyConfig | None = None,

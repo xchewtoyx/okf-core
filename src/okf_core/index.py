@@ -169,7 +169,7 @@ def parse_index(content: str) -> ParsedIndex:
     return ParsedIndex(sections=tuple(sections), problems=tuple(problems))
 
 
-def generate_index(
+def generate_index(  # noqa: C901 -- see #122
     directory: Path,
     entries: Sequence[ConceptManifestEntry],
     subdirectories: Sequence[Path] = (),
@@ -435,7 +435,9 @@ def _inline_content(child: object) -> str | None:
     return markup if markup else None
 
 
-def _entry_from_inline_token(token: object) -> tuple[IndexEntry | None, str | None]:
+def _entry_from_inline_token(  # noqa: C901 -- link/desc-link state machine over one
+    token: object,  # token stream; splitting would relocate shared mutable state
+) -> tuple[IndexEntry | None, str | None]:
     """Extract title, href, and optional description from a list-item inline token."""
     children = getattr(token, "children", None) or []
     title_parts: list[str] = []
