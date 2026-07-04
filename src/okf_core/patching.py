@@ -436,9 +436,17 @@ def _merge_frontmatter(
     update_items = tuple(updates.items())
     seen_containers: set[int] = set()
     for key, value in update_items:
-        if not isinstance(key, str) or not key.strip():
+        if (
+            not isinstance(key, str)
+            or not key
+            or key != key.strip()
+            or "\n" in key
+            or "\r" in key
+        ):
             raise DocumentChangePlanningError(
-                path, "Frontmatter update keys must be non-empty strings"
+                path,
+                "Frontmatter update keys must be single-line strings without "
+                "leading or trailing whitespace",
             )
         _validate_frontmatter_update_value(path, value, seen_containers)
         _dump_yaml(path, value, flow_style=False)

@@ -487,6 +487,10 @@ def test_merge_rejects_shared_update_container(tmp_path: Path) -> None:
         {1: "value"},
         {"": "value"},
         {"   ": "value"},
+        {" title ": "value"},
+        {"title ": "value"},
+        {"title\n": "value"},
+        {"line1\nline2": "value"},
         {"value": object()},
     ],
 )
