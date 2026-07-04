@@ -668,7 +668,7 @@ def list_bundles_cmd(config_path: str | None) -> None:
 @click.option(
     "--recurse",
     is_flag=True,
-    help="Recursively generate index.md for the target directory and all nested concept-bearing subdirectories.",
+    help="Recursively generate index.md for the target directory and nested subdirectories, only where concepts exist.",
 )
 def index_cmd(
     config_path: str | None,
@@ -681,7 +681,7 @@ def index_cmd(
     """Generate index.md for a bundle directory.
 
     If recurse is True, recursively generates index.md files for the target
-    directory and all nested subdirectories that contain concepts. Subdirectories
+    directory and nested subdirectories, only where concepts exist. Subdirectories
     that do not contain any concepts directly or recursively are considered
     non-concept-bearing and are skipped.
     """
