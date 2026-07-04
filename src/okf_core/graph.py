@@ -304,12 +304,14 @@ def find_unlinked_mentions(
 ) -> UnlinkedMentionsResult:
     """Return concept titles mentioned in other concepts' bodies without a Markdown link.
 
-    Searches the body text only; matches in titles or frontmatter fields are not
-    reported.  Requires ``bundle.okf_cache_dir`` to be configured; raises
-    ``SearchConfigError`` otherwise.  Pass ``refresh=False`` to skip FTS index
-    refresh and query the existing cache directly.  Regardless of ``refresh``,
-    concept files are read from disk to compute already-linked pairs, so
-    read/decode/parse errors may appear in ``problems`` in either mode.
+    Searches visible body prose only; matches in titles, frontmatter fields, code
+    blocks, inline code, image destinations, or Markdown link destinations are
+    not reported.  Requires ``bundle.okf_cache_dir`` to be configured; raises
+    ``SearchConfigError`` otherwise.  Pass ``refresh=False`` to skip persistent
+    FTS index refresh and query the existing cache directly.  Regardless of
+    ``refresh``, concept files are read from disk to compute already-linked pairs
+    and eligible prose, so read/decode/parse errors may appear in ``problems`` in
+    either mode.
 
     Non-fatal failures (unreadable or unparseable concepts) are collected in
     ``UnlinkedMentionsResult.problems`` rather than raised or silently dropped.
@@ -365,6 +367,7 @@ def find_unlinked_mentions(
     # Build set of already-linked (source, target) pairs by parsing each concept
     # body (same scope as build_bundle_graph — frontmatter links do not count).
     linked_pairs: set[tuple[str, str]] = set()
+    prose_bodies: dict[str, tuple[str, str]] = {}
     for source_id, (source_path, _) in all_concepts.items():
         try:
             content = source_path.read_text(encoding="utf-8")
@@ -399,6 +402,10 @@ def find_unlinked_mentions(
                 )
             )
             continue
+        prose_bodies[source_id] = (
+            source_path.relative_to(bundle.bundle_root).as_posix(),
+            _extract_markdown_prose(doc.body),
+        )
         for md_link in extract_markdown_links(doc.body):
             link = _resolve_concept_link(
                 bundle,
@@ -415,6 +422,24 @@ def find_unlinked_mentions(
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA busy_timeout = 5000;")
         conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("""
+            CREATE VIRTUAL TABLE temp.unlinked_mentions_fts USING fts5(
+                concept_id UNINDEXED,
+                path UNINDEXED,
+                body,
+                tokenize = 'unicode61'
+            );
+            """)
+        conn.executemany(
+            """
+            INSERT INTO unlinked_mentions_fts (concept_id, path, body)
+            VALUES (?, ?, ?)
+            """,
+            [
+                (source_id, rel_path, prose)
+                for source_id, (rel_path, prose) in sorted(prose_bodies.items())
+            ],
+        )
         for target_id, (target_path, title) in sorted(all_concepts.items()):
             if not title:
                 continue
@@ -431,9 +456,9 @@ def find_unlinked_mentions(
                 SELECT
                     concept_id,
                     path,
-                    snippet(concept_fts, -1, '[', ']', '...', 16) AS snippet
-                FROM concept_fts
-                WHERE concept_fts MATCH ? AND concept_id != ?
+                    snippet(unlinked_mentions_fts, -1, '[', ']', '...', 16) AS snippet
+                FROM unlinked_mentions_fts
+                WHERE unlinked_mentions_fts MATCH ? AND concept_id != ?
                 ORDER BY concept_id
                 """,
                 (body_query, target_id),
@@ -464,6 +489,21 @@ def find_unlinked_mentions(
             sorted(problems, key=lambda p: (str(p.path), p.kind, p.concept_id))
         ),
     )
+
+
+def _extract_markdown_prose(markdown: str) -> str:
+    """Return visible Markdown prose without code or destination metadata."""
+    parts: list[str] = []
+    for token in _MARKDOWN.parse(markdown):
+        if token.type != "inline" or token.children is None:
+            continue
+        for child in token.children:
+            if child.type == "text":
+                parts.append(child.content)
+            elif child.type in {"softbreak", "hardbreak"}:
+                parts.append("\n")
+        parts.append("\n")
+    return "".join(parts)
 
 
 @dataclass
