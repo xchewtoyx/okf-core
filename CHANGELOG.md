@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `okf index` now reports files excluded by `reserved_filenames`, clarifying zero-entry indexes caused by reserved root files. (#93)
+
 ---
 
 ## [0.4.0] - 2026-06-28

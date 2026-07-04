@@ -216,9 +216,9 @@ okf index [--config PATH] [--bundle NAME] [--directory PATH] [--force] [--quiet]
 
 When config omits `okf_version`, root index generation preserves an existing supported root `okf_version` declaration by default. `--force` intentionally overwrites the root index without preserving that declaration, but it does not bypass unsupported-version write safety.
 
-Output: `{"path": "...", "entries": N, "problems": [...], "scan_problems": [...]}`
+Output: `{"path": "...", "entries": N, "problems": [...], "scan_problems": [...], "excluded_reserved_files": [...]}`
 
-`entries` is the number of entries actually written (candidates minus skipped). `problems` lists index-level skipped entries (e.g. missing `type` field). `scan_problems` lists parse/read failures for files in the target directory that were silently omitted from the index.
+`entries` is the number of entries actually written (candidates minus skipped). `problems` lists index-level skipped entries (e.g. missing `type` field). `scan_problems` lists parse/read failures for files in the target directory that were silently omitted from the index. `excluded_reserved_files` lists regular files directly in the target directory whose filenames matched configured or spec-reserved names and were therefore ignored as concept documents; when no entries are written and reserved files were present, the stderr summary calls this out so users can distinguish an empty directory from one containing only reserved files.
 
 Exits `1` if any entries were skipped or any scan problems occurred in the target directory; exits `0` on clean generation.
 

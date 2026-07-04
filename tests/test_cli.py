@@ -1248,6 +1248,115 @@ def test_index_emits_json_with_path_and_entry_count(tmp_path: Path) -> None:
     assert data["path"] == str(tmp_path / "index.md")
     assert data["entries"] == 2
     assert data["problems"] == []
+    assert data["excluded_reserved_files"] == []
+
+
+def test_index_reports_reserved_files_when_zero_entries_written(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[defaults]
+bundle_root = "{tmp_path}"
+reserved_filenames = ["index.md", "MEMORY.md", "navigation-guide.md", "CHANGELOG.md"]
+""",
+        encoding="utf-8",
+    )
+    for filename in ("index.md", "MEMORY.md", "navigation-guide.md", "CHANGELOG.md"):
+        (tmp_path / filename).write_text("# Reserved\n", encoding="utf-8")
+    _write_concept(tmp_path / "topics" / "valid.md", title="Nested")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["entries"] == 0
+    assert data["problems"] == []
+    assert data["scan_problems"] == []
+    assert [item["filename"] for item in data["excluded_reserved_files"]] == [
+        "CHANGELOG.md",
+        "index.md",
+        "MEMORY.md",
+        "navigation-guide.md",
+    ]
+    assert "excluded by reserved_filenames" in result.stderr
+    assert "No index entries were written" in result.stderr
+
+
+def test_index_reports_reserved_files_alongside_valid_entries(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[defaults]
+bundle_root = "{tmp_path}"
+reserved_filenames = ["index.md", "MEMORY.md"]
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "MEMORY.md").write_text("# Reserved\n", encoding="utf-8")
+    _write_concept(tmp_path / "valid.md", title="Valid")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["entries"] == 1
+    assert data["excluded_reserved_files"] == [
+        {"path": str(tmp_path / "MEMORY.md"), "filename": "MEMORY.md"}
+    ]
+    assert "No index entries were written" not in result.stderr
+
+
+def test_index_reserved_file_diagnostics_are_scoped_to_directory(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[defaults]
+bundle_root = "{tmp_path}"
+reserved_filenames = ["index.md", "MEMORY.md"]
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "MEMORY.md").write_text("# Root reserved\n", encoding="utf-8")
+    subdir = tmp_path / "topics"
+    subdir.mkdir()
+    (subdir / "MEMORY.md").write_text("# Nested reserved\n", encoding="utf-8")
+    _write_concept(subdir / "valid.md", title="Valid")
+
+    result = _runner().invoke(
+        cli, ["index", "--config", str(config_path), "--directory", str(subdir)]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["entries"] == 1
+    assert data["excluded_reserved_files"] == [
+        {"path": str(subdir / "MEMORY.md"), "filename": "MEMORY.md"}
+    ]
+
+
+def test_index_quiet_suppresses_reserved_file_diagnostics(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[defaults]
+bundle_root = "{tmp_path}"
+reserved_filenames = ["MEMORY.md"]
+""",
+        encoding="utf-8",
+    )
+    (tmp_path / "MEMORY.md").write_text("# Reserved\n", encoding="utf-8")
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path), "--quiet"])
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
 
 
 def test_index_skipped_entries_exit_1(tmp_path: Path) -> None:
