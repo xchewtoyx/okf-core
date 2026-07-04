@@ -727,15 +727,20 @@ def test_cache_concurrency(tmp_path: Path) -> None:
     scan_bundle(bundle)
 
     errors: list[Exception] = []
+    errors_lock = threading.Lock()
+    num_threads = 15
+    barrier = threading.Barrier(num_threads)
 
     def run_concurrently() -> None:
+        barrier.wait()
         try:
             m = scan_bundle(bundle)
             build_bundle_graph(bundle, manifest=m)
         except Exception as e:
-            errors.append(e)
+            with errors_lock:
+                errors.append(e)
 
-    threads = [threading.Thread(target=run_concurrently) for _ in range(15)]
+    threads = [threading.Thread(target=run_concurrently) for _ in range(num_threads)]
     for t in threads:
         t.start()
     for t in threads:
