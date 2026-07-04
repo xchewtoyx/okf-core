@@ -314,7 +314,7 @@ def _write_temporary_file(path: Path, content: bytes, mode: int) -> Path:
     temp_path: Path | None = None
     try:
         fd, temp_name = tempfile.mkstemp(
-            prefix=f".{path.name}.",
+            prefix=".okf-",
             suffix=".tmp",
             dir=path.parent,
         )

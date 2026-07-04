@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
@@ -172,6 +173,20 @@ def test_apply_replaces_content_and_preserves_mode(tmp_path: Path) -> None:
     assert path.stat().st_mode & 0o777 == 0o640
 
 
+def test_apply_supports_target_at_filesystem_name_limit(tmp_path: Path) -> None:
+    name_max = os.pathconf(tmp_path, "PC_NAME_MAX")
+    filename = f"{'a' * (name_max - len('.md'))}.md"
+    path = tmp_path / filename
+    path.write_text("Original\n", encoding="utf-8")
+    bundle = _bundle(tmp_path)
+    plan = plan_document_change(bundle, path, "Updated\n")
+
+    result = apply_document_change(bundle, plan)
+
+    assert result.changed is True
+    assert path.read_text(encoding="utf-8") == "Updated\n"
+
+
 def test_apply_noop_does_not_rewrite(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     path.write_text("Same\n", encoding="utf-8")
@@ -324,7 +339,7 @@ def test_apply_rechecks_hash_before_replace(
         apply_document_change(_bundle(tmp_path), plan)
 
     assert path.read_text(encoding="utf-8") == "Concurrent\n"
-    assert not tuple(tmp_path.glob(".topic.md.*.tmp"))
+    assert not tuple(tmp_path.glob(".okf-*.tmp"))
 
 
 @pytest.mark.parametrize(
@@ -351,4 +366,4 @@ def test_apply_failure_preserves_original_and_cleans_temp(
         apply_document_change(_bundle(tmp_path), plan)
 
     assert path.read_text(encoding="utf-8") == "Original\n"
-    assert not tuple(tmp_path.glob(".topic.md.*.tmp"))
+    assert not tuple(tmp_path.glob(".okf-*.tmp"))
