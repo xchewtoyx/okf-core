@@ -500,6 +500,8 @@ def _extract_markdown_prose(markdown: str) -> str:
         for child in token.children:
             if child.type == "text":
                 parts.append(child.content)
+            elif child.type in {"code_inline", "image"}:
+                parts.append(" ")
             elif child.type in {"softbreak", "hardbreak"}:
                 parts.append("\n")
         parts.append("\n")

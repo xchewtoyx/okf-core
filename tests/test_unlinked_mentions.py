@@ -82,6 +82,22 @@ def test_non_prose_title_match_is_not_suggested(tmp_path: Path, body: str) -> No
     assert find_unlinked_mentions(bundle).suggestions == ()
 
 
+@pytest.mark.parametrize(
+    "body",
+    ["Foo`ignored`Bar\n", "Foo![ignored](image.png)Bar\n"],
+    ids=["inline-code", "image"],
+)
+def test_excluded_inline_content_preserves_token_boundaries(
+    tmp_path: Path, body: str
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "foobar.md", title="FooBar")
+    _write_concept(root / "source.md", title="Source", body=body)
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    assert find_unlinked_mentions(bundle).suggestions == ()
+
+
 def test_displayed_link_text_remains_eligible_prose(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "graph-chat-api.md", title="Graph Chat API")
