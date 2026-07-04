@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
+from math import isnan
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
@@ -459,7 +460,7 @@ def _merge_frontmatter(
     yaml_source = content[yaml_start:yaml_end]
     _reject_yaml_aliases(path, yaml_source)
     root = _compose_frontmatter(path, yaml_source)
-    nodes = _top_level_nodes(path, root)
+    nodes = _top_level_nodes(root)
 
     replacements: list[tuple[int, int, str]] = []
     additions: list[tuple[str, Any]] = []
@@ -483,6 +484,8 @@ def _merge_frontmatter(
             preserve_final_line_ending=original_value_source.endswith(("\n", "\r")),
             line_ending=line_ending,
         )
+        if start == end:
+            replacement = f" {replacement}"
         replacements.append((start, end, replacement))
 
     merged_yaml = yaml_source
@@ -526,18 +529,10 @@ def _compose_frontmatter(path: Path, yaml_source: str) -> MappingNode | None:
     return root
 
 
-def _top_level_nodes(path: Path, root: MappingNode | None) -> dict[str, Node]:
-    nodes: dict[str, Node] = {}
+def _top_level_nodes(root: MappingNode | None) -> dict[str, Node]:
     if root is None:
-        return nodes
-    for key_node, value_node in root.value:
-        key = key_node.value
-        if key in nodes:
-            raise DocumentChangePlanningError(
-                path, f"YAML frontmatter contains duplicate top-level key {key!r}"
-            )
-        nodes[key] = value_node
-    return nodes
+        return {}
+    return {key_node.value: value_node for key_node, value_node in root.value}
 
 
 def _node_key_line(root: MappingNode | None, target_key: str) -> int:
@@ -648,6 +643,8 @@ def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
 def _yaml_values_equal(left: Any, right: Any) -> bool:
     if type(left) is not type(right):
         return False
+    if isinstance(left, float) and isnan(left) and isnan(right):
+        return True
     if isinstance(left, Mapping):
         if len(left) != len(right):
             return False

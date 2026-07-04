@@ -301,7 +301,7 @@ graph = build_bundle_graph(config.bundles["default"], manifest)
 
 ### Concept Documents
 
-`parse_concept_document()` parses a Markdown string into YAML frontmatter and body content. Documents without frontmatter are accepted and return empty frontmatter with the original Markdown as the body. Invalid YAML, unterminated frontmatter, non-mapping frontmatter, and non-string frontmatter keys raise `DocumentParseError`.
+`parse_concept_document()` parses a Markdown string into YAML frontmatter and body content. Documents without frontmatter are accepted and return empty frontmatter with the original Markdown as the body. Invalid YAML, unterminated frontmatter, non-mapping frontmatter, duplicate mapping keys at any depth, and non-string top-level frontmatter keys raise `DocumentParseError`.
 
 `serialize_concept_document()` writes a parsed concept document back to Markdown. Unknown frontmatter keys are preserved when callers keep them in the parsed frontmatter dictionary. Documents with empty frontmatter serialize as body-only Markdown.
 
@@ -356,7 +356,7 @@ frontmatter—including unknown fields, comments, quoting, whitespace, and
 ordering—and the Markdown body remain byte-identical. Equivalent values and
 empty updates produce a no-op; `None` is written as YAML `null`.
 
-Malformed or non-mapping frontmatter, duplicate top-level keys, invalid update
+Malformed or non-mapping frontmatter, duplicate mapping keys, invalid update
 keys, and values that cannot be represented as safe YAML raise
 `DocumentChangePlanningError`. YAML aliases are also rejected for this focused
 operation because changing a shared node cannot preserve its representation

@@ -256,6 +256,46 @@ def test_merge_does_not_treat_boolean_and_integer_as_equivalent(
 
 
 @pytest.mark.parametrize(
+    "field_source",
+    [
+        "owner:\n",
+        "owner: # keep this comment\n",
+    ],
+)
+def test_merge_replaces_implicit_null_value(
+    tmp_path: Path,
+    field_source: str,
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text(
+        f"---\ntype: concept\n{field_source}next: keep\n---\n",
+        encoding="utf-8",
+    )
+
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"owner": "team"})
+
+    assert parse_concept_document(plan.proposed_content).frontmatter == {
+        "type": "concept",
+        "owner": "team",
+        "next": "keep",
+    }
+    assert "owner: team" in plan.proposed_content
+    if "#" in field_source:
+        assert " # keep this comment\n" in plan.proposed_content
+
+
+def test_merge_returns_noop_for_equivalent_nan_value(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    original = "---\ntype: concept\nvalue: .NaN\n---\n"
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"value": float("nan")})
+
+    assert plan.changed is False
+    assert plan.proposed_content == original
+
+
+@pytest.mark.parametrize(
     "content",
     [
         "---\ntype: [unterminated\n---\nBody\n",
