@@ -34,6 +34,7 @@ from okf_core import (
     serialize_concept_document,
 )
 from okf_core.write_safety import check_bundle_write_safety
+from okf_core.orientation import ORIENTATION_GUIDE
 
 
 class _Encoder(json.JSONEncoder):
@@ -626,6 +627,12 @@ def list_bundles_cmd(config_path: str | None) -> None:
     }
     click.echo(json.dumps(result, cls=_Encoder, indent=2))
     click.echo(f"Found {len(bundles)} bundle(s)", err=True)
+
+
+@cli.command("orient")
+def orient_cmd() -> None:
+    """Show onboarding and orientation guidance for OKF bundles."""
+    click.echo(ORIENTATION_GUIDE)
 
 
 @cli.command("index")
