@@ -88,6 +88,7 @@ from okf_core.patching import (
     DocumentChangeSafetyError,
     apply_document_change,
     plan_document_change,
+    plan_markdown_section_patch,
 )
 
 import importlib.metadata
@@ -154,6 +155,7 @@ __all__ = [
     "parse_index",
     "parse_okf_version",
     "plan_document_change",
+    "plan_markdown_section_patch",
     "concept_id_to_path",
     "check_bundle_write_safety",
     "is_reserved_concept_path",
