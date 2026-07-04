@@ -328,8 +328,24 @@ bits, and installed with an atomic file replacement. This is a single-file
 optimistic-concurrency primitive, not a filesystem lock, multi-file
 transaction, or power-loss durability guarantee. It supports existing regular
 files only; symbolic links, missing files, directories, paths outside the
-bundle root, and non-UTF-8 input are rejected. Higher-level focused patch
-operations are planned separately.
+bundle root, and non-UTF-8 input are rejected. Other focused patch operations
+are planned separately.
+
+`plan_markdown_section_patch(bundle, path, heading, body, *, level=1)` builds
+the same inspectable `DocumentChangePlan` for one named Markdown section.
+Sections are matched case-sensitively by exact parsed Markdown heading content
+and level. Existing ATX (`# Heading`) and Setext headings are supported and
+their original heading syntax is preserved. A section body extends through
+nested lower-level headings and stops before the next heading of equal or
+higher level. Multiple matching headings are rejected as ambiguous.
+
+When no matching heading exists, the section is appended at the end using ATX
+syntax. Existing bytes are retained and only the minimum separating line
+endings are inserted. Replacement body bytes are used as supplied; when a body
+does not end in a line ending, the document's first detected line-ending style
+is appended to keep subsequent Markdown structurally separate. Equivalent
+content produces a no-op plan. Applying the plan uses
+`apply_document_change()` and retains its stale-content protection.
 
 ### Validation
 

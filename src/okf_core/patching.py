@@ -5,12 +5,18 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
 
+from markdown_it import MarkdownIt
+
 from okf_core.config import BundleConfig
+from okf_core.documents import DocumentParseError, parse_concept_document
 from okf_core.write_safety import check_bundle_write_safety
+
+_MARKDOWN = MarkdownIt("commonmark")
 
 
 class DocumentChangeError(Exception):
@@ -93,34 +99,46 @@ def plan_document_change(
     are interpreted from the configured bundle root.
     """
 
-    resolved_path, bundle_root = _resolve_existing_target(bundle, Path(path))
-    _require_bundle_write_safety(bundle)
-    if not isinstance(proposed_content, str):
-        raise DocumentChangePlanningError(
-            resolved_path, "Proposed document content must be a string"
-        )
+    def use_proposed_content(resolved_path: Path, _: str) -> str:
+        if not isinstance(proposed_content, str):
+            raise DocumentChangePlanningError(
+                resolved_path, "Proposed document content must be a string"
+            )
+        return proposed_content
 
-    original_bytes = _read_for_planning(resolved_path)
-    try:
-        original_content = original_bytes.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise DocumentChangePlanningError(
-            resolved_path,
-            f"Could not decode document as UTF-8: {exc}",
-        ) from exc
-
-    proposed_bytes = _encode_utf8(
-        resolved_path,
-        proposed_content,
-        DocumentChangePlanningError,
+    return _plan_document_change(
+        bundle,
+        Path(path),
+        use_proposed_content,
     )
-    return DocumentChangePlan(
-        bundle_root=bundle_root,
-        path=resolved_path,
-        original_content=original_content,
-        proposed_content=proposed_content,
-        original_sha256=_sha256(original_bytes),
-        proposed_sha256=_sha256(proposed_bytes),
+
+
+def plan_markdown_section_patch(
+    bundle: BundleConfig,
+    path: Path | str,
+    heading: str,
+    body: str,
+    *,
+    level: int = 1,
+) -> DocumentChangePlan:
+    """Plan replacement or insertion of one named CommonMark section.
+
+    A section is identified by exact, case-sensitive parsed heading content and
+    heading level. Existing ATX and Setext headings are supported. The heading
+    itself is preserved when replacing a section; an absent section is appended
+    using ATX syntax.
+    """
+
+    return _plan_document_change(
+        bundle,
+        Path(path),
+        lambda resolved_path, original_content: _patch_markdown_section(
+            resolved_path,
+            original_content,
+            heading,
+            body,
+            level,
+        ),
     )
 
 
@@ -188,6 +206,182 @@ def apply_document_change(
         resulting_sha256=plan.proposed_sha256,
         changed=True,
     )
+
+
+def _plan_document_change(
+    bundle: BundleConfig,
+    path: Path,
+    build_proposed_content: Callable[[Path, str], str],
+) -> DocumentChangePlan:
+    resolved_path, bundle_root = _resolve_existing_target(bundle, path)
+    _require_bundle_write_safety(bundle)
+    original_bytes = _read_for_planning(resolved_path)
+    try:
+        original_content = original_bytes.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise DocumentChangePlanningError(
+            resolved_path,
+            f"Could not decode document as UTF-8: {exc}",
+        ) from exc
+
+    proposed_content = build_proposed_content(resolved_path, original_content)
+    proposed_bytes = _encode_utf8(
+        resolved_path,
+        proposed_content,
+        DocumentChangePlanningError,
+    )
+    return DocumentChangePlan(
+        bundle_root=bundle_root,
+        path=resolved_path,
+        original_content=original_content,
+        proposed_content=proposed_content,
+        original_sha256=_sha256(original_bytes),
+        proposed_sha256=_sha256(proposed_bytes),
+    )
+
+
+def _patch_markdown_section(
+    path: Path,
+    content: str,
+    heading: str,
+    body: str,
+    level: int,
+) -> str:
+    _validate_section_request(path, heading, body, level)
+    try:
+        document = parse_concept_document(content)
+    except DocumentParseError as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not parse document frontmatter: {exc}"
+        ) from exc
+
+    document_body = document.body
+    body_offset = len(content) - len(document_body)
+    tokens = _MARKDOWN.parse(document_body)
+    matches: list[tuple[int, int]] = []
+    target_tag = f"h{level}"
+    for index, token in enumerate(tokens):
+        if (
+            token.type != "heading_open"
+            or token.tag != target_tag
+            or token.map is None
+            or index + 1 >= len(tokens)
+        ):
+            continue
+        inline = tokens[index + 1]
+        if inline.type == "inline" and inline.content == heading:
+            matches.append((index, token.map[1]))
+
+    if len(matches) > 1:
+        raise DocumentChangePlanningError(
+            path,
+            f"Document contains multiple level-{level} headings named {heading!r}",
+        )
+
+    line_ending = _first_line_ending(content)
+    normalized_body = _ensure_structural_line_ending(body, line_ending)
+    if not matches:
+        return _append_markdown_section(
+            content,
+            heading,
+            normalized_body,
+            level,
+            line_ending,
+        )
+
+    token_index, section_start_line = matches[0]
+    section_end_line = len(document_body.splitlines(keepends=True))
+    for token in tokens[token_index + 1 :]:
+        if token.type != "heading_open" or token.map is None:
+            continue
+        token_level = int(token.tag[1:])
+        if token_level <= level:
+            section_end_line = token.map[0]
+            break
+
+    offsets = _line_offsets(document_body)
+    section_start = body_offset + offsets[section_start_line]
+    section_end = body_offset + offsets[section_end_line]
+    return f"{content[:section_start]}{normalized_body}{content[section_end:]}"
+
+
+def _validate_section_request(
+    path: Path,
+    heading: str,
+    body: str,
+    level: int,
+) -> None:
+    if (
+        not isinstance(heading, str)
+        or not heading
+        or heading != heading.strip()
+        or "\n" in heading
+        or "\r" in heading
+    ):
+        raise DocumentChangePlanningError(
+            path,
+            "Section heading must be a non-empty, single-line string "
+            "without surrounding whitespace",
+        )
+    if isinstance(level, bool) or not isinstance(level, int) or not 1 <= level <= 6:
+        raise DocumentChangePlanningError(
+            path, "Section heading level must be an integer from 1 through 6"
+        )
+    if not isinstance(body, str):
+        raise DocumentChangePlanningError(path, "Section body must be a string")
+
+
+def _append_markdown_section(
+    content: str,
+    heading: str,
+    body: str,
+    level: int,
+    line_ending: str,
+) -> str:
+    trailing_line_endings = _count_trailing_line_endings(content)
+    separator = line_ending * max(0, 2 - trailing_line_endings) if content else ""
+    heading_line = f"{'#' * level} {heading}{line_ending}"
+    return f"{content}{separator}{heading_line}{body}"
+
+
+def _ensure_structural_line_ending(body: str, line_ending: str) -> str:
+    if body and not body.endswith(("\n", "\r")):
+        return f"{body}{line_ending}"
+    return body
+
+
+def _first_line_ending(content: str) -> str:
+    for index, character in enumerate(content):
+        if character == "\n":
+            return "\n"
+        if character == "\r":
+            if index + 1 < len(content) and content[index + 1] == "\n":
+                return "\r\n"
+            return "\r"
+    return "\n"
+
+
+def _count_trailing_line_endings(content: str) -> int:
+    count = 0
+    position = len(content)
+    while position > 0 and count < 2:
+        if position >= 2 and content[position - 2 : position] == "\r\n":
+            position -= 2
+        elif content[position - 1] in "\r\n":
+            position -= 1
+        else:
+            break
+        count += 1
+    return count
+
+
+def _line_offsets(content: str) -> tuple[int, ...]:
+    offsets = [0]
+    position = 0
+    for line in content.splitlines(keepends=True):
+        position += len(line)
+        offsets.append(position)
+    return tuple(offsets)
 
 
 def _resolve_existing_target(bundle: BundleConfig, path: Path) -> tuple[Path, Path]:
