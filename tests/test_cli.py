@@ -1791,3 +1791,106 @@ def test_cli_stable_id_write_safety_refused(tmp_path: Path) -> None:
     )
     assert result.exit_code == 1
     assert "Refusing to write" in result.stderr
+
+
+def test_index_recurse_generates_nested_indexes(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    subdir = tmp_path / "topics"
+    _write_concept(subdir / "b.md", title="Beta")
+
+    nested_subdir = subdir / "nested"
+    _write_concept(nested_subdir / "c.md", title="Gamma")
+
+    # An empty subdirectory (non-concept-bearing)
+    empty_subdir = tmp_path / "empty"
+    empty_subdir.mkdir()
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path), "--recurse"])
+
+    assert result.exit_code == 0
+
+    # Check that index files exist where they should
+    assert (tmp_path / "index.md").exists()
+    assert (subdir / "index.md").exists()
+    assert (nested_subdir / "index.md").exists()
+    assert not (empty_subdir / "index.md").exists()
+
+    # Verify contents
+    root_index = (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert "* [Alpha](a.md)" in root_index
+    assert "* [topics](topics/)" in root_index
+
+    subdir_index = (subdir / "index.md").read_text(encoding="utf-8")
+    assert "* [Beta](b.md)" in subdir_index
+    assert "* [nested](nested/)" in subdir_index
+
+    nested_index = (nested_subdir / "index.md").read_text(encoding="utf-8")
+    assert "* [Gamma](c.md)" in nested_index
+
+    # Check JSON output format (should be a list of dictionaries)
+    data = json.loads(result.stdout)
+    assert isinstance(data, list)
+    assert len(data) == 3
+
+    paths = [item["path"] for item in data]
+    assert str(tmp_path / "index.md") in paths
+    assert str(subdir / "index.md") in paths
+    assert str(nested_subdir / "index.md") in paths
+
+    for item in data:
+        if item["path"] == str(tmp_path / "index.md"):
+            assert item["entries"] == 1
+        elif item["path"] == str(subdir / "index.md"):
+            assert item["entries"] == 1
+        elif item["path"] == str(nested_subdir / "index.md"):
+            assert item["entries"] == 1
+
+
+def test_index_recurse_quiet(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="Alpha")
+    subdir = tmp_path / "sub"
+    _write_concept(subdir / "b.md", title="Beta")
+
+    result = _runner().invoke(
+        cli, ["index", "--config", str(config_path), "--recurse", "-q"]
+    )
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    if hasattr(result, "stderr") and result.stderr is not None:
+        assert result.stderr == ""
+
+    assert (tmp_path / "index.md").exists()
+    assert (subdir / "index.md").exists()
+
+
+def test_index_recurse_handles_scan_problems(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    # Write a broken file causing a scan problem
+    (tmp_path / "broken.md").write_text(
+        "---\ntype: [invalid\n---\nBody\n", encoding="utf-8"
+    )
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path), "--recurse"])
+    assert result.exit_code == 1
+
+    data = json.loads(result.stdout)
+    assert isinstance(data, list)
+    assert len(data) == 1
+    assert data[0]["entries"] == 1
+    assert len(data[0]["scan_problems"]) == 1
+    assert "broken.md" in data[0]["scan_problems"][0]["path"]

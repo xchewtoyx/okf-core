@@ -665,12 +665,18 @@ def list_bundles_cmd(config_path: str | None) -> None:
     is_flag=True,
     help="Suppress command output and summary (does not suppress configuration/load errors).",
 )
+@click.option(
+    "--recurse",
+    is_flag=True,
+    help="Recursively generate index.md for the target directory and all nested concept-bearing subdirectories.",
+)
 def index_cmd(
     config_path: str | None,
     bundle_name: str,
     directory: str | None,
     force: bool,
     quiet: bool,
+    recurse: bool,
 ) -> None:
     """Generate index.md for a bundle directory."""
     config, bundle = _load(config_path, bundle_name)
@@ -700,58 +706,78 @@ def index_cmd(
                 "scan_problems": [],
                 "excluded_reserved_files": [],
             }
-            click.echo(json.dumps(result, cls=_Encoder, indent=2))
+            click.echo(
+                json.dumps([result] if recurse else result, cls=_Encoder, indent=2)
+            )
             click.echo(write_safety_problem.message, err=True)
         sys.exit(1)
 
     manifest = scan_bundle(bundle)
-    excluded_reserved_files = _reserved_files_in_directory(target_dir, bundle)
 
-    direct_entries = [c for c in manifest.concepts if c.path.parent == target_dir]
-
-    subdirs: set[Path] = set()
+    resolved_bundle_root = bundle.bundle_root.resolve()
+    concept_dirs = {resolved_bundle_root}
     for c in manifest.concepts:
         try:
-            rel = c.path.relative_to(target_dir)
-            if len(rel.parts) > 1:
-                subdirs.add(target_dir / rel.parts[0])
+            curr = c.path.resolve().parent
+            curr.relative_to(resolved_bundle_root)
+            while curr != resolved_bundle_root and curr.parts:
+                concept_dirs.add(curr)
+                curr = curr.parent
         except ValueError:
             pass
 
-    scan_problems_in_dir = []
-    for p in manifest.problems:
-        try:
-            p.path.relative_to(target_dir)
-            scan_problems_in_dir.append(p)
-        except ValueError:
-            pass
+    resolved_target_dir = target_dir.resolve()
+    if recurse:
+        dirs_to_index = sorted(
+            d
+            for d in concept_dirs
+            if d == resolved_target_dir or resolved_target_dir in d.parents
+        )
+    else:
+        dirs_to_index = [resolved_target_dir]
+
+    results = []
+    has_any_problems = False
 
     profile_cfg = (
         config.profiles.get(bundle.profile) if bundle.profile is not None else None
     )
     project_taxonomy = config.taxonomy
 
-    generated = generate_index(
-        target_dir,
-        direct_entries,
-        sorted(subdirs),
-        directory_metadata_file=bundle.directory_metadata_file,
-        profile=profile_cfg,
-        project_taxonomy=project_taxonomy,
-    )
+    for d in dirs_to_index:
+        direct_entries = [c for c in manifest.concepts if c.path.resolve().parent == d]
+        subdirs = sorted(child for child in concept_dirs if child.parent == d)
 
-    skipped_entries = sum(1 for p in generated.problems if p.concept_id)
-    entries_written = len(direct_entries) - skipped_entries
+        scan_problems_in_dir = []
+        for p in manifest.problems:
+            try:
+                p.path.relative_to(d)
+                scan_problems_in_dir.append(p)
+            except ValueError:
+                pass
 
-    index_path = target_dir / "index.md"
-    body = render_index_document(
-        generated.body,
-        okf_version=_okf_version_for_index_write(bundle, target_dir, force),
-    )
-    index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(body, encoding="utf-8", newline="\n")
+        excluded_reserved_files = _reserved_files_in_directory(d, bundle)
 
-    if not quiet:
+        generated = generate_index(
+            d,
+            direct_entries,
+            subdirs,
+            directory_metadata_file=bundle.directory_metadata_file,
+            profile=profile_cfg,
+            project_taxonomy=project_taxonomy,
+        )
+
+        skipped_entries = sum(1 for p in generated.problems if p.concept_id)
+        entries_written = len(direct_entries) - skipped_entries
+
+        index_path = d / "index.md"
+        body = render_index_document(
+            generated.body,
+            okf_version=_okf_version_for_index_write(bundle, d, force),
+        )
+        index_path.parent.mkdir(parents=True, exist_ok=True)
+        index_path.write_text(body, encoding="utf-8", newline="\n")
+
         result = {
             "path": str(index_path),
             "entries": entries_written,
@@ -765,22 +791,44 @@ def index_cmd(
             ],
             "excluded_reserved_files": excluded_reserved_files,
         }
-        click.echo(json.dumps(result, cls=_Encoder, indent=2))
-        click.echo(
-            f"Wrote index.md for bundle {bundle.name!r}: "
-            f"{entries_written} entries, {len(generated.problems)} problems, "
-            f"{len(scan_problems_in_dir)} scan errors",
-            err=True,
-        )
-        if entries_written == 0 and excluded_reserved_files:
-            filenames = ", ".join(item["filename"] for item in excluded_reserved_files)
-            click.echo(
-                "No index entries were written; "
-                f"{len(excluded_reserved_files)} file(s) in the target directory "
-                f"were excluded by reserved_filenames: {filenames}",
-                err=True,
-            )
-    if generated.problems or scan_problems_in_dir:
+        results.append(result)
+
+        if generated.problems or scan_problems_in_dir:
+            has_any_problems = True
+
+        if not quiet:
+            if recurse:
+                rel_path = d.relative_to(bundle.bundle_root).as_posix()
+                d_str = f" at {rel_path!r}" if rel_path and rel_path != "." else ""
+                click.echo(
+                    f"Wrote index.md for bundle {bundle.name!r}{d_str}: "
+                    f"{entries_written} entries, {len(generated.problems)} problems, "
+                    f"{len(scan_problems_in_dir)} scan errors",
+                    err=True,
+                )
+            else:
+                click.echo(
+                    f"Wrote index.md for bundle {bundle.name!r}: "
+                    f"{entries_written} entries, {len(generated.problems)} problems, "
+                    f"{len(scan_problems_in_dir)} scan errors",
+                    err=True,
+                )
+            if entries_written == 0 and excluded_reserved_files:
+                filenames = ", ".join(
+                    item["filename"] for item in excluded_reserved_files
+                )
+                click.echo(
+                    "No index entries were written; "
+                    f"{len(excluded_reserved_files)} file(s) in the target directory "
+                    f"were excluded by reserved_filenames: {filenames}",
+                    err=True,
+                )
+
+    if not quiet:
+        output_data = results if recurse else results[0]
+        click.echo(json.dumps(output_data, cls=_Encoder, indent=2))
+
+    if has_any_problems:
         sys.exit(1)
 
 
