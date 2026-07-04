@@ -552,7 +552,7 @@ def test_search_emits_json_results(tmp_path: Path) -> None:
     config_path.write_text(
         f"""
 [bundles.default]
-bundle_root = "{tmp_path.as_posix()}"
+bundle_root = "{tmp_path}"
 okf_cache_dir = ".okf-cache"
 """.strip(),
         encoding="utf-8",
@@ -620,8 +620,7 @@ okf_cache_dir = ".okf-cache"
 def test_search_missing_okf_cache_dir_exits_2(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
-        f'[defaults]\nbundle_root = "{tmp_path.as_posix()}"\n',
-        encoding="utf-8",
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
     )
     _write_concept(tmp_path / "alpha.md", title="Alpha")
 
@@ -641,7 +640,7 @@ def _write_unlinked_mentions_config(tmp_path: Path) -> Path:
     config_path.write_text(
         f"""
 [bundles.default]
-bundle_root = "{tmp_path}"
+bundle_root = "{tmp_path.as_posix()}"
 okf_cache_dir = ".okf-cache"
 """.strip(),
         encoding="utf-8",
@@ -698,7 +697,8 @@ def test_unlinked_mentions_no_refresh_uses_existing_index(tmp_path: Path) -> Non
 def test_unlinked_mentions_missing_cache_dir_exits_2(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
-        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+        f'[defaults]\nbundle_root = "{tmp_path.as_posix()}"\n',
+        encoding="utf-8",
     )
     _write_concept(tmp_path / "alpha.md", title="Alpha")
 
