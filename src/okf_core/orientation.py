@@ -25,11 +25,24 @@ stable_id_field = "stable_id"
 Common configuration keys:
 - `bundle_root`: Path to the root directory containing the concept documents (relative to config file).
 - `reserved_filenames`: List of filenames ignored as normal concept documents (e.g. `index.md`, `log.md`).
-- `stable_id_field`: Document frontmatter field used to store a stable UUID for the concept (bundle-level only; not supported under defaults).
+- `stable_id_field`: Document frontmatter field used to store an opaque stable identifier for the concept (bundle-level only; not supported under defaults).
+- `okf_cache_dir`: Path to the directory where the SQLite database cache is stored (bundle-level only; required for search).
 - `directory_metadata_file`: File used for directory-level metadata (default: `_directory.yml`).
 
 ## 3. Common CLI Commands
 Use these commands to interact with the bundle:
+
+### List Bundles
+Lists all configured bundles:
+```sh
+okf list-bundles [--config PATH]
+```
+
+### List Concepts
+Lists addressable concepts within a bundle:
+```sh
+okf list-concepts [--config PATH] [--bundle NAME] [--with-graph-counts] [--with-content]
+```
 
 ### Scan the Bundle
 Scans the bundle and emits a JSON manifest detailing concepts and problems:

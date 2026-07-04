@@ -1946,3 +1946,6 @@ def test_cli_orient_prints_guidance() -> None:
     assert "# OKF Bundle Developer & Agent Orientation" in result.stdout
     assert "okf scan" in result.stdout
     assert "okf-core.toml" in result.stdout
+    assert "okf list-bundles" in result.stdout
+    assert "okf list-concepts" in result.stdout
+    assert "okf_cache_dir" in result.stdout
