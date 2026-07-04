@@ -6,14 +6,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-07-04
+
 ### Added
 
-- `okf unlinked-mentions` exposes deterministic unlinked concept-title suggestions as structured CLI output. (#96)
+- **`okf unlinked-mentions` CLI command**: exposes deterministic unlinked concept-title suggestions as structured CLI output. (#96)
+- **`okf orient` CLI command**: provides essential onboarding guidance and discovery pointers for developers and automated agents. (#97)
+- **`--recurse` flag for `okf index`**: recursively generates `index.md` files for the target directory and all nested concept-bearing subdirectories. (#94)
 
 ### Fixed
 
 - `okf index` now reports files excluded by `reserved_filenames`, clarifying zero-entry indexes caused by reserved root files. (#93)
 - `find_unlinked_mentions` no longer suggests links based only on code regions or Markdown link destinations. (#95)
+- Resolved SQLite concurrent write locks by adjusting PRAGMA configuration order and write-safety retries. (#98)
+- Fixed tag name reference usage in the GitHub Actions publish workflow. (#91)
 
 ---
 
@@ -114,7 +120,8 @@ Initial release.
 - **`generate_index()` / `parse_index()`**: produce and parse conformant `index.md` files; entries grouped by type and sorted alphabetically; round-trips without loss.
 - **CLI (`okf`)**: `scan`, `validate`, `index` commands. JSON to stdout, summary to stderr, exit 2 on config/usage errors.
 
-[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/xchewtoyx/okf-core/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/xchewtoyx/okf-core/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/xchewtoyx/okf-core/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/xchewtoyx/okf-core/compare/v0.2.0...v0.2.1
