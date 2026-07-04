@@ -18,6 +18,7 @@ from okf_core import (
     build_context_pack,
     build_bundle_graph,
     declared_okf_version,
+    find_unlinked_mentions,
     generate_index,
     list_concepts,
     links_from,
@@ -315,6 +316,55 @@ def search_cmd(
     click.echo(
         f"Searched bundle {bundle.name!r}: {len(search_results.results)} results, "
         f"{len(search_results.problems)} problems",
+        err=True,
+    )
+
+
+@cli.command("unlinked-mentions")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--no-refresh",
+    is_flag=True,
+    help="Use the current FTS index without scanning and refreshing first.",
+)
+def unlinked_mentions_cmd(
+    config_path: str | None,
+    bundle_name: str,
+    no_refresh: bool,
+) -> None:
+    """Find visible concept-title mentions without Markdown links."""
+    _, bundle = _load(config_path, bundle_name)
+    try:
+        mentions = find_unlinked_mentions(bundle, refresh=not no_refresh)
+    except SearchConfigError as exc:
+        click.echo(f"Unlinked mention configuration error: {exc}", err=True)
+        sys.exit(2)
+
+    result = {
+        "bundle": bundle.name,
+        "suggestions": [
+            _link_suggestion_dict(suggestion) for suggestion in mentions.suggestions
+        ],
+        "problems": [_graph_problem_dict(problem) for problem in mentions.problems],
+    }
+    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(
+        f"Found {len(mentions.suggestions)} unlinked mention suggestion(s) "
+        f"in bundle {bundle.name!r}, {len(mentions.problems)} problems",
         err=True,
     )
 
@@ -891,6 +941,16 @@ def _graph_problem_dict(problem: Any) -> dict[str, Any]:
         "path": str(problem.path),
         "kind": problem.kind,
         "message": problem.message,
+    }
+
+
+def _link_suggestion_dict(suggestion: Any) -> dict[str, Any]:
+    return {
+        "source_concept_id": suggestion.source_concept_id,
+        "source_path": str(suggestion.source_path),
+        "target_concept_id": suggestion.target_concept_id,
+        "target_path": str(suggestion.target_path),
+        "matched_text": suggestion.matched_text,
     }
 
 

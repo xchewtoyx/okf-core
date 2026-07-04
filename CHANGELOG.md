@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `okf unlinked-mentions` exposes deterministic unlinked concept-title suggestions as structured CLI output. (#96)
+
 ### Fixed
 
 - `okf index` now reports files excluded by `reserved_filenames`, clarifying zero-entry indexes caused by reserved root files. (#93)

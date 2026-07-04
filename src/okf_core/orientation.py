@@ -28,7 +28,7 @@ directory_metadata_file = "_directory.yml"
 [bundles.docs]
 # Named bundle inherits/overrides [defaults]
 bundle_root = "docs"
-# Path to cache directory (bundle-level only; required for search)
+# Path to cache directory (bundle-level only; required for search and unlinked mentions)
 okf_cache_dir = ".okf-cache"
 # Frontmatter field for stable concept ID (bundle-level only)
 stable_id_field = "id"
@@ -59,5 +59,6 @@ To discover more advanced capabilities, commands, and options:
   okf <command> --help
   ```
 - **Detailed Reference**: Check the bundle's `README.md` for full command specifications and Python library APIs.
+- **Link Maintenance**: Run `okf unlinked-mentions --help` to discover options for finding concept-title mentions that are not yet linked.
 - **Orientation Guide**: Run `okf orient` to print this onboarding guide.
 """
