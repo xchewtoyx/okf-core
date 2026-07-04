@@ -26,7 +26,7 @@ class DocumentChangePlanningError(DocumentChangeError):
 
 
 class DocumentChangeSafetyError(DocumentChangeError):
-    """Raised when bundle metadata makes document writes unsafe."""
+    """Raised when metadata at ``path`` makes bundle writes unsafe."""
 
 
 class DocumentChangeConflictError(DocumentChangeError):
@@ -94,7 +94,7 @@ def plan_document_change(
     """
 
     resolved_path, bundle_root = _resolve_existing_target(bundle, Path(path))
-    _require_bundle_write_safety(bundle, resolved_path)
+    _require_bundle_write_safety(bundle)
     if not isinstance(proposed_content, str):
         raise DocumentChangePlanningError(
             resolved_path, "Proposed document content must be a string"
@@ -109,7 +109,11 @@ def plan_document_change(
             f"Could not decode document as UTF-8: {exc}",
         ) from exc
 
-    proposed_bytes = proposed_content.encode("utf-8")
+    proposed_bytes = _encode_utf8(
+        resolved_path,
+        proposed_content,
+        DocumentChangePlanningError,
+    )
     return DocumentChangePlan(
         bundle_root=bundle_root,
         path=resolved_path,
@@ -139,7 +143,7 @@ def apply_document_change(
         )
 
     _require_plan_target(bundle_root, plan.path)
-    _require_bundle_write_safety(bundle, plan.path)
+    _require_bundle_write_safety(bundle)
     _, current_mode = _read_for_apply(plan)
     if not plan.changed:
         return DocumentChangeResult(
@@ -149,7 +153,11 @@ def apply_document_change(
             changed=False,
         )
 
-    proposed_bytes = plan.proposed_content.encode("utf-8")
+    proposed_bytes = _encode_utf8(
+        plan.path,
+        plan.proposed_content,
+        DocumentChangeApplyError,
+    )
     if _sha256(proposed_bytes) != plan.proposed_sha256:
         raise DocumentChangeApplyError(
             plan.path, "Plan proposed content does not match its SHA-256 hash"
@@ -221,10 +229,24 @@ def _require_plan_target(
         ) from exc
 
 
-def _require_bundle_write_safety(bundle: BundleConfig, path: Path) -> None:
+def _require_bundle_write_safety(bundle: BundleConfig) -> None:
     problem = check_bundle_write_safety(bundle)
     if problem is not None:
-        raise DocumentChangeSafetyError(path, problem.message)
+        raise DocumentChangeSafetyError(problem.path, problem.message)
+
+
+def _encode_utf8(
+    path: Path,
+    content: str,
+    error_type: type[DocumentChangeError],
+) -> bytes:
+    try:
+        return content.encode("utf-8")
+    except UnicodeEncodeError as exc:
+        raise error_type(
+            path,
+            f"Could not encode proposed document content as UTF-8: {exc}",
+        ) from exc
 
 
 def _read_for_planning(path: Path) -> bytes:

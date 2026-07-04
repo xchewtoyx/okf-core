@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from hashlib import sha256
 from pathlib import Path
 
@@ -127,16 +128,32 @@ def test_plan_rejects_non_string_proposed_content(tmp_path: Path) -> None:
         plan_document_change(_bundle(tmp_path), path, b"Proposed\n")  # type: ignore[arg-type]
 
 
+def test_plan_reports_proposed_content_that_cannot_encode_as_utf8(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Original\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="encode.*UTF-8") as caught:
+        plan_document_change(_bundle(tmp_path), path, "\ud800")
+
+    assert isinstance(caught.value.__cause__, UnicodeEncodeError)
+    assert path.read_text(encoding="utf-8") == "Original\n"
+
+
 def test_plan_rejects_unsafe_bundle_version(tmp_path: Path) -> None:
-    (tmp_path / "index.md").write_text(
+    index_path = tmp_path / "index.md"
+    index_path.write_text(
         "---\nokf_version: '1.0'\n---\n# Index\n",
         encoding="utf-8",
     )
     path = tmp_path / "topic.md"
     path.write_text("Original\n", encoding="utf-8")
 
-    with pytest.raises(DocumentChangeSafetyError, match="unsupported"):
+    with pytest.raises(DocumentChangeSafetyError, match="unsupported") as caught:
         plan_document_change(_bundle(tmp_path), path, "Proposed\n")
+
+    assert caught.value.path == index_path
 
 
 def test_apply_replaces_content_and_preserves_mode(tmp_path: Path) -> None:
@@ -203,6 +220,21 @@ def test_apply_reports_read_failure(
     assert path.read_text(encoding="utf-8") == "Original\n"
 
 
+def test_apply_reports_proposed_content_that_cannot_encode_as_utf8(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Original\n", encoding="utf-8")
+    plan = plan_document_change(_bundle(tmp_path), path, "Proposed\n")
+    malformed_plan = replace(plan, proposed_content="\ud800")
+
+    with pytest.raises(DocumentChangeApplyError, match="encode.*UTF-8") as caught:
+        apply_document_change(_bundle(tmp_path), malformed_plan)
+
+    assert isinstance(caught.value.__cause__, UnicodeEncodeError)
+    assert path.read_text(encoding="utf-8") == "Original\n"
+
+
 @pytest.mark.parametrize("replacement", ["missing", "symlink"])
 def test_apply_reports_replaced_target(tmp_path: Path, replacement: str) -> None:
     path = tmp_path / "topic.md"
@@ -260,14 +292,16 @@ def test_apply_rechecks_bundle_safety(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     path.write_text("Original\n", encoding="utf-8")
     plan = plan_document_change(_bundle(tmp_path), path, "Proposed\n")
-    (tmp_path / "index.md").write_text(
+    index_path = tmp_path / "index.md"
+    index_path.write_text(
         "---\nokf_version: '1.0'\n---\n# Index\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(DocumentChangeSafetyError, match="unsupported"):
+    with pytest.raises(DocumentChangeSafetyError, match="unsupported") as caught:
         apply_document_change(_bundle(tmp_path), plan)
 
+    assert caught.value.path == index_path
     assert path.read_text(encoding="utf-8") == "Original\n"
 
 

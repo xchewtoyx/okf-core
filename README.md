@@ -319,7 +319,8 @@ safety and verifies that the target still has the planned original hash. A
 stale, deleted, or replaced target raises `DocumentChangeConflictError` with
 machine-readable `path`, `expected_sha256`, and `actual_sha256` attributes.
 Other planning, safety, and application failures use the corresponding
-`DocumentChangeError` subclasses.
+`DocumentChangeError` subclasses. A `DocumentChangeSafetyError` identifies the
+bundle metadata file that made the write unsafe through its `path` attribute.
 
 No-op plans are verified but do not rewrite the target. Changed content is
 prepared in the target directory, flushed, assigned the original permission
