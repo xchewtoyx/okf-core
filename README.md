@@ -305,6 +305,32 @@ graph = build_bundle_graph(config.bundles["default"], manifest)
 
 `serialize_concept_document()` writes a parsed concept document back to Markdown. Unknown frontmatter keys are preserved when callers keep them in the parsed frontmatter dictionary. Documents with empty frontmatter serialize as body-only Markdown.
 
+### Safe Document Changes
+
+`plan_document_change(bundle, path, proposed_content)` prepares an inspectable
+full-content change for one existing UTF-8 file under a configured bundle root.
+The returned `DocumentChangePlan` contains the original and proposed content,
+their exact byte-level SHA-256 hashes, the resolved path and bundle root, and a
+`changed` property. Planning reads the file but never modifies it. Relative
+paths are interpreted from the bundle root.
+
+`apply_document_change(bundle, plan)` rechecks the bundle's OKF version write
+safety and verifies that the target still has the planned original hash. A
+stale, deleted, or replaced target raises `DocumentChangeConflictError` with
+machine-readable `path`, `expected_sha256`, and `actual_sha256` attributes.
+Other planning, safety, and application failures use the corresponding
+`DocumentChangeError` subclasses. A `DocumentChangeSafetyError` identifies the
+bundle metadata file that made the write unsafe through its `path` attribute.
+
+No-op plans are verified but do not rewrite the target. Changed content is
+prepared in the target directory, flushed, assigned the original permission
+bits, and installed with an atomic file replacement. This is a single-file
+optimistic-concurrency primitive, not a filesystem lock, multi-file
+transaction, or power-loss durability guarantee. It supports existing regular
+files only; symbolic links, missing files, directories, paths outside the
+bundle root, and non-UTF-8 input are rejected. Higher-level focused patch
+operations are planned separately.
+
 ### Validation
 
 `validate_concept_document()` performs base OKF concept conformance checks, returning a tuple of structured `ValidationFinding` objects (e.g. reporting missing or empty `type` fields as errors).

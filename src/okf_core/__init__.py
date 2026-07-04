@@ -78,6 +78,17 @@ from okf_core.context import (
 from okf_core.validation import validate_bundle
 from okf_core.versions import is_supported_okf_version, parse_okf_version
 from okf_core.write_safety import BundleWriteSafetyProblem, check_bundle_write_safety
+from okf_core.patching import (
+    DocumentChangeApplyError,
+    DocumentChangeConflictError,
+    DocumentChangeError,
+    DocumentChangePlan,
+    DocumentChangePlanningError,
+    DocumentChangeResult,
+    DocumentChangeSafetyError,
+    apply_document_change,
+    plan_document_change,
+)
 
 import importlib.metadata
 
@@ -103,6 +114,13 @@ __all__ = [
     "ContextEntry",
     "ContextPack",
     "ContextPackProblem",
+    "DocumentChangeApplyError",
+    "DocumentChangeConflictError",
+    "DocumentChangeError",
+    "DocumentChangePlan",
+    "DocumentChangePlanningError",
+    "DocumentChangeResult",
+    "DocumentChangeSafetyError",
     "DocumentParseError",
     "GraphProblem",
     "LinkSuggestion",
@@ -123,6 +141,7 @@ __all__ = [
     "ParsedIndex",
     "SearchConfigError",
     "SearchResult",
+    "apply_document_change",
     "backlinks_to",
     "build_bundle_graph",
     "build_context_pack",
@@ -134,6 +153,7 @@ __all__ = [
     "is_supported_okf_version",
     "parse_index",
     "parse_okf_version",
+    "plan_document_change",
     "concept_id_to_path",
     "check_bundle_write_safety",
     "is_reserved_concept_path",
