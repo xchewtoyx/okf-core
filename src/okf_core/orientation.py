@@ -9,7 +9,34 @@ An OKF bundle is a structured folder containing knowledge assets. At its minimum
 - **Concept Documents**: Markdown files containing YAML frontmatter defining their metadata (specifically the `type` field).
 - **Configuration**: An optional `okf-core.toml` file defining defaults and named bundles.
 
-## 2. Core Integration Commands
+## 2. Configuration (`okf-core.toml`)
+A bundle is configured using an optional `okf-core.toml` file at the root. Here is an annotated example of all supported options:
+```toml
+[defaults]
+# Relative path to the folder containing concept markdown files (default: ".")
+bundle_root = "docs"
+# Glob patterns to include/exclude as concepts
+include = ["**/*.md"]
+exclude = []
+# Files ignored as concepts (default: ["index.md", "log.md"])
+reserved_filenames = ["index.md", "log.md"]
+# Strategy to generate concept IDs (default: "relative-path")
+concept_path_strategy = "relative-path"
+# Metadata file used for directory-level attributes
+directory_metadata_file = "_directory.yml"
+
+[bundles.docs]
+# Named bundle inherits/overrides [defaults]
+bundle_root = "docs"
+# Path to cache directory (bundle-level only; required for search)
+okf_cache_dir = ".okf-cache"
+# Frontmatter field for stable concept ID (bundle-level only)
+stable_id_field = "id"
+# Optional validation profile name
+profile = "standard"
+```
+
+## 3. Core Integration Commands
 To interact with or integrate a bundle, start with these essential commands:
 
 - **List Concepts**: Discover all addressable concepts in the bundle.
@@ -25,7 +52,7 @@ To interact with or integrate a bundle, start with these essential commands:
   okf scan
   ```
 
-## 3. Progressive Discovery
+## 4. Progressive Discovery
 To discover more advanced capabilities, commands, and options:
 - **CLI Options & Help**: Run `okf --help` to list all subcommands. For detailed options on any specific command, run:
   ```sh
