@@ -163,7 +163,7 @@ def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
     return tuple(links)
 
 
-def build_bundle_graph(
+def build_bundle_graph(  # noqa: C901
     bundle: BundleConfig,
     manifest: BundleManifest | None = None,
 ) -> BundleGraph:
@@ -297,7 +297,7 @@ def neighborhood(
     return tuple(sorted(seen))
 
 
-def find_unlinked_mentions(
+def find_unlinked_mentions(  # noqa: C901
     bundle: BundleConfig,
     *,
     refresh: bool = True,

@@ -170,7 +170,8 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   python -m mypy src tests .github/scripts/ --ignore-missing-imports
   .venv/bin/actionlint .github/workflows/*.yml
   ```
-  `ruff` checks Python style and common bugs in the codebase and scripts; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. `actionlint` is in the `.[actionlint]` optional dep group (installed automatically by `just install` unless a system `actionlint` is found on PATH). Note: `just lint` does not include the Black formatting check — use `just ci` before pushing.
+  `ruff` checks Python style and common bugs in the codebase and scripts, including cyclomatic complexity (`C901`, `max-complexity = 10`); `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. `actionlint` is in the `.[actionlint]` optional dep group (installed automatically by `just install` unless a system `actionlint` is found on PATH). Note: `just lint` does not include the Black formatting check — use `just ci` before pushing.
+- **Complexity budget**: New or modified functions must stay at or under cyclomatic complexity 10 (enforced by `ruff`'s `C901`). Do not add `# noqa: C901` to new code — refactor instead. The handful of pre-existing functions grandfathered with `# noqa: C901` are known debt, not a precedent; do not use them to justify suppressing the check on new code.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
 - **Before pushing**, always run `just ci` — it is the definitive local equivalent of the full CI pipeline:
   ```sh

@@ -572,7 +572,7 @@ def graph_cmd(
     is_flag=True,
     help="Write the generated stable ID back to the document frontmatter.",
 )
-def stable_id_cmd(
+def stable_id_cmd(  # noqa: C901
     concept_id: str | None,
     config_path: str | None,
     bundle_name: str,
@@ -727,7 +727,7 @@ def orient_cmd() -> None:
     is_flag=True,
     help="Recursively generate index.md for the target directory and nested subdirectories, only where concepts exist.",
 )
-def index_cmd(
+def index_cmd(  # noqa: C901
     config_path: str | None,
     bundle_name: str,
     directory: str | None,

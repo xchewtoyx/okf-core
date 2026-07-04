@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **Cyclomatic complexity linting**: `ruff`'s `C901` (mccabe) rule is now enabled with `max-complexity = 10`, catching overly complex functions as part of `just lint` / CI. The 10 functions that already exceeded the threshold are grandfathered with explicit `# noqa: C901` markers rather than refactored, so the gate applies going forward without a behavior-risking rewrite of working code.
+
 ## [0.4.1] - 2026-07-04
 
 ### Added
