@@ -572,7 +572,7 @@ def graph_cmd(
     is_flag=True,
     help="Write the generated stable ID back to the document frontmatter.",
 )
-def stable_id_cmd(  # noqa: C901
+def stable_id_cmd(
     concept_id: str | None,
     config_path: str | None,
     bundle_name: str,

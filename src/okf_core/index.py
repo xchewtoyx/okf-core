@@ -104,7 +104,7 @@ def declared_okf_version(content: str) -> str | None:
     return normalize_okf_version_declaration(document.frontmatter["okf_version"])
 
 
-def parse_index(content: str) -> ParsedIndex:  # noqa: C901
+def parse_index(content: str) -> ParsedIndex:
     """Parse an index.md body into structured sections and entries.
 
     Only entries under a ``# Heading`` are captured; list items that appear
@@ -435,8 +435,8 @@ def _inline_content(child: object) -> str | None:
     return markup if markup else None
 
 
-def _entry_from_inline_token(  # noqa: C901
-    token: object,
+def _entry_from_inline_token(  # noqa: C901 -- link/desc-link state machine over one
+    token: object,  # token stream; splitting would relocate shared mutable state
 ) -> tuple[IndexEntry | None, str | None]:
     """Extract title, href, and optional description from a list-item inline token."""
     children = getattr(token, "children", None) or []
