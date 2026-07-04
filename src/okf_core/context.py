@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Literal
 
 from okf_core.config import BundleConfig
-from okf_core.graph import BundleGraph, build_bundle_graph
+from okf_core.graph import BundleGraph, ConceptLink, build_bundle_graph
 from okf_core.manifest import ConceptManifestEntry
 
 
@@ -47,7 +47,7 @@ class ContextPack:
     problems: tuple[ContextPackProblem, ...]
 
 
-def build_context_pack(  # noqa: C901 -- see #123
+def build_context_pack(
     bundle: BundleConfig,
     seed_concept_ids: Sequence[str],
     *,
@@ -82,10 +82,41 @@ def build_context_pack(  # noqa: C901 -- see #123
     resolved_graph = graph if graph is not None else build_bundle_graph(bundle)
     concept_index = {c.concept_id: c for c in resolved_graph.concepts}
 
-    problems: list[ContextPackProblem] = []
+    valid_seeds, seed_problems = _resolve_seeds(seed_concept_ids, concept_index)
+    problems: list[ContextPackProblem] = list(seed_problems)
 
+    outbound_adj, inbound_adj = _build_adjacency_maps(resolved_graph.links)
+    discovered, seed_order = _expand_from_seeds(
+        valid_seeds, outbound_adj, inbound_adj, depth, direction
+    )
+
+    ordered_ids = sorted(
+        discovered.keys(), key=lambda cid: _sort_key(cid, discovered, seed_order)
+    )
+
+    entries, omitted, read_error_problems = _assemble_entries(
+        ordered_ids, discovered, concept_index, budget_chars
+    )
+    problems.extend(read_error_problems)
+
+    return ContextPack(
+        bundle_name=resolved_graph.bundle_name,
+        seeds=tuple(valid_seeds),
+        entries=tuple(entries),
+        omitted_concept_ids=tuple(omitted),
+        problems=tuple(problems),
+    )
+
+
+def _resolve_seeds(
+    seed_concept_ids: Sequence[str],
+    concept_index: dict[str, ConceptManifestEntry],
+) -> tuple[list[str], list[ContextPackProblem]]:
+    """Deduplicate seed IDs, splitting them into valid seeds (present in
+    concept_index, in first-occurrence order) and unknown-seed problems."""
     seen_seeds: set[str] = set()
     valid_seeds: list[str] = []
+    problems: list[ContextPackProblem] = []
     for seed_id in seed_concept_ids:
         if seed_id in seen_seeds:
             continue
@@ -100,18 +131,17 @@ def build_context_pack(  # noqa: C901 -- see #123
             )
         else:
             valid_seeds.append(seed_id)
+    return valid_seeds, problems
 
-    # BFS traversal from seeds; track (distance, selection_reason) per concept
-    discovered: dict[str, tuple[int, Literal["seed", "outbound-link", "backlink"]]] = {}
-    seed_order: dict[str, int] = {}
-    for i, seed_id in enumerate(valid_seeds):
-        if seed_id not in discovered:
-            discovered[seed_id] = (0, "seed")
-            seed_order[seed_id] = i
 
+def _build_adjacency_maps(
+    links: Sequence[ConceptLink],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Build outbound and inbound adjacency maps from bundle graph links,
+    skipping links whose target_concept_id is unresolved."""
     outbound_adj: dict[str, list[str]] = {}
     inbound_adj: dict[str, list[str]] = {}
-    for link in resolved_graph.links:
+    for link in links:
         if link.target_concept_id is not None:
             outbound_adj.setdefault(link.source_concept_id, []).append(
                 link.target_concept_id
@@ -119,6 +149,28 @@ def build_context_pack(  # noqa: C901 -- see #123
             inbound_adj.setdefault(link.target_concept_id, []).append(
                 link.source_concept_id
             )
+    return outbound_adj, inbound_adj
+
+
+def _expand_from_seeds(
+    valid_seeds: list[str],
+    outbound_adj: dict[str, list[str]],
+    inbound_adj: dict[str, list[str]],
+    depth: int,
+    direction: Literal["outbound", "inbound", "both"],
+) -> tuple[
+    dict[str, tuple[int, Literal["seed", "outbound-link", "backlink"]]],
+    dict[str, int],
+]:
+    """Run BFS from valid_seeds up to `depth` hops per `direction`, returning the
+    discovered map (concept_id -> (distance, selection_reason)) and the seed_order
+    map (seed concept_id -> input position) used for stable sorting."""
+    discovered: dict[str, tuple[int, Literal["seed", "outbound-link", "backlink"]]] = {}
+    seed_order: dict[str, int] = {}
+    for i, seed_id in enumerate(valid_seeds):
+        if seed_id not in discovered:
+            discovered[seed_id] = (0, "seed")
+            seed_order[seed_id] = i
 
     frontier: list[str] = list(valid_seeds)
     for d in range(1, depth + 1):
@@ -136,12 +188,24 @@ def build_context_pack(  # noqa: C901 -- see #123
                         next_frontier.append(nid)
         frontier = sorted(next_frontier)
 
-    ordered_ids = sorted(
-        discovered.keys(), key=lambda cid: _sort_key(cid, discovered, seed_order)
-    )
+    return discovered, seed_order
 
+
+def _assemble_entries(
+    ordered_ids: list[str],
+    discovered: dict[str, tuple[int, Literal["seed", "outbound-link", "backlink"]]],
+    concept_index: dict[str, ConceptManifestEntry],
+    budget_chars: int | None,
+) -> tuple[list[ContextEntry], list[str], list[ContextPackProblem]]:
+    """Build ContextEntry objects for ordered_ids under a stable-prefix budget
+    cutoff: once a concept would push total_chars over budget_chars, that concept
+    and all subsequent concepts are omitted (no knapsack repacking). Concepts whose
+    content raises OSError/UnicodeDecodeError are also omitted and reported as
+    read-error problems. Content is read via ConceptManifestEntry.content (never a
+    fresh Path read) to preserve scan-time caching."""
     entries: list[ContextEntry] = []
     omitted: list[str] = []
+    problems: list[ContextPackProblem] = []
     total_chars = 0
     budget_exhausted = False
 
@@ -187,13 +251,7 @@ def build_context_pack(  # noqa: C901 -- see #123
         )
         total_chars += char_count
 
-    return ContextPack(
-        bundle_name=resolved_graph.bundle_name,
-        seeds=tuple(valid_seeds),
-        entries=tuple(entries),
-        omitted_concept_ids=tuple(omitted),
-        problems=tuple(problems),
-    )
+    return entries, omitted, problems
 
 
 def _sort_key(

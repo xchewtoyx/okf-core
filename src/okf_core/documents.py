@@ -118,7 +118,7 @@ def validate_concept_document(
     return ()
 
 
-def validate_concept_document_with_profile(  # noqa: C901 -- see #119
+def validate_concept_document_with_profile(
     document: ConceptDocument,
     profile: ProfileConfig,
     project_taxonomy: TaxonomyConfig | None = None,
@@ -129,95 +129,123 @@ def validate_concept_document_with_profile(  # noqa: C901 -- see #119
     findings = list(validate_concept_document(document))
     concept_type = document.frontmatter.get("type")
 
-    # Validate taxonomy rules if type is validly present
     if isinstance(concept_type, str) and concept_type.strip():
         concept_type_str = concept_type.strip()
-
         is_system_type = is_directory_meta and concept_type_str.startswith("_")
-
         if not is_system_type:
-            allowed_types: tuple[str, ...] = ()
-            if profile.taxonomy.allowed_types:
-                allowed_types = profile.taxonomy.allowed_types
-            elif project_taxonomy is not None and project_taxonomy.allowed_types:
-                allowed_types = project_taxonomy.allowed_types
+            findings.extend(
+                _validate_taxonomy(concept_type_str, profile, project_taxonomy)
+            )
 
-            known_types: tuple[str, ...] = ()
-            if profile.taxonomy.known_types:
-                known_types = profile.taxonomy.known_types
-            elif project_taxonomy is not None and project_taxonomy.known_types:
-                known_types = project_taxonomy.known_types
-
-            if allowed_types:
-                if concept_type_str not in allowed_types:
-                    findings.append(
-                        ValidationFinding(
-                            severity="error",
-                            message=f"Concept type '{concept_type_str}' is not allowed by this profile",
-                            field="type",
-                        )
-                    )
-            elif known_types:
-                if concept_type_str not in known_types:
-                    findings.append(
-                        ValidationFinding(
-                            severity="warning",
-                            message=f"Concept type '{concept_type_str}' is not recognized as a known type",
-                            field="type",
-                        )
-                    )
-
-    # Check required fields
     if not is_directory_meta:
-        for field_name in profile.required_frontmatter:
-            if field_name == "type":
-                continue
-            if (
-                field_name not in document.frontmatter
-                or document.frontmatter[field_name] is None
-            ):
-                findings.append(
-                    ValidationFinding(
-                        severity="error",
-                        message=f"Missing required frontmatter field: {field_name}",
-                        field=field_name,
-                    )
-                )
-            elif (
-                isinstance(document.frontmatter[field_name], str)
-                and not document.frontmatter[field_name].strip()
-            ):
-                findings.append(
-                    ValidationFinding(
-                        severity="error",
-                        message=f"Required frontmatter field '{field_name}' must be a non-empty string",
-                        field=field_name,
-                    )
-                )
+        findings.extend(_validate_required_fields(document, profile))
+        findings.extend(_validate_no_undocumented_fields(document, profile))
 
-    # Check unknown / undocumented fields
-    if not is_directory_meta:
-        standard_fields = {
-            "type",
-            "title",
-            "description",
-            "resource",
-            "tags",
-            "timestamp",
-        }
-        defined_fields = standard_fields.union(profile.required_frontmatter).union(
-            profile.optional_frontmatter
-        )
-        for field_name in document.frontmatter:
-            if field_name not in defined_fields:
-                findings.append(
-                    ValidationFinding(
-                        severity="warning",
-                        message=f"Unknown frontmatter field: {field_name}",
-                        field=field_name,
-                    )
-                )
+    return tuple(findings)
 
+
+def _validate_taxonomy(
+    concept_type: str,
+    profile: ProfileConfig,
+    project_taxonomy: TaxonomyConfig | None,
+) -> tuple[ValidationFinding, ...]:
+    """Check a concept type against profile/project taxonomy allow- and known-type lists."""
+    allowed_types: tuple[str, ...] = ()
+    if profile.taxonomy.allowed_types:
+        allowed_types = profile.taxonomy.allowed_types
+    elif project_taxonomy is not None and project_taxonomy.allowed_types:
+        allowed_types = project_taxonomy.allowed_types
+
+    known_types: tuple[str, ...] = ()
+    if profile.taxonomy.known_types:
+        known_types = profile.taxonomy.known_types
+    elif project_taxonomy is not None and project_taxonomy.known_types:
+        known_types = project_taxonomy.known_types
+
+    if allowed_types:
+        if concept_type not in allowed_types:
+            return (
+                ValidationFinding(
+                    severity="error",
+                    message=f"Concept type '{concept_type}' is not allowed by this profile",
+                    field="type",
+                ),
+            )
+    elif known_types:
+        if concept_type not in known_types:
+            return (
+                ValidationFinding(
+                    severity="warning",
+                    message=f"Concept type '{concept_type}' is not recognized as a known type",
+                    field="type",
+                ),
+            )
+
+    return ()
+
+
+def _validate_required_fields(
+    document: ConceptDocument,
+    profile: ProfileConfig,
+) -> tuple[ValidationFinding, ...]:
+    """Check that profile-required frontmatter fields (except 'type') are present
+    and non-empty when the value is a string."""
+    findings: list[ValidationFinding] = []
+    for field_name in profile.required_frontmatter:
+        if field_name == "type":
+            continue
+        if (
+            field_name not in document.frontmatter
+            or document.frontmatter[field_name] is None
+        ):
+            findings.append(
+                ValidationFinding(
+                    severity="error",
+                    message=f"Missing required frontmatter field: {field_name}",
+                    field=field_name,
+                )
+            )
+        elif (
+            isinstance(document.frontmatter[field_name], str)
+            and not document.frontmatter[field_name].strip()
+        ):
+            findings.append(
+                ValidationFinding(
+                    severity="error",
+                    message=f"Required frontmatter field '{field_name}' must be a non-empty string",
+                    field=field_name,
+                )
+            )
+    return tuple(findings)
+
+
+def _validate_no_undocumented_fields(
+    document: ConceptDocument,
+    profile: ProfileConfig,
+) -> tuple[ValidationFinding, ...]:
+    """Warn about frontmatter fields not in the standard set or the profile's
+    required/optional field lists."""
+    standard_fields = {
+        "type",
+        "title",
+        "description",
+        "resource",
+        "tags",
+        "timestamp",
+    }
+    defined_fields = standard_fields.union(profile.required_frontmatter).union(
+        profile.optional_frontmatter
+    )
+    findings: list[ValidationFinding] = []
+    for field_name in document.frontmatter:
+        if field_name not in defined_fields:
+            findings.append(
+                ValidationFinding(
+                    severity="warning",
+                    message=f"Unknown frontmatter field: {field_name}",
+                    field=field_name,
+                )
+            )
     return tuple(findings)
 
 
