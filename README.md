@@ -257,6 +257,16 @@ This command interacts with the bundle's `stable_id_field` (which must be config
   - If the stable ID is missing (or if `--force` is specified), it generates a new UUID4 and prints it to `stdout`.
   - If `--write` is specified, it writes the new stable ID back to the concept file on disk, printing a confirmation message to `stderr`.
 
+### `okf orient`
+
+Shows onboarding and orientation guidance for OKF bundles:
+
+```sh
+okf orient
+```
+
+Emits a well-structured Markdown document providing an onboarding overview, a common configuration example, and discovery pointers for further commands and options.
+
 ## Python Library API
 
 Import `okf_core` to programmatically interact with bundles:

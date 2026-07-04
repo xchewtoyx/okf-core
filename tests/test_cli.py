@@ -64,6 +64,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "search" in result.stdout
     assert "context" in result.stdout
     assert "list-bundles" in result.stdout
+    assert "orient" in result.stdout
 
 
 def test_scan_help_exits_zero() -> None:
@@ -1937,3 +1938,13 @@ def test_index_recurse_with_directory_option(tmp_path: Path) -> None:
     assert str(tmp_path / "index.md") not in paths
     assert str(subdir / "index.md") in paths
     assert str(nested_subdir / "index.md") in paths
+
+
+def test_cli_orient_prints_guidance() -> None:
+    result = _runner().invoke(cli, ["orient"])
+    assert result.exit_code == 0
+    assert "# OKF Bundle Agent & Developer Orientation" in result.stdout
+    assert "okf scan" in result.stdout
+    assert "okf-core.toml" in result.stdout
+    assert "okf list-concepts" in result.stdout
+    assert "okf --help" in result.stdout

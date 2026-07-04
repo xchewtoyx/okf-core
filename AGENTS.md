@@ -49,6 +49,7 @@ consume `okf-core`.
   files, or frontmatter tolerance.
 - Keep behavior configurable and layout-agnostic so different repositories can
   use different OKF roots, document taxonomies, and path conventions.
+- **Progressive Disclosure:** Design user/agent interfaces and documentation (such as the `orient` guide) to prioritize progressive disclosure. Focus orientation texts on the absolute essentials required to get started (e.g., core concept structure, discovery/listing/validation), and provide discovery pointers (such as command `--help` menus and README references) for advanced options and configuration, rather than duplicating comprehensive details inline.
 - Do not reinvent mature infrastructure. Prefer well-supported Python libraries
   for parsing, validation, CLI surfaces, plugin/hook dispatch, and workflow
   orchestration when they fit the project constraints. Build `okf-core` code
@@ -108,10 +109,12 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
 ## Delivery Rules
 
 - Tests are mandatory for delivered behavior.
-- User-facing behavior changes must update `README.md` and any affected
-  function docstrings in the same commit.  After editing either, search for
-  all references to the changed function or parameter across `README.md`,
-  `AGENTS.md`, and module docstrings to ensure nothing is left stale.
+- User-facing behavior changes must update `README.md`, `src/okf_core/orientation.py`,
+  any affected CLI command help strings, and function docstrings in the same commit.
+  After editing any of these, search for all references to the changed functionality,
+  commands, or parameters across `README.md`, `AGENTS.md`, `src/okf_core/orientation.py`,
+  CLI help strings, and module/function docstrings to ensure nothing is left stale and
+  all documentation remains explicitly aligned.
 - After editing `README.md`, review the document as a whole so it stays accurate
   and internally consistent.
 - After editing `AGENTS.md`, review the affected section as a whole for internal
