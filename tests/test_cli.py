@@ -1943,9 +1943,8 @@ def test_index_recurse_with_directory_option(tmp_path: Path) -> None:
 def test_cli_orient_prints_guidance() -> None:
     result = _runner().invoke(cli, ["orient"])
     assert result.exit_code == 0
-    assert "# OKF Bundle Developer & Agent Orientation" in result.stdout
+    assert "# OKF Bundle Agent & Developer Orientation" in result.stdout
     assert "okf scan" in result.stdout
     assert "okf-core.toml" in result.stdout
-    assert "okf list-bundles" in result.stdout
     assert "okf list-concepts" in result.stdout
-    assert "okf_cache_dir" in result.stdout
+    assert "okf --help" in result.stdout

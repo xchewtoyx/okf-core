@@ -631,7 +631,7 @@ def list_bundles_cmd(config_path: str | None) -> None:
 
 @cli.command("orient")
 def orient_cmd() -> None:
-    """Show onboarding and orientation guidance for OKF bundles."""
+    """Show essential onboarding guidance and discovery pointers."""
     click.echo(ORIENTATION_GUIDE)
 
 
