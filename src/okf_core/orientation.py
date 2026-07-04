@@ -25,7 +25,7 @@ stable_id_field = "stable_id"
 Common configuration keys:
 - `bundle_root`: Path to the root directory containing the concept documents (relative to config file).
 - `reserved_filenames`: List of filenames ignored as normal concept documents (e.g. `index.md`, `log.md`).
-- `stable_id_field`: Document frontmatter field used to store a stable UUID for the concept.
+- `stable_id_field`: Document frontmatter field used to store a stable UUID for the concept (bundle-level only; not supported under defaults).
 - `directory_metadata_file`: File used for directory-level metadata (default: `_directory.yml`).
 
 ## 3. Common CLI Commands
@@ -64,7 +64,7 @@ okf graph [--config PATH] [--bundle NAME] [--concept ID] [--depth N] [--broken]
 ### Build a Context Pack
 Assembles a contextual prompt snippet starting from seed concepts:
 ```sh
-okf context --seed ID [--seed ID2] [--depth N] [--direction BOTH|inbound|outbound] [--budget-chars N]
+okf context --seed ID [--seed ID2] [--depth N] [--direction both|inbound|outbound] [--budget-chars N]
 ```
 
 ### Manage Stable IDs
