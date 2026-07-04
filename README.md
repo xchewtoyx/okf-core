@@ -349,6 +349,21 @@ is appended to keep subsequent Markdown structurally separate. Equivalent
 content produces a no-op plan. Applying the plan uses
 `apply_document_change()` and retains its stale-content protection.
 
+`plan_frontmatter_merge(bundle, path, updates)` builds a safe plan for a
+shallow merge of selected top-level YAML frontmatter fields. Existing fields
+are replaced and missing fields are appended in update order. Unselected
+frontmatter—including unknown fields, comments, quoting, whitespace, and
+ordering—and the Markdown body remain byte-identical. Equivalent values and
+empty updates produce a no-op; `None` is written as YAML `null`.
+
+Malformed or non-mapping frontmatter, duplicate top-level keys, invalid update
+keys, and values that cannot be represented as safe YAML raise
+`DocumentChangePlanningError`. YAML aliases are also rejected for this focused
+operation because changing a shared node cannot preserve its representation
+locally. The merge does not delete fields or recursively merge nested
+mappings. Applying its plan uses `apply_document_change()` and retains the
+same stale-content protection.
+
 ### Validation
 
 `validate_concept_document()` performs base OKF concept conformance checks, returning a tuple of structured `ValidationFinding` objects (e.g. reporting missing or empty `type` fields as errors).
