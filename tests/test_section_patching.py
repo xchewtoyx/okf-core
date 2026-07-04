@@ -255,6 +255,18 @@ def test_plan_section_patch_rejects_invalid_heading(
         plan_markdown_section_patch(_bundle(tmp_path), path, heading, "Body.", level=1)
 
 
+@pytest.mark.parametrize("heading", ["Target #", "Target ##"])
+def test_plan_section_patch_rejects_heading_that_does_not_round_trip(
+    tmp_path: Path,
+    heading: str,
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("# Existing\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="ATX"):
+        plan_markdown_section_patch(_bundle(tmp_path), path, heading, "Body.", level=2)
+
+
 @pytest.mark.parametrize("level", [0, 7, True])
 def test_plan_section_patch_rejects_invalid_level(tmp_path: Path, level: Any) -> None:
     path = tmp_path / "topic.md"

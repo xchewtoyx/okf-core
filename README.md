@@ -337,7 +337,9 @@ Sections are matched case-sensitively by exact parsed Markdown heading content
 and level. Existing ATX (`# Heading`) and Setext headings are supported and
 their original heading syntax is preserved. A section body extends through
 nested lower-level headings and stops before the next heading of equal or
-higher level. Multiple matching headings are rejected as ambiguous.
+higher level. Multiple matching headings are rejected as ambiguous. Heading
+input that would parse differently when generated as ATX Markdown is rejected
+rather than producing a section that cannot be matched idempotently.
 
 When no matching heading exists, the section is appended at the end using ATX
 syntax. Existing bytes are retained and only the minimum separating line

@@ -327,6 +327,17 @@ def _validate_section_request(
         raise DocumentChangePlanningError(
             path, "Section heading level must be an integer from 1 through 6"
         )
+    generated_heading = _MARKDOWN.parse(f"{'#' * level} {heading}\n")
+    if (
+        len(generated_heading) < 2
+        or generated_heading[0].type != "heading_open"
+        or generated_heading[1].type != "inline"
+        or generated_heading[1].content != heading
+    ):
+        raise DocumentChangePlanningError(
+            path,
+            "Section heading cannot be represented unambiguously in ATX syntax",
+        )
     if not isinstance(body, str):
         raise DocumentChangePlanningError(path, "Section body must be a string")
 
