@@ -356,13 +356,22 @@ frontmatter—including unknown fields, comments, quoting, whitespace, and
 ordering—and the Markdown body remain byte-identical. Equivalent values and
 empty updates produce a no-op; `None` is written as YAML `null`.
 
-Malformed or non-mapping frontmatter, duplicate mapping keys, invalid update
-keys, and values that cannot be represented as safe YAML raise
-`DocumentChangePlanningError`. YAML aliases are also rejected for this focused
-operation because changing a shared node cannot preserve its representation
-locally. The merge does not delete fields or recursively merge nested
-mappings. Applying its plan uses `apply_document_change()` and retains the
-same stale-content protection.
+Requested values may use plain `str`, `bool`, `int`, finite `float`, `None`,
+`datetime.date`, and `datetime.datetime` values, plus recursively nested plain
+lists and string-keyed dictionaries. Other Python objects, non-finite floats,
+and shared or cyclic containers raise `DocumentChangePlanningError`. Exact
+scalar types remain significant: for example, a quoted date string differs
+from a YAML date, and a boolean differs from an integer.
+
+These restrictions apply only to values supplied for mutation; they do not
+narrow OKF conformance or general frontmatter consumption. Richer untargeted
+values and YAML aliases are preserved byte-for-byte. A targeted field that
+participates in an alias relationship is rejected because changing a shared
+node cannot preserve its semantics locally. Malformed or non-mapping
+frontmatter, duplicate mapping keys, and invalid update keys are also reported
+through `DocumentChangePlanningError`. The merge does not delete fields or
+recursively merge nested mappings. Applying its plan uses
+`apply_document_change()` and retains the same stale-content protection.
 
 ### Validation
 

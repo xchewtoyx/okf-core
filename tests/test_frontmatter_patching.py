@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections import OrderedDict
+from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -284,15 +287,49 @@ def test_merge_replaces_implicit_null_value(
         assert " # keep this comment\n" in plan.proposed_content
 
 
-def test_merge_returns_noop_for_equivalent_nan_value(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("source", "value"),
+    [
+        ("2026-07-04", date(2026, 7, 4)),
+        ("2026-07-04 12:30:00", datetime(2026, 7, 4, 12, 30)),
+        (
+            "2026-07-04 12:30:00+00:00",
+            datetime(2026, 7, 4, 12, 30, tzinfo=timezone.utc),
+        ),
+    ],
+)
+def test_merge_returns_noop_for_equivalent_date_values(
+    tmp_path: Path,
+    source: str,
+    value: date | datetime,
+) -> None:
     path = tmp_path / "topic.md"
-    original = "---\ntype: concept\nvalue: .NaN\n---\n"
+    original = f"---\ntype: concept\nvalue: {source}\n---\n"
     path.write_text(original, encoding="utf-8")
 
-    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"value": float("nan")})
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"value": value})
 
     assert plan.changed is False
     assert plan.proposed_content == original
+
+
+def test_merge_distinguishes_date_from_string(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text(
+        '---\ntype: concept\nvalue: "2026-07-04"\n---\n',
+        encoding="utf-8",
+    )
+
+    plan = plan_frontmatter_merge(
+        _bundle(tmp_path),
+        path,
+        {"value": date(2026, 7, 4)},
+    )
+
+    assert plan.changed is True
+    assert (
+        type(parse_concept_document(plan.proposed_content).frontmatter["value"]) is date
+    )
 
 
 @pytest.mark.parametrize(
@@ -327,25 +364,108 @@ def test_merge_rejects_duplicate_top_level_keys(tmp_path: Path) -> None:
         plan_frontmatter_merge(_bundle(tmp_path), path, {"title": "New"})
 
 
-def test_merge_rejects_alias_bearing_frontmatter(tmp_path: Path) -> None:
+def test_merge_preserves_untargeted_aliases(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    original = "---\n" "type: concept\n" "a: &shared value\n" "b: *shared\n" "---\n"
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"type": "updated"})
+
+    assert plan.proposed_content == original.replace(
+        "type: concept",
+        "type: updated",
+    )
+
+
+@pytest.mark.parametrize("target", ["a", "b"])
+def test_merge_rejects_targeted_alias_relationship(
+    tmp_path: Path,
+    target: str,
+) -> None:
     path = tmp_path / "topic.md"
     path.write_text(
         "---\ntype: concept\na: &shared value\nb: *shared\n---\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(DocumentChangePlanningError, match="aliases"):
-        plan_frontmatter_merge(_bundle(tmp_path), path, {"type": "updated"})
+    with pytest.raises(DocumentChangePlanningError, match="alias"):
+        plan_frontmatter_merge(_bundle(tmp_path), path, {target: "updated"})
 
 
-def test_merge_rejects_alias_producing_value(tmp_path: Path) -> None:
+def test_merge_preserves_untargeted_richer_yaml_value(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    original = (
+        "---\n"
+        "type: concept\n"
+        "published: 2026-07-04\n"
+        "metadata: {owners: [docs, platform]}\n"
+        "---\n"
+    )
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"type": "updated"})
+
+    assert plan.proposed_content == original.replace(
+        "type: concept",
+        "type: updated",
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        (1, 2),
+        {1, 2},
+        OrderedDict([("owner", "docs")]),
+        MappingProxyType({"owner": "docs"}),
+        object(),
+        float("nan"),
+        float("inf"),
+        float("-inf"),
+        time(12, 30),
+        timedelta(days=1),
+    ],
+)
+def test_merge_rejects_unsupported_update_values(
+    tmp_path: Path,
+    value: Any,
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("---\ntype: concept\n---\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="supported"):
+        plan_frontmatter_merge(_bundle(tmp_path), path, {"value": value})
+
+
+def test_merge_rejects_non_string_nested_mapping_key(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("---\ntype: concept\n---\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="string keys"):
+        plan_frontmatter_merge(_bundle(tmp_path), path, {"value": {1: "one"}})
+
+
+def test_merge_rejects_cyclic_update_value(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     path.write_text("---\ntype: concept\n---\n", encoding="utf-8")
     recursive: list[Any] = []
     recursive.append(recursive)
 
-    with pytest.raises(DocumentChangePlanningError, match="aliases"):
-        plan_frontmatter_merge(_bundle(tmp_path), path, {"recursive": recursive})
+    with pytest.raises(DocumentChangePlanningError, match="shared or cyclic"):
+        plan_frontmatter_merge(_bundle(tmp_path), path, {"value": recursive})
+
+
+def test_merge_rejects_shared_update_container(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("---\ntype: concept\n---\n", encoding="utf-8")
+    shared = ["one"]
+
+    with pytest.raises(DocumentChangePlanningError, match="shared or cyclic"):
+        plan_frontmatter_merge(
+            _bundle(tmp_path),
+            path,
+            {"first": shared, "second": shared},
+        )
 
 
 @pytest.mark.parametrize(

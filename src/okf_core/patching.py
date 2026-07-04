@@ -5,10 +5,11 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
-from math import isnan
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
 from typing import Any
 
@@ -155,8 +156,10 @@ def plan_frontmatter_merge(
     """Plan a shallow, byte-preserving merge of top-level frontmatter fields.
 
     Existing values are replaced at their YAML source spans and missing fields
-    are appended in update order. YAML aliases are rejected because their
-    shared source nodes cannot be edited safely without broader round-tripping.
+    are appended in update order. Update values may contain plain YAML-oriented
+    scalars, dates, datetimes, lists, and string-keyed dictionaries. Untargeted
+    YAML aliases are preserved; fields participating in alias relationships
+    cannot be changed safely and are rejected.
     """
 
     return _plan_document_change(
@@ -431,11 +434,13 @@ def _merge_frontmatter(
     if not isinstance(updates, Mapping):
         raise DocumentChangePlanningError(path, "Frontmatter updates must be a mapping")
     update_items = tuple(updates.items())
+    seen_containers: set[int] = set()
     for key, value in update_items:
         if not isinstance(key, str) or not key.strip():
             raise DocumentChangePlanningError(
                 path, "Frontmatter update keys must be non-empty strings"
             )
+        _validate_frontmatter_update_value(path, value, seen_containers)
         _dump_yaml(path, value, flow_style=False)
 
     try:
@@ -458,7 +463,6 @@ def _merge_frontmatter(
 
     yaml_start, yaml_end = bounds
     yaml_source = content[yaml_start:yaml_end]
-    _reject_yaml_aliases(path, yaml_source)
     root = _compose_frontmatter(path, yaml_source)
     nodes = _top_level_nodes(root)
 
@@ -472,10 +476,16 @@ def _merge_frontmatter(
         if value_node is None:
             additions.append((key, value))
             continue
+        key_line = _node_key_line(root, key)
+        if value_node.start_mark.line < key_line:
+            raise DocumentChangePlanningError(
+                path,
+                f"Frontmatter field {key!r} is a YAML alias and cannot be changed",
+            )
         start = value_node.start_mark.index
         end = value_node.end_mark.index
         original_value_source = yaml_source[start:end]
-        inline = value_node.start_mark.line == _node_key_line(root, key)
+        inline = value_node.start_mark.line == key_line
         replacement = _serialize_replacement_value(
             path,
             value,
@@ -500,6 +510,54 @@ def _merge_frontmatter(
 
 
 _MISSING = object()
+_SUPPORTED_FRONTMATTER_SCALAR_TYPES = {
+    str,
+    bool,
+    int,
+    float,
+    type(None),
+    date,
+    datetime,
+}
+
+
+def _validate_frontmatter_update_value(
+    path: Path,
+    value: Any,
+    seen_containers: set[int],
+) -> None:
+    value_type = type(value)
+    if value_type in _SUPPORTED_FRONTMATTER_SCALAR_TYPES:
+        if value_type is float and not isfinite(value):
+            raise DocumentChangePlanningError(
+                path, "Frontmatter update values must use supported finite scalars"
+            )
+        return
+    if value_type not in {list, dict}:
+        raise DocumentChangePlanningError(
+            path,
+            "Frontmatter update values must use supported scalar, list, or dict types",
+        )
+
+    identity = id(value)
+    if identity in seen_containers:
+        raise DocumentChangePlanningError(
+            path,
+            "Frontmatter update values must not contain shared or cyclic containers",
+        )
+    seen_containers.add(identity)
+
+    if value_type is list:
+        for item in value:
+            _validate_frontmatter_update_value(path, item, seen_containers)
+        return
+
+    for key, item in value.items():
+        if type(key) is not str:
+            raise DocumentChangePlanningError(
+                path, "Frontmatter update dictionaries must use string keys"
+            )
+        _validate_frontmatter_update_value(path, item, seen_containers)
 
 
 def _frontmatter_bounds(content: str) -> tuple[int, int] | None:
@@ -575,7 +633,7 @@ def _dump_yaml(path: Path, value: Any, *, flow_style: bool) -> str:
         raise DocumentChangePlanningError(
             path, f"Frontmatter value cannot be represented as safe YAML: {exc}"
         ) from exc
-    _reject_yaml_aliases(path, dumped)
+    _reject_generated_yaml_aliases(path, dumped)
     return dumped
 
 
@@ -598,7 +656,7 @@ def _dump_yaml_mapping(
         raise DocumentChangePlanningError(
             path, f"Frontmatter updates cannot be represented as safe YAML: {exc}"
         ) from exc
-    _reject_yaml_aliases(path, dumped)
+    _reject_generated_yaml_aliases(path, dumped)
     return dumped.replace("\n", line_ending)
 
 
@@ -608,7 +666,7 @@ def _strip_yaml_document_end(dumped: str) -> str:
     return dumped
 
 
-def _reject_yaml_aliases(path: Path, yaml_source: str) -> None:
+def _reject_generated_yaml_aliases(path: Path, yaml_source: str) -> None:
     try:
         has_alias = any(
             isinstance(token, AliasToken)
@@ -620,7 +678,7 @@ def _reject_yaml_aliases(path: Path, yaml_source: str) -> None:
         ) from exc
     if has_alias:
         raise DocumentChangePlanningError(
-            path, "Frontmatter merges do not support YAML aliases"
+            path, "Generated frontmatter updates must not contain YAML aliases"
         )
 
 
@@ -634,8 +692,6 @@ def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
     bounds = _frontmatter_bounds(proposed)
     if bounds is None:
         raise DocumentChangePlanningError(path, "Merged frontmatter is missing")
-    yaml_start, yaml_end = bounds
-    _reject_yaml_aliases(path, proposed[yaml_start:yaml_end])
     if not isinstance(document.frontmatter, dict):
         raise DocumentChangePlanningError(path, "Merged frontmatter is not a mapping")
 
@@ -643,23 +699,11 @@ def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
 def _yaml_values_equal(left: Any, right: Any) -> bool:
     if type(left) is not type(right):
         return False
-    if isinstance(left, float) and isnan(left) and isnan(right):
-        return True
-    if isinstance(left, Mapping):
-        if len(left) != len(right):
+    if type(left) is dict:
+        if left.keys() != right.keys():
             return False
-        unmatched = list(right.items())
-        for left_key, left_value in left.items():
-            for index, (right_key, right_value) in enumerate(unmatched):
-                if _yaml_values_equal(left_key, right_key):
-                    if not _yaml_values_equal(left_value, right_value):
-                        return False
-                    unmatched.pop(index)
-                    break
-            else:
-                return False
-        return not unmatched
-    if isinstance(left, list):
+        return all(_yaml_values_equal(left[key], right[key]) for key in left)
+    if type(left) is list:
         return len(left) == len(right) and all(
             _yaml_values_equal(left_item, right_item)
             for left_item, right_item in zip(left, right)
