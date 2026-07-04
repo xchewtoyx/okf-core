@@ -364,6 +364,18 @@ def test_merge_rejects_duplicate_top_level_keys(tmp_path: Path) -> None:
         plan_frontmatter_merge(_bundle(tmp_path), path, {"title": "New"})
 
 
+def test_merge_empty_updates_is_noop_even_for_malformed_frontmatter(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "topic.md"
+    original = "---\ntype: concept\ntitle: First\ntitle: Second\n---\n"
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {})
+
+    assert plan.proposed_content == original
+
+
 def test_merge_preserves_untargeted_aliases(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     original = "---\n" "type: concept\n" "a: &shared value\n" "b: *shared\n" "---\n"
@@ -388,7 +400,7 @@ def test_merge_rejects_targeted_alias_relationship(
         encoding="utf-8",
     )
 
-    with pytest.raises(DocumentChangePlanningError, match="alias"):
+    with pytest.raises(DocumentChangePlanningError, match="cannot be changed"):
         plan_frontmatter_merge(_bundle(tmp_path), path, {target: "updated"})
 
 

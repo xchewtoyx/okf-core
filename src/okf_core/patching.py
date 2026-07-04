@@ -443,15 +443,15 @@ def _merge_frontmatter(
         _validate_frontmatter_update_value(path, value, seen_containers)
         _dump_yaml(path, value, flow_style=False)
 
+    if not update_items:
+        return content
+
     try:
         document = parse_concept_document(content)
     except DocumentParseError as exc:
         raise DocumentChangePlanningError(
             path, f"Could not parse document frontmatter: {exc}"
         ) from exc
-
-    if not update_items:
-        return content
 
     bounds = _frontmatter_bounds(content)
     line_ending = _first_line_ending(content)
@@ -465,6 +465,7 @@ def _merge_frontmatter(
     yaml_source = content[yaml_start:yaml_end]
     root = _compose_frontmatter(path, yaml_source)
     nodes = _top_level_nodes(root)
+    alias_linked_keys = _alias_linked_keys(root)
 
     replacements: list[tuple[int, int, str]] = []
     additions: list[tuple[str, Any]] = []
@@ -476,12 +477,12 @@ def _merge_frontmatter(
         if value_node is None:
             additions.append((key, value))
             continue
-        key_line = _node_key_line(root, key)
-        if value_node.start_mark.line < key_line:
+        if key in alias_linked_keys:
             raise DocumentChangePlanningError(
                 path,
                 f"Frontmatter field {key!r} is a YAML alias and cannot be changed",
             )
+        key_line = _node_key_line(root, key)
         start = value_node.start_mark.index
         end = value_node.end_mark.index
         original_value_source = yaml_source[start:end]
@@ -591,6 +592,25 @@ def _top_level_nodes(root: MappingNode | None) -> dict[str, Node]:
     if root is None:
         return {}
     return {key_node.value: value_node for key_node, value_node in root.value}
+
+
+def _alias_linked_keys(root: MappingNode | None) -> set[str]:
+    """Top-level keys whose composed value node is shared with another key.
+
+    PyYAML composes an anchor definition and each of its aliases to the same
+    node object, so a shared node identity covers both the anchor-defining
+    key and every key that aliases it.
+    """
+    if root is None:
+        return set()
+    node_counts: dict[int, int] = {}
+    for _, value_node in root.value:
+        node_counts[id(value_node)] = node_counts.get(id(value_node), 0) + 1
+    return {
+        key_node.value
+        for key_node, value_node in root.value
+        if node_counts[id(value_node)] > 1
+    }
 
 
 def _node_key_line(root: MappingNode | None, target_key: str) -> int:
