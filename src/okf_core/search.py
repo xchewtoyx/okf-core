@@ -70,6 +70,8 @@ def search_concepts(
 
     with sqlite3.connect(db_path) as conn:
         conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA busy_timeout = 5000;")
         _ensure_search_schema(conn)
         if listing is not None:
             _refresh_search_index(conn, bundle, listing)

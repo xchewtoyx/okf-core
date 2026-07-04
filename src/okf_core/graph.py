@@ -333,6 +333,8 @@ def find_unlinked_mentions(
     problems: list[GraphProblem] = []
 
     with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA busy_timeout = 5000;")
         _ensure_search_schema(conn)
 
         if refresh:
@@ -411,6 +413,8 @@ def find_unlinked_mentions(
     suggestions: list[LinkSuggestion] = []
 
     with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA busy_timeout = 5000;")
         for target_id, (target_path, title) in sorted(all_concepts.items()):
             if not title:
                 continue

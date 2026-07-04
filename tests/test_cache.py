@@ -698,3 +698,48 @@ def test_cache_stores_and_retrieves_stable_id(tmp_path: Path) -> None:
     manifest2 = scan_bundle(bundle)
     assert len(manifest2.concepts) == 1
     assert manifest2.concepts[0].stable_id == "uuid-123"
+
+
+def test_cache_concurrency(tmp_path: Path) -> None:
+    import threading
+
+    root = tmp_path / "docs"
+    # Create multiple concepts
+    for i in range(10):
+        _write_concept(
+            root / f"c_{i}.md",
+            "type: concept\ntitle: Concept\n",
+            body=f"Reference to [c_{i}](c_{i}.md)\n",
+        )
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=cache_dir,
+    )
+
+    # Pre-initialize the database cache
+    scan_bundle(bundle)
+
+    errors: list[Exception] = []
+
+    def run_concurrently() -> None:
+        try:
+            m = scan_bundle(bundle)
+            build_bundle_graph(bundle, manifest=m)
+        except Exception as e:
+            errors.append(e)
+
+    threads = [threading.Thread(target=run_concurrently) for _ in range(15)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    # Ensure no threads raised sqlite3.OperationalError: database is locked
+    assert not errors, f"Concurrency test failed with errors: {errors}"

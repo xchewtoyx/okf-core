@@ -35,10 +35,16 @@ class SqliteCachePlugin:
         self._conn: sqlite3.Connection | None = None
         self._init_db()
 
+    def _connect(self) -> sqlite3.Connection:
+        conn = sqlite3.connect(self.db_path)
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA busy_timeout = 5000;")
+        return conn
+
     def _init_db(self) -> None:
         """Create tables if they do not exist."""
-        with sqlite3.connect(self.db_path) as conn:
-            conn.execute("PRAGMA foreign_keys = ON;")
+        with self._connect() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS concepts (
                     concept_id TEXT PRIMARY KEY,
@@ -92,8 +98,7 @@ class SqliteCachePlugin:
         if self._conn is not None:
             yield self._conn
         else:
-            with sqlite3.connect(self.db_path) as conn:
-                conn.execute("PRAGMA foreign_keys = ON;")
+            with self._connect() as conn:
                 yield conn
 
     @hookimpl
@@ -106,9 +111,8 @@ class SqliteCachePlugin:
                 self._conn.close()
             except sqlite3.ProgrammingError:
                 pass
-        self._conn = sqlite3.connect(self.db_path)
-        self._conn.execute("PRAGMA foreign_keys = ON;")
-        self._conn.execute("BEGIN TRANSACTION;")
+        self._conn = self._connect()
+        self._conn.execute("BEGIN IMMEDIATE TRANSACTION;")
 
     @hookimpl
     def okf_end_scan(
@@ -158,9 +162,8 @@ class SqliteCachePlugin:
                 self._conn.close()
             except sqlite3.ProgrammingError:
                 pass
-        self._conn = sqlite3.connect(self.db_path)
-        self._conn.execute("PRAGMA foreign_keys = ON;")
-        self._conn.execute("BEGIN TRANSACTION;")
+        self._conn = self._connect()
+        self._conn.execute("BEGIN IMMEDIATE TRANSACTION;")
 
     @hookimpl
     def okf_end_graph(
