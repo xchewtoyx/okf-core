@@ -10,6 +10,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - **Cyclomatic complexity linting**: `ruff`'s `C901` (mccabe) rule enabled with `max-complexity = 14` as part of `just lint` / CI. (#125)
 
+### Changed
+
+- Reduced cyclomatic complexity of `validate_concept_document_with_profile` and `build_context_pack` below the lint threshold via helper extraction; no behavior change. (#119, #123)
+
 ## [0.4.1] - 2026-07-04
 
 ### Added
