@@ -62,6 +62,79 @@ def test_existing_link_suppresses_suggestion(tmp_path: Path) -> None:
     assert result.suggestions == ()
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        "```text\nGraph Chat API\n```\n",
+        "    Graph Chat API\n",
+        "Use `Graph Chat API` for details.\n",
+        "See [documentation](https://example.test/graph-chat-api).\n",
+        "![diagram](https://example.test/graph-chat-api)\n",
+    ],
+    ids=["fenced-code", "indented-code", "inline-code", "link-href", "image-href"],
+)
+def test_non_prose_title_match_is_not_suggested(tmp_path: Path, body: str) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "graph-chat-api.md", title="Graph Chat API")
+    _write_concept(root / "source.md", title="Source", body=body)
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    assert find_unlinked_mentions(bundle).suggestions == ()
+
+
+@pytest.mark.parametrize(
+    "body",
+    ["Foo`ignored`Bar\n", "Foo![ignored](image.png)Bar\n"],
+    ids=["inline-code", "image"],
+)
+def test_excluded_inline_content_preserves_token_boundaries(
+    tmp_path: Path, body: str
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "foobar.md", title="FooBar")
+    _write_concept(root / "source.md", title="Source", body=body)
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    assert find_unlinked_mentions(bundle).suggestions == ()
+
+
+def test_displayed_link_text_remains_eligible_prose(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "graph-chat-api.md", title="Graph Chat API")
+    _write_concept(
+        root / "source.md",
+        title="Source",
+        body="See [Graph Chat API](https://example.test/docs).\n",
+    )
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    result = find_unlinked_mentions(bundle)
+
+    assert [
+        (suggestion.source_concept_id, suggestion.target_concept_id)
+        for suggestion in result.suggestions
+    ] == [("source", "graph-chat-api")]
+
+
+def test_prose_match_remains_when_code_match_is_also_present(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "graph-chat-api.md", title="Graph Chat API")
+    _write_concept(
+        root / "source.md",
+        title="Source",
+        body="`Graph Chat API`\n\nUse Graph Chat API for details.\n",
+    )
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    result = find_unlinked_mentions(bundle)
+
+    assert [
+        (suggestion.source_concept_id, suggestion.target_concept_id)
+        for suggestion in result.suggestions
+    ] == [("source", "graph-chat-api")]
+    assert "[Graph] [Chat] [API]" in result.suggestions[0].matched_text
+
+
 def test_no_mention_produces_no_suggestion(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "alpha.md", title="Alpha")

@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - `okf index` now reports files excluded by `reserved_filenames`, clarifying zero-entry indexes caused by reserved root files. (#93)
+- `find_unlinked_mentions` no longer suggests links based only on code regions or Markdown link destinations. (#95)
 
 ---
 
