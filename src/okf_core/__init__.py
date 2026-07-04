@@ -87,6 +87,7 @@ from okf_core.patching import (
     DocumentChangeResult,
     DocumentChangeSafetyError,
     apply_document_change,
+    plan_frontmatter_merge,
     plan_document_change,
     plan_markdown_section_patch,
 )
@@ -154,6 +155,7 @@ __all__ = [
     "is_supported_okf_version",
     "parse_index",
     "parse_okf_version",
+    "plan_frontmatter_merge",
     "plan_document_change",
     "plan_markdown_section_patch",
     "concept_id_to_path",

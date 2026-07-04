@@ -5,12 +5,18 @@ from __future__ import annotations
 import os
 import stat
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from datetime import date, datetime
 from hashlib import sha256
+from math import isfinite
 from pathlib import Path
+from typing import Any
 
+import yaml
 from markdown_it import MarkdownIt
+from yaml.nodes import MappingNode, Node
+from yaml.tokens import AliasToken
 
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError, parse_concept_document
@@ -138,6 +144,31 @@ def plan_markdown_section_patch(
             heading,
             body,
             level,
+        ),
+    )
+
+
+def plan_frontmatter_merge(
+    bundle: BundleConfig,
+    path: Path | str,
+    updates: Mapping[str, Any],
+) -> DocumentChangePlan:
+    """Plan a shallow, byte-preserving merge of top-level frontmatter fields.
+
+    Existing values are replaced at their YAML source spans and missing fields
+    are appended in update order. Update values may contain plain YAML-oriented
+    scalars, dates, datetimes, lists, and string-keyed dictionaries. Untargeted
+    YAML aliases are preserved; fields participating in alias relationships
+    cannot be changed safely and are rejected.
+    """
+
+    return _plan_document_change(
+        bundle,
+        Path(path),
+        lambda resolved_path, original_content: _merge_frontmatter(
+            resolved_path,
+            original_content,
+            updates,
         ),
     )
 
@@ -393,6 +424,319 @@ def _line_offsets(content: str) -> tuple[int, ...]:
         position += len(line)
         offsets.append(position)
     return tuple(offsets)
+
+
+def _merge_frontmatter(
+    path: Path,
+    content: str,
+    updates: Mapping[str, Any],
+) -> str:
+    if not isinstance(updates, Mapping):
+        raise DocumentChangePlanningError(path, "Frontmatter updates must be a mapping")
+    update_items = tuple(updates.items())
+    seen_containers: set[int] = set()
+    for key, value in update_items:
+        if (
+            not isinstance(key, str)
+            or not key
+            or key != key.strip()
+            or "\n" in key
+            or "\r" in key
+        ):
+            raise DocumentChangePlanningError(
+                path,
+                "Frontmatter update keys must be single-line strings without "
+                "leading or trailing whitespace",
+            )
+        _validate_frontmatter_update_value(path, value, seen_containers)
+        _dump_yaml(path, value, flow_style=False)
+
+    if not update_items:
+        return content
+
+    try:
+        document = parse_concept_document(content)
+    except DocumentParseError as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not parse document frontmatter: {exc}"
+        ) from exc
+
+    bounds = _frontmatter_bounds(content)
+    line_ending = _first_line_ending(content)
+    if bounds is None:
+        generated = _dump_yaml_mapping(path, update_items, line_ending)
+        proposed = f"---{line_ending}{generated}---{line_ending}{content}"
+        _validate_merged_frontmatter(path, proposed)
+        return proposed
+
+    yaml_start, yaml_end = bounds
+    yaml_source = content[yaml_start:yaml_end]
+    root = _compose_frontmatter(path, yaml_source)
+    nodes = _top_level_nodes(root)
+    alias_linked_keys = _alias_linked_keys(root)
+
+    replacements: list[tuple[int, int, str]] = []
+    additions: list[tuple[str, Any]] = []
+    for key, value in update_items:
+        current = document.frontmatter.get(key, _MISSING)
+        if current is not _MISSING and _yaml_values_equal(current, value):
+            continue
+        value_node = nodes.get(key)
+        if value_node is None:
+            additions.append((key, value))
+            continue
+        if key in alias_linked_keys:
+            raise DocumentChangePlanningError(
+                path,
+                f"Frontmatter field {key!r} is a YAML alias and cannot be changed",
+            )
+        key_line = _node_key_line(root, key)
+        start = value_node.start_mark.index
+        end = value_node.end_mark.index
+        original_value_source = yaml_source[start:end]
+        inline = value_node.start_mark.line == key_line
+        replacement = _serialize_replacement_value(
+            path,
+            value,
+            column=value_node.start_mark.column,
+            inline=inline,
+            preserve_final_line_ending=original_value_source.endswith(("\n", "\r")),
+            line_ending=line_ending,
+        )
+        if start == end:
+            replacement = f" {replacement}"
+        replacements.append((start, end, replacement))
+
+    merged_yaml = yaml_source
+    for start, end, replacement in sorted(replacements, reverse=True):
+        merged_yaml = f"{merged_yaml[:start]}{replacement}{merged_yaml[end:]}"
+    if additions:
+        merged_yaml += _dump_yaml_mapping(path, additions, line_ending)
+
+    proposed = f"{content[:yaml_start]}{merged_yaml}{content[yaml_end:]}"
+    _validate_merged_frontmatter(path, proposed)
+    return proposed
+
+
+_MISSING = object()
+_SUPPORTED_FRONTMATTER_SCALAR_TYPES = {
+    str,
+    bool,
+    int,
+    float,
+    type(None),
+    date,
+    datetime,
+}
+
+
+def _validate_frontmatter_update_value(
+    path: Path,
+    value: Any,
+    seen_containers: set[int],
+) -> None:
+    value_type = type(value)
+    if value_type in _SUPPORTED_FRONTMATTER_SCALAR_TYPES:
+        if value_type is float and not isfinite(value):
+            raise DocumentChangePlanningError(
+                path, "Frontmatter update values must use supported finite scalars"
+            )
+        return
+    if value_type not in {list, dict}:
+        raise DocumentChangePlanningError(
+            path,
+            "Frontmatter update values must use supported scalar, list, or dict types",
+        )
+
+    identity = id(value)
+    if identity in seen_containers:
+        raise DocumentChangePlanningError(
+            path,
+            "Frontmatter update values must not contain shared or cyclic containers",
+        )
+    seen_containers.add(identity)
+
+    if value_type is list:
+        for item in value:
+            _validate_frontmatter_update_value(path, item, seen_containers)
+        return
+
+    for key, item in value.items():
+        if type(key) is not str:
+            raise DocumentChangePlanningError(
+                path, "Frontmatter update dictionaries must use string keys"
+            )
+        _validate_frontmatter_update_value(path, item, seen_containers)
+
+
+def _frontmatter_bounds(content: str) -> tuple[int, int] | None:
+    lines = content.splitlines(keepends=True)
+    if not lines or lines[0].rstrip("\r\n") != "---":
+        return None
+    yaml_start = len(lines[0])
+    position = yaml_start
+    for line in lines[1:]:
+        if line.rstrip("\r\n") == "---":
+            return yaml_start, position
+        position += len(line)
+    return None
+
+
+def _compose_frontmatter(path: Path, yaml_source: str) -> MappingNode | None:
+    try:
+        root = yaml.compose(yaml_source, Loader=yaml.SafeLoader)
+    except yaml.YAMLError as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not compose document frontmatter: {exc}"
+        ) from exc
+    if root is None:
+        return None
+    if not isinstance(root, MappingNode):
+        raise DocumentChangePlanningError(path, "YAML frontmatter must be a mapping")
+    return root
+
+
+def _top_level_nodes(root: MappingNode | None) -> dict[str, Node]:
+    if root is None:
+        return {}
+    return {key_node.value: value_node for key_node, value_node in root.value}
+
+
+def _alias_linked_keys(root: MappingNode | None) -> set[str]:
+    """Top-level keys whose composed value node is shared with another key.
+
+    PyYAML composes an anchor definition and each of its aliases to the same
+    node object, so a shared node identity covers both the anchor-defining
+    key and every key that aliases it.
+    """
+    if root is None:
+        return set()
+    node_counts: dict[int, int] = {}
+    for _, value_node in root.value:
+        node_counts[id(value_node)] = node_counts.get(id(value_node), 0) + 1
+    return {
+        key_node.value
+        for key_node, value_node in root.value
+        if node_counts[id(value_node)] > 1
+    }
+
+
+def _node_key_line(root: MappingNode | None, target_key: str) -> int:
+    assert root is not None
+    for key_node, _ in root.value:
+        if key_node.value == target_key:
+            return key_node.start_mark.line
+    raise AssertionError(f"Missing composed frontmatter key: {target_key}")
+
+
+def _serialize_replacement_value(
+    path: Path,
+    value: Any,
+    *,
+    column: int,
+    inline: bool,
+    preserve_final_line_ending: bool,
+    line_ending: str,
+) -> str:
+    dumped = _dump_yaml(path, value, flow_style=inline)
+    dumped = _strip_yaml_document_end(dumped)
+    dumped = dumped.removesuffix("\n")
+    dumped = dumped.replace("\n", f"\n{' ' * column}")
+    dumped = dumped.replace("\n", line_ending)
+    if preserve_final_line_ending:
+        dumped += line_ending
+    return dumped
+
+
+def _dump_yaml(path: Path, value: Any, *, flow_style: bool) -> str:
+    try:
+        dumped = yaml.safe_dump(
+            value,
+            allow_unicode=True,
+            default_flow_style=flow_style,
+            sort_keys=False,
+            width=10_000,
+        )
+    except (yaml.YAMLError, TypeError, ValueError) as exc:
+        raise DocumentChangePlanningError(
+            path, f"Frontmatter value cannot be represented as safe YAML: {exc}"
+        ) from exc
+    _reject_generated_yaml_aliases(path, dumped)
+    return dumped
+
+
+def _dump_yaml_mapping(
+    path: Path,
+    items: Sequence[tuple[str, Any]],
+    line_ending: str,
+) -> str:
+    if not items:
+        return ""
+    try:
+        dumped = yaml.safe_dump(
+            dict(items),
+            allow_unicode=True,
+            default_flow_style=False,
+            sort_keys=False,
+            width=10_000,
+        )
+    except (yaml.YAMLError, TypeError, ValueError) as exc:
+        raise DocumentChangePlanningError(
+            path, f"Frontmatter updates cannot be represented as safe YAML: {exc}"
+        ) from exc
+    _reject_generated_yaml_aliases(path, dumped)
+    return dumped.replace("\n", line_ending)
+
+
+def _strip_yaml_document_end(dumped: str) -> str:
+    if dumped.endswith("\n...\n"):
+        return dumped[:-4]
+    return dumped
+
+
+def _reject_generated_yaml_aliases(path: Path, yaml_source: str) -> None:
+    try:
+        has_alias = any(
+            isinstance(token, AliasToken)
+            for token in yaml.scan(yaml_source, Loader=yaml.SafeLoader)
+        )
+    except yaml.YAMLError as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not scan document frontmatter: {exc}"
+        ) from exc
+    if has_alias:
+        raise DocumentChangePlanningError(
+            path, "Generated frontmatter updates must not contain YAML aliases"
+        )
+
+
+def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
+    try:
+        document = parse_concept_document(proposed)
+    except DocumentParseError as exc:
+        raise DocumentChangePlanningError(
+            path, f"Merged frontmatter is invalid: {exc}"
+        ) from exc
+    bounds = _frontmatter_bounds(proposed)
+    if bounds is None:
+        raise DocumentChangePlanningError(path, "Merged frontmatter is missing")
+    if not isinstance(document.frontmatter, dict):
+        raise DocumentChangePlanningError(path, "Merged frontmatter is not a mapping")
+
+
+def _yaml_values_equal(left: Any, right: Any) -> bool:
+    if type(left) is not type(right):
+        return False
+    if type(left) is dict:
+        if left.keys() != right.keys():
+            return False
+        return all(_yaml_values_equal(left[key], right[key]) for key in left)
+    if type(left) is list:
+        return len(left) == len(right) and all(
+            _yaml_values_equal(left_item, right_item)
+            for left_item, right_item in zip(left, right)
+        )
+    return left == right
 
 
 def _resolve_existing_target(bundle: BundleConfig, path: Path) -> tuple[Path, Path]:
