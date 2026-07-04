@@ -140,6 +140,21 @@ Body
         parse_concept_document(markdown)
 
 
+@pytest.mark.parametrize(
+    "frontmatter",
+    [
+        "type: concept\ntype: duplicate\n",
+        "type: concept\nmetadata:\n  owner: first\n  owner: second\n",
+        "type: concept\nitems:\n  - owner: first\n    owner: second\n",
+    ],
+)
+def test_duplicate_mapping_keys_raise_parse_error(frontmatter: str) -> None:
+    markdown = f"---\n{frontmatter}---\nBody\n"
+
+    with pytest.raises(DocumentParseError, match="duplicate key"):
+        parse_concept_document(markdown)
+
+
 def test_body_content_is_preserved_after_frontmatter() -> None:
     body = "\n# Heading\n\n- item\n\nTrailing spaces  \n"
     markdown = f"---\ntype: concept\n---\n{body}"

@@ -61,6 +61,10 @@ consume `okf-core`.
   `examples/agent-instructions/`.
 - Preserve unknown OKF frontmatter fields unless a change explicitly targets
   them.
+- Keep OKF consumption and conformance permissive even when a focused mutation
+  API supports only a documented subset of replacement values. Preserve
+  untargeted valid frontmatter, and report unsupported requested mutations as
+  operation errors rather than document or bundle conformance failures.
 - Prefer deterministic parsing, validation, indexing, graph, and patch logic
   over agent interpretation.
 - Keep agent runtimes and workflow orchestrators optional. For example,
@@ -186,4 +190,3 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   python .github/scripts/run_local_matrix.py
   ```
   This parses the workflow matrix from `.github/workflows/test.yml` and spins up containerized pytest checks to detect version incompatibilities before raising a pull request.
-

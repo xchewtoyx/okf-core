@@ -301,7 +301,7 @@ graph = build_bundle_graph(config.bundles["default"], manifest)
 
 ### Concept Documents
 
-`parse_concept_document()` parses a Markdown string into YAML frontmatter and body content. Documents without frontmatter are accepted and return empty frontmatter with the original Markdown as the body. Invalid YAML, unterminated frontmatter, non-mapping frontmatter, and non-string frontmatter keys raise `DocumentParseError`.
+`parse_concept_document()` parses a Markdown string into YAML frontmatter and body content. Documents without frontmatter are accepted and return empty frontmatter with the original Markdown as the body. Invalid YAML, unterminated frontmatter, non-mapping frontmatter, duplicate mapping keys at any depth, and non-string top-level frontmatter keys raise `DocumentParseError`.
 
 `serialize_concept_document()` writes a parsed concept document back to Markdown. Unknown frontmatter keys are preserved when callers keep them in the parsed frontmatter dictionary. Documents with empty frontmatter serialize as body-only Markdown.
 
@@ -348,6 +348,30 @@ does not end in a line ending, the document's first detected line-ending style
 is appended to keep subsequent Markdown structurally separate. Equivalent
 content produces a no-op plan. Applying the plan uses
 `apply_document_change()` and retains its stale-content protection.
+
+`plan_frontmatter_merge(bundle, path, updates)` builds a safe plan for a
+shallow merge of selected top-level YAML frontmatter fields. Existing fields
+are replaced and missing fields are appended in update order. Unselected
+frontmatter—including unknown fields, comments, quoting, whitespace, and
+ordering—and the Markdown body remain byte-identical. Equivalent values and
+empty updates produce a no-op; `None` is written as YAML `null`.
+
+Requested values may use plain `str`, `bool`, `int`, finite `float`, `None`,
+`datetime.date`, and `datetime.datetime` values, plus recursively nested plain
+lists and string-keyed dictionaries. Other Python objects, non-finite floats,
+and shared or cyclic containers raise `DocumentChangePlanningError`. Exact
+scalar types remain significant: for example, a quoted date string differs
+from a YAML date, and a boolean differs from an integer.
+
+These restrictions apply only to values supplied for mutation; they do not
+narrow OKF conformance or general frontmatter consumption. Richer untargeted
+values and YAML aliases are preserved byte-for-byte. A targeted field that
+participates in an alias relationship is rejected because changing a shared
+node cannot preserve its semantics locally. Malformed or non-mapping
+frontmatter, duplicate mapping keys, and invalid update keys are also reported
+through `DocumentChangePlanningError`. The merge does not delete fields or
+recursively merge nested mappings. Applying its plan uses
+`apply_document_change()` and retains the same stale-content protection.
 
 ### Validation
 

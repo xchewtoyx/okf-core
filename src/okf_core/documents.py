@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Hashable
 from dataclasses import dataclass, field
 from typing import Any, TYPE_CHECKING
 
@@ -9,10 +10,38 @@ if TYPE_CHECKING:
     from okf_core.config import ProfileConfig, TaxonomyConfig
 
 import yaml
+from yaml.constructor import ConstructorError
+from yaml.nodes import MappingNode
 
 
 class DocumentParseError(Exception):
     """Raised when a concept document cannot be parsed."""
+
+
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects repeated explicit mapping keys."""
+
+    def construct_mapping(
+        self,
+        node: yaml.Node,
+        deep: bool = False,
+    ) -> dict[Any, Any]:
+        if isinstance(node, MappingNode):
+            seen: set[Hashable] = set()
+            for key_node, _ in node.value:
+                if key_node.tag == "tag:yaml.org,2002:merge":
+                    continue
+                key = self.construct_object(key_node, deep=deep)
+                if isinstance(key, Hashable) and key in seen:
+                    raise ConstructorError(
+                        "while constructing a mapping",
+                        node.start_mark,
+                        f"found duplicate key {key!r}",
+                        key_node.start_mark,
+                    )
+                if isinstance(key, Hashable):
+                    seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 @dataclass(frozen=True)
@@ -33,7 +62,7 @@ class ConceptDocument:
 
 
 def parse_concept_document(markdown: str) -> ConceptDocument:
-    """Parse Markdown into YAML frontmatter and body content."""
+    """Parse Markdown into frontmatter and body, rejecting duplicate YAML keys."""
 
     lines = markdown.splitlines(keepends=True)
     if not lines or lines[0].rstrip("\r\n") != "---":
@@ -201,7 +230,7 @@ def _find_frontmatter_close(lines: list[str]) -> int | None:
 
 def _parse_frontmatter(yaml_source: str) -> dict[str, Any]:
     try:
-        loaded = yaml.safe_load(yaml_source)
+        loaded = yaml.load(yaml_source, Loader=_UniqueKeySafeLoader)
     except yaml.YAMLError as exc:
         raise DocumentParseError(f"Invalid YAML frontmatter: {exc}") from exc
 
