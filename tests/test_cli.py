@@ -1894,3 +1894,46 @@ def test_index_recurse_handles_scan_problems(tmp_path: Path) -> None:
     assert data[0]["entries"] == 1
     assert len(data[0]["scan_problems"]) == 1
     assert "broken.md" in data[0]["scan_problems"][0]["path"]
+
+
+def test_index_recurse_with_directory_option(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    subdir = tmp_path / "topics"
+    _write_concept(subdir / "b.md", title="Beta")
+
+    nested_subdir = subdir / "nested"
+    _write_concept(nested_subdir / "c.md", title="Gamma")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "index",
+            "--config",
+            str(config_path),
+            "--recurse",
+            "--directory",
+            str(subdir),
+        ],
+    )
+
+    assert result.exit_code == 0
+
+    # It should generate index.md for 'topics' and 'topics/nested', but NOT the bundle root
+    assert not (tmp_path / "index.md").exists()
+    assert (subdir / "index.md").exists()
+    assert (nested_subdir / "index.md").exists()
+
+    # Check JSON output format (should be a list of 2 generated indexes)
+    data = json.loads(result.stdout)
+    assert isinstance(data, list)
+    assert len(data) == 2
+
+    paths = [item["path"] for item in data]
+    assert str(tmp_path / "index.md") not in paths
+    assert str(subdir / "index.md") in paths
+    assert str(nested_subdir / "index.md") in paths

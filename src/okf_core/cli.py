@@ -716,9 +716,14 @@ def index_cmd(
 
     resolved_bundle_root = bundle.bundle_root.resolve()
     concept_dirs = {resolved_bundle_root}
+    concepts_by_parent: dict[Path, list[Any]] = {}
+
     for c in manifest.concepts:
         try:
-            curr = c.path.resolve().parent
+            resolved_path = c.path.resolve()
+            curr = resolved_path.parent
+            concepts_by_parent.setdefault(curr, []).append(c)
+
             curr.relative_to(resolved_bundle_root)
             while curr != resolved_bundle_root and curr.parts:
                 concept_dirs.add(curr)
@@ -736,6 +741,13 @@ def index_cmd(
     else:
         dirs_to_index = [resolved_target_dir]
 
+    problems_resolved = []
+    for p in manifest.problems:
+        try:
+            problems_resolved.append((p.path.resolve(), p))
+        except Exception:
+            problems_resolved.append((p.path, p))
+
     results = []
     has_any_problems = False
 
@@ -745,13 +757,13 @@ def index_cmd(
     project_taxonomy = config.taxonomy
 
     for d in dirs_to_index:
-        direct_entries = [c for c in manifest.concepts if c.path.resolve().parent == d]
+        direct_entries = concepts_by_parent.get(d, [])
         subdirs = sorted(child for child in concept_dirs if child.parent == d)
 
         scan_problems_in_dir = []
-        for p in manifest.problems:
+        for resolved_p_path, p in problems_resolved:
             try:
-                p.path.relative_to(d)
+                resolved_p_path.relative_to(d)
                 scan_problems_in_dir.append(p)
             except ValueError:
                 pass
