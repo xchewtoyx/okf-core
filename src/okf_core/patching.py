@@ -687,19 +687,23 @@ def apply_file_move(bundle: BundleConfig, plan: FileMovePlan) -> FileMoveResult:
             plan.dest_path, f"Move destination now exists: {plan.dest_path}"
         )
 
+    dest_parent = plan.dest_path.parent
+    # Checked before mkdir(parents=True): if an ancestor was swapped for a
+    # symlink after planning, resolve() already diverges from the lexical
+    # path even though dest_parent itself doesn't exist yet, so this catches
+    # it before mkdir ever creates anything through that symlink.
+    _require_dest_parent_unchanged(plan.dest_path, dest_parent)
+
     try:
-        plan.dest_path.parent.mkdir(parents=True, exist_ok=True)
+        dest_parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         raise DocumentChangeApplyError(
             plan.dest_path, f"Could not create destination directory: {exc}"
         ) from exc
 
-    dest_parent = plan.dest_path.parent
-    if dest_parent.is_symlink() or dest_parent.resolve(strict=False) != dest_parent:
-        raise FileMoveConflictError(
-            plan.dest_path,
-            f"Move destination directory changed after planning: {dest_parent}",
-        )
+    # Re-checked immediately after mkdir: a narrower race where dest_parent
+    # was swapped for a symlink between the check above and mkdir returning.
+    _require_dest_parent_unchanged(plan.dest_path, dest_parent)
 
     try:
         os.link(plan.source_path, plan.dest_path)
@@ -1347,6 +1351,16 @@ def _require_current_hash(plan: DocumentChangePlan) -> None:
             plan.path,
             plan.original_sha256,
             actual_sha256,
+        )
+
+
+def _require_dest_parent_unchanged(dest_path: Path, dest_parent: Path) -> None:
+    """Raise if dest_parent is now a symlink, or an ancestor of it is."""
+
+    if dest_parent.is_symlink() or dest_parent.resolve(strict=False) != dest_parent:
+        raise FileMoveConflictError(
+            dest_path,
+            f"Move destination directory changed after planning: {dest_parent}",
         )
 
 

@@ -242,6 +242,33 @@ def test_apply_file_move_dest_parent_swapped_for_symlink_raises_conflict_error(
     assert list(elsewhere.iterdir()) == []
 
 
+def test_apply_file_move_never_creates_directories_through_a_swapped_ancestor(
+    tmp_path: Path,
+) -> None:
+    if not _can_symlink():
+        pytest.skip("symlinks not supported in this environment")
+
+    source = tmp_path / "old.md"
+    source.write_text("Body.\n", encoding="utf-8")
+    # "sub" does not exist under "elsewhere" yet -- only mkdir(parents=True)
+    # would create it, and only by walking through the swapped-in symlink.
+    dest = tmp_path / "linkdir" / "sub" / "new.md"
+    plan = plan_file_move(_bundle(tmp_path), source, dest)
+
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    (tmp_path / "linkdir").symlink_to(elsewhere)
+
+    with pytest.raises(FileMoveConflictError):
+        apply_file_move(_bundle(tmp_path), plan)
+
+    assert source.exists()
+    assert not dest.exists()
+    # The symlink check must run before mkdir(parents=True), so no "sub"
+    # directory is ever created inside the swapped-in location.
+    assert list(elsewhere.iterdir()) == []
+
+
 def test_apply_file_move_wrong_bundle_root_raises_apply_error(tmp_path: Path) -> None:
     root_a = tmp_path / "a"
     root_a.mkdir()

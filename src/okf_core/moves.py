@@ -6,7 +6,7 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlsplit, urlunsplit
+from urllib.parse import quote, urlsplit, urlunsplit
 
 from okf_core.config import BundleConfig
 from okf_core.graph import backlinks_to, build_bundle_graph, links_from
@@ -238,7 +238,11 @@ def _link_target_for_new_location(
     bundle-root-anchored '/...' form stays in that form; anything else is
     rewritten as a path relative to source_path's own directory, using POSIX
     '/' separators and '../' as needed for sibling/cousin directories). Only
-    the path portion is recalculated.
+    the path portion is recalculated. The recomputed path is percent-encoded
+    (leaving '/' as a literal separator) so a target containing a space or
+    other special character comes out in the same normalized form markdown-it
+    already emits for such hrefs, rather than an unencoded path that CommonMark
+    would require wrapping in '<...>'.
     """
 
     parsed = urlsplit(original_target)
@@ -250,4 +254,6 @@ def _link_target_for_new_location(
         relative = os.path.relpath(new_target_path, source_path.parent)
         new_path = PurePosixPath(relative.replace("\\", "/")).as_posix()
 
-    return urlunsplit(("", "", new_path, parsed.query, parsed.fragment))
+    return urlunsplit(
+        ("", "", quote(new_path, safe="/"), parsed.query, parsed.fragment)
+    )

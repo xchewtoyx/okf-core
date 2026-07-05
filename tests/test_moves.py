@@ -141,6 +141,20 @@ def test_move_concept_preserves_absolute_style_links(tmp_path: Path) -> None:
     assert a.read_text(encoding="utf-8") == "See [link](/topics/renamed.md).\n"
 
 
+def test_move_concept_percent_encodes_special_characters_in_rewritten_link(
+    tmp_path: Path,
+) -> None:
+    old = tmp_path / "old.md"
+    _write(old, "Body.\n")
+    a = tmp_path / "a.md"
+    _write(a, "See [link](old.md).\n")
+    new = tmp_path / "new file.md"
+
+    move_concept(_bundle(tmp_path), old, new)
+
+    assert a.read_text(encoding="utf-8") == "See [link](new%20file.md).\n"
+
+
 def test_move_concept_rewrites_relative_links_across_sibling_and_cousin_directories(
     tmp_path: Path,
 ) -> None:
