@@ -18,6 +18,7 @@ from okf_core import (
     build_context_pack,
     build_bundle_graph,
     declared_okf_version,
+    DocumentChangeError,
     find_unlinked_mentions,
     generate_index,
     list_concepts,
@@ -34,6 +35,7 @@ from okf_core import (
     parse_concept_document,
     serialize_concept_document,
 )
+from okf_core.moves import move_concept, plan_move_concept
 from okf_core.write_safety import check_bundle_write_safety
 from okf_core.orientation import ORIENTATION_GUIDE
 
@@ -644,6 +646,103 @@ def stable_id_cmd(
         click.echo(f"Wrote stable ID {new_id} to {path}", err=True)
     else:
         click.echo(new_id)
+
+
+@cli.command("move")
+@click.argument("source")
+@click.argument("dest")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show planned changes without writing anything.",
+)
+def move_cmd(
+    source: str,
+    dest: str,
+    config_path: str | None,
+    bundle_name: str,
+    dry_run: bool,
+) -> None:
+    """Relocate a concept file, rewriting inbound Markdown links across the bundle.
+
+    SOURCE and DEST are concept file paths, not concept IDs: relative to the
+    bundle root, or absolute paths that resolve inside it. DEST must be a
+    full path ending in a valid concept path; there is no shell-``mv``-style
+    "move into a directory" shorthand.
+    """
+    _, bundle = _load(config_path, bundle_name)
+
+    try:
+        if dry_run:
+            prep = plan_move_concept(bundle, source, dest)
+            output: dict[str, Any] = {
+                "bundle": bundle.name,
+                "source": str(prep.file_move_plan.source_path),
+                "dest": str(prep.file_move_plan.dest_path),
+                "would_move": not prep.file_move_plan.noop,
+                "would_update_files": sorted(
+                    str(path)
+                    for path, plan in prep.link_rewrite_plans.items()
+                    if plan.changed
+                ),
+            }
+        else:
+            result = move_concept(bundle, source, dest)
+            output = {
+                "bundle": bundle.name,
+                "source": str(result.source_path),
+                "dest": str(result.dest_path),
+                "moved": result.moved,
+                "updated_files": [str(path) for path in result.updated_files],
+            }
+    except ConceptPathError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(2)
+    except DocumentChangeError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
+    if dry_run:
+        if output["would_move"]:
+            click.echo(
+                f"Dry run: would move {output['source']} to {output['dest']}; "
+                f"would update {len(output['would_update_files'])} referring file(s)",
+                err=True,
+            )
+        else:
+            click.echo(
+                f"Dry run: source and destination are the same path, nothing to "
+                f"do: {output['source']}",
+                err=True,
+            )
+    elif output["moved"]:
+        click.echo(
+            f"Moved {output['source']} to {output['dest']}; "
+            f"updated {len(output['updated_files'])} referring file(s)",
+            err=True,
+        )
+    else:
+        click.echo(
+            f"Source and destination are the same path; nothing to do: "
+            f"{output['source']}",
+            err=True,
+        )
 
 
 @cli.command("list-bundles")

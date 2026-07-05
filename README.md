@@ -269,6 +269,16 @@ This command interacts with the bundle's `stable_id_field` (which must be config
   - If the stable ID is missing (or if `--force` is specified), it generates a new UUID4 and prints it to `stdout`.
   - If `--write` is specified, it writes the new stable ID back to the concept file on disk, printing a confirmation message to `stderr`.
 
+### `okf move`
+
+Relocates a concept file within a bundle, rewriting every other file's inbound Markdown links so the bundle's link graph stays intact:
+
+```sh
+okf move SOURCE DEST [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+SOURCE and DEST are concept file paths, not concept IDs: relative to the bundle root, or absolute paths that resolve inside it. DEST must be a full path ending in a valid concept path; there is no shell-`mv`-style "move into a directory" shorthand. The concept file is relocated last, after every referring file's link has been rewritten, so a failure partway through always leaves the concept file at a well-defined location and the command is safe to re-run to completion. Moving a file to its own current path is a no-op. Exits `2` for an invalid SOURCE/DEST (wrong extension, reserved filename, escapes the bundle root); exits `1` for a missing source, an existing destination, a write-safety refusal, or a stale-content conflict.
+
 ### `okf orient`
 
 Shows onboarding and orientation guidance for OKF bundles:
@@ -376,6 +386,12 @@ recursively merge nested mappings. Applying its plan uses
 `plan_markdown_link_rewrite(bundle, path, rewrites)` builds a safe plan to rewrite the target/href destinations of one or more inline Markdown links in the document body. `rewrites` must be a sequence of `LinkRewrite(old_target, new_target)` instances. The primitive operates strictly on the Markdown body, leaving the frontmatter completely untouched. Duplicate `old_target` inputs (after normalization) are rejected. The implementation uses a single-pass replacement to prevent offset drift and avoid double-replacement issues if multiple rewrites form chains.
 
 Matching is driven entirely by parsing the document with `markdown-it-py`: each link's resolved href is compared against a caller-supplied target normalized the same way, and only real inline links found by the parser are ever rewritten. Text that merely looks like a link — inside code spans, fenced code blocks, or reference-style syntax — is never touched, without needing a separate raw-text scan or safety cross-check. Reference-style links are not supported and cause planning to raise `DocumentChangePlanningError`. Applying the plan uses `apply_document_change()` and retains the same stale-content protection.
+
+`plan_file_move(bundle, source, dest)` prepares an inspectable relocation of one existing bundle file, returning a `FileMovePlan` with the resolved source/dest paths and the source's SHA-256 hash. Planning reads and hashes the source but never moves it; source and dest resolving to the same path produces an idempotent no-op plan (`.noop`). `apply_file_move(bundle, plan)` rechecks bundle write safety and the source's current hash, then relocates the file with a create-hard-link-then-unlink sequence rather than an atomic replace: this means a destination that appears concurrently after planning is never silently overwritten (`FileMoveConflictError` is raised instead), at the cost of requiring source and dest to reside on the same filesystem. If the link succeeds but removing the source fails, both copies are left in place rather than losing the document.
+
+### Concept Relocation
+
+`plan_move_concept(bundle, source, dest)` and `move_concept(bundle, source, dest)` compose the primitives above into a concept-aware move: every other file that currently links to the concept at `source` has its link rewritten to point at `dest` (preserving each link's original `#fragment`/`?query` suffix and its relative-vs-bundle-root-anchored style), and only then is the concept file itself relocated. `plan_move_concept` is read-only (safe for a `--dry-run` preview); `move_concept` applies every referring file's rewrite before moving the concept file last, so a failure partway through always leaves the concept file at a well-defined location, and re-running `move_concept` with the same arguments resumes and completes the operation. See `okf move` above for the CLI entry point.
 
 ### Validation
 
