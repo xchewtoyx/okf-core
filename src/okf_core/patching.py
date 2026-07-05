@@ -148,6 +148,95 @@ def plan_markdown_section_patch(
     )
 
 
+@dataclass(frozen=True)
+class LinkRewrite:
+    """A requested target/destination rewrite for inline Markdown links."""
+
+    old_target: str
+    new_target: str
+
+
+def plan_markdown_link_rewrite(
+    bundle: BundleConfig,
+    path: Path | str,
+    rewrites: Sequence[LinkRewrite],
+) -> DocumentChangePlan:
+    """Plan rewriting target destinations of one or more inline Markdown links.
+
+    Rewrites match exact target URLs literally. Duplicate old_target entries are
+    rejected. Mismatches between the number of AST link occurrences and raw
+    literal matches (e.g., links in code blocks or reference-style links)
+    cause planning to raise DocumentChangePlanningError.
+    """
+    import re
+
+    # Validate duplicate old targets
+    old_targets = [r.old_target for r in rewrites]
+    if len(old_targets) != len(set(old_targets)):
+        raise DocumentChangePlanningError(
+            Path(path),
+            "Duplicate old_target values in rewrites list",
+        )
+
+    def rewrite_links(resolved_path: Path, original_content: str) -> str:
+        # Cross-check AST vs raw literal occurrences
+        tokens = _MARKDOWN.parse(original_content)
+        ast_counts: dict[str, int] = {r.old_target: 0 for r in rewrites}
+
+        for token in tokens:
+            if token.type != "inline" or token.children is None:
+                continue
+            for child in token.children:
+                if child.type != "link_open":
+                    continue
+                href = child.attrGet("href")
+                if href in ast_counts:
+                    ast_counts[href] += 1
+
+        for r in rewrites:
+            old_target = r.old_target
+            escaped = re.escape(old_target)
+            pattern = rf"(?<!\!)\[[^\]]*\]\(\s*{escaped}\s*(?:\)|(?:\s+[^)]*\)))"
+            literal_count = len(re.findall(pattern, original_content))
+
+            if ast_counts[old_target] != literal_count:
+                raise DocumentChangePlanningError(
+                    resolved_path,
+                    (
+                        f"Link target mismatch for '{old_target}': "
+                        f"AST shows {ast_counts[old_target]} occurrences, "
+                        f"but raw content has {literal_count} literal matches. "
+                        "This can happen if links are inside code blocks or "
+                        "use reference-style syntax."
+                    ),
+                )
+
+        if not rewrites:
+            return original_content
+
+        # Build mapping and perform single-pass replacement
+        rewrites_map = {r.old_target: r.new_target for r in rewrites}
+        sorted_old_targets = sorted(rewrites_map.keys(), key=len, reverse=True)
+        escaped_targets = "|".join(re.escape(t) for t in sorted_old_targets)
+
+        sub_pattern = (
+            rf"((?<!\!)\[[^\]]*\]\(\s*)({escaped_targets})(\s*(?:\)|(?:\s+[^)]*\))))"
+        )
+
+        def replace_fn(match: re.Match[str]) -> str:
+            old_t = match.group(2)
+            new_t = rewrites_map[old_t]
+            return match.group(1) + new_t + match.group(3)
+
+        return re.sub(sub_pattern, replace_fn, original_content)
+
+    return _plan_document_change(
+        bundle,
+        Path(path),
+        rewrite_links,
+    )
+
+
 def plan_frontmatter_merge(
     bundle: BundleConfig,
     path: Path | str,

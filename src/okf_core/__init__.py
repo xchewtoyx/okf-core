@@ -86,9 +86,11 @@ from okf_core.patching import (
     DocumentChangePlanningError,
     DocumentChangeResult,
     DocumentChangeSafetyError,
+    LinkRewrite,
     apply_document_change,
     plan_frontmatter_merge,
     plan_document_change,
+    plan_markdown_link_rewrite,
     plan_markdown_section_patch,
 )
 
@@ -126,6 +128,7 @@ __all__ = [
     "DocumentParseError",
     "GraphProblem",
     "LinkSuggestion",
+    "LinkRewrite",
     "UnlinkedMentionsResult",
     "MarkdownLink",
     "ManifestProblem",
@@ -157,6 +160,7 @@ __all__ = [
     "parse_okf_version",
     "plan_frontmatter_merge",
     "plan_document_change",
+    "plan_markdown_link_rewrite",
     "plan_markdown_section_patch",
     "concept_id_to_path",
     "check_bundle_write_safety",

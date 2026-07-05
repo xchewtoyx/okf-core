@@ -34,6 +34,21 @@ def _digest(content: bytes) -> str:
     return sha256(content).hexdigest()
 
 
+def _can_symlink() -> bool:
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            target = p / "target"
+            target.touch()
+            link = p / "link"
+            link.symlink_to(target)
+            return True
+    except OSError:
+        return False
+
+
 def test_plan_is_inspectable_without_mutating_target(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     original = "Original\r\n"
@@ -89,6 +104,8 @@ def test_plan_rejects_target_outside_bundle(tmp_path: Path) -> None:
 
 
 def test_plan_rejects_symlink(tmp_path: Path) -> None:
+    if not _can_symlink():
+        pytest.skip("System does not support symlinks or requires elevated privileges")
     target = tmp_path / "target.md"
     target.write_text("Target\n", encoding="utf-8")
     link = tmp_path / "link.md"
@@ -170,10 +187,13 @@ def test_apply_replaces_content_and_preserves_mode(tmp_path: Path) -> None:
     assert result.resulting_sha256 == plan.proposed_sha256
     assert result.changed is True
     assert path.read_bytes() == b"Updated\r\n"
-    assert path.stat().st_mode & 0o777 == 0o640
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o640
 
 
 def test_apply_supports_target_at_filesystem_name_limit(tmp_path: Path) -> None:
+    if not hasattr(os, "pathconf"):
+        pytest.skip("os.pathconf is not available on this platform")
     name_max = os.pathconf(tmp_path, "PC_NAME_MAX")
     filename = f"{'a' * (name_max - len('.md'))}.md"
     path = tmp_path / filename
@@ -252,6 +272,8 @@ def test_apply_reports_proposed_content_that_cannot_encode_as_utf8(
 
 @pytest.mark.parametrize("replacement", ["missing", "symlink"])
 def test_apply_reports_replaced_target(tmp_path: Path, replacement: str) -> None:
+    if replacement == "symlink" and not _can_symlink():
+        pytest.skip("System does not support symlinks or requires elevated privileges")
     path = tmp_path / "topic.md"
     path.write_text("Original\n", encoding="utf-8")
     plan = plan_document_change(_bundle(tmp_path), path, "Proposed\n")
@@ -268,6 +290,8 @@ def test_apply_reports_replaced_target(tmp_path: Path, replacement: str) -> None
 
 
 def test_apply_reports_parent_replaced_by_symlink(tmp_path: Path) -> None:
+    if not _can_symlink():
+        pytest.skip("System does not support symlinks or requires elevated privileges")
     bundle_root = tmp_path / "bundle"
     original_parent = bundle_root / "topics"
     original_parent.mkdir(parents=True)
