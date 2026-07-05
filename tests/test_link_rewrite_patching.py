@@ -61,6 +61,48 @@ def test_plan_link_rewrite_no_matching_targets(tmp_path: Path) -> None:
     assert plan.proposed_content == original
 
 
+def test_plan_link_rewrite_second_paragraph(tmp_path: Path) -> None:
+    # The link is in the second inline block; a block-relative offset would
+    # slice the wrong part of the document.
+    path = tmp_path / "topic.md"
+    original = "Intro.\n\n[link](old)\n"
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_markdown_link_rewrite(
+        _bundle(tmp_path), path, [LinkRewrite("old", "new")]
+    )
+
+    assert plan.changed is True
+    assert plan.proposed_content == "Intro.\n\n[link](new)\n"
+
+
+def test_plan_link_rewrite_crlf_line_endings(tmp_path: Path) -> None:
+    # markdown-it-py normalizes CRLF to LF internally before parsing; the
+    # rewrite must still land on the right bytes and preserve CRLF on output.
+    path = tmp_path / "topic.md"
+    path.write_bytes(b"Intro.\r\n\r\n[link](old) more text.\r\n")
+
+    plan = plan_markdown_link_rewrite(
+        _bundle(tmp_path), path, [LinkRewrite("old", "new")]
+    )
+
+    assert plan.changed is True
+    assert plan.proposed_content == "Intro.\r\n\r\n[link](new) more text.\r\n"
+
+
+def test_plan_link_rewrite_empty_destination(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    original = "[related]()\n"
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_markdown_link_rewrite(
+        _bundle(tmp_path), path, [LinkRewrite("", "target.md")]
+    )
+
+    assert plan.changed is True
+    assert plan.proposed_content == "[related](target.md)\n"
+
+
 def test_plan_link_rewrite_duplicate_old_targets(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     path.write_text("[link](dest)\n", encoding="utf-8")
