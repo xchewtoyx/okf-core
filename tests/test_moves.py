@@ -279,6 +279,60 @@ def test_move_concept_succeeds_despite_stable_id_only_manifest_problems(
     assert a.read_text(encoding="utf-8") == "See [link](new.md).\n"
 
 
+def test_move_concept_regenerates_index_in_source_and_dest_directories(
+    tmp_path: Path,
+) -> None:
+    old = tmp_path / "sub1" / "old.md"
+    _write(old, "---\ntype: concept\n---\nBody.\n")
+    _write(tmp_path / "sub1" / "index.md", "stale placeholder\n")
+    new = tmp_path / "sub2" / "new.md"
+    _write(tmp_path / "sub2" / "index.md", "stale placeholder\n")
+
+    result = move_concept(_bundle(tmp_path), old, new)
+
+    assert result.moved is True
+    assert set(result.regenerated_indexes) == {
+        tmp_path / "sub1" / "index.md",
+        tmp_path / "sub2" / "index.md",
+    }
+    source_index = (tmp_path / "sub1" / "index.md").read_text(encoding="utf-8")
+    dest_index = (tmp_path / "sub2" / "index.md").read_text(encoding="utf-8")
+    assert "old.md" not in source_index
+    assert "* [new](new.md)" in dest_index
+
+
+def test_move_concept_does_not_create_index_where_none_existed(
+    tmp_path: Path,
+) -> None:
+    old = tmp_path / "sub1" / "old.md"
+    _write(old, "---\ntype: concept\n---\nBody.\n")
+    _write(tmp_path / "sub1" / "index.md", "stale placeholder\n")
+    new = tmp_path / "sub2" / "new.md"
+
+    result = move_concept(_bundle(tmp_path), old, new)
+
+    assert result.moved is True
+    assert result.regenerated_indexes == (tmp_path / "sub1" / "index.md",)
+    assert not (tmp_path / "sub2" / "index.md").exists()
+
+
+def test_move_concept_regenerates_index_for_same_directory_rename(
+    tmp_path: Path,
+) -> None:
+    old = tmp_path / "old.md"
+    _write(old, "---\ntype: concept\n---\nBody.\n")
+    _write(tmp_path / "index.md", "stale placeholder\n")
+    new = tmp_path / "new.md"
+
+    result = move_concept(_bundle(tmp_path), old, new)
+
+    assert result.moved is True
+    assert result.regenerated_indexes == (tmp_path / "index.md",)
+    index_content = (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert "old.md" not in index_content
+    assert "* [new](new.md)" in index_content
+
+
 def test_move_concept_ignores_unrelated_similarly_named_links(tmp_path: Path) -> None:
     old = tmp_path / "old.md"
     _write(old, "Body.\n")

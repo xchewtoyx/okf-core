@@ -1943,6 +1943,32 @@ def test_cli_move_success_updates_referring_file(tmp_path: Path) -> None:
     assert "See [link](new.md)." in (tmp_path / "a.md").read_text(encoding="utf-8")
 
 
+def test_cli_move_reports_regenerated_indexes(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "sub1").mkdir()
+    _write_concept(tmp_path / "sub1" / "old.md", title="Old")
+    (tmp_path / "sub1" / "index.md").write_text("stale\n", encoding="utf-8")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "move",
+            str(tmp_path / "sub1" / "old.md"),
+            str(tmp_path / "sub1" / "new.md"),
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["regenerated_indexes"] == [str(tmp_path / "sub1" / "index.md")]
+    assert "regenerated 1 index" in result.stderr
+
+
 def test_cli_move_idempotent_same_source_and_dest(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(

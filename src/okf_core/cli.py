@@ -17,7 +17,6 @@ from okf_core import (
     backlinks_to,
     build_context_pack,
     build_bundle_graph,
-    declared_okf_version,
     DocumentChangeError,
     find_unlinked_mentions,
     generate_index,
@@ -25,6 +24,7 @@ from okf_core import (
     links_from,
     load_config,
     neighborhood,
+    okf_version_for_index_write,
     render_index_document,
     scan_bundle,
     search_concepts,
@@ -709,6 +709,9 @@ def move_cmd(
                 "dest": str(result.dest_path),
                 "moved": result.moved,
                 "updated_files": [str(path) for path in result.updated_files],
+                "regenerated_indexes": [
+                    str(path) for path in result.regenerated_indexes
+                ],
             }
     except ConceptPathError as exc:
         click.echo(str(exc), err=True)
@@ -734,7 +737,8 @@ def move_cmd(
     elif output["moved"]:
         click.echo(
             f"Moved {output['source']} to {output['dest']}; "
-            f"updated {len(output['updated_files'])} referring file(s)",
+            f"updated {len(output['updated_files'])} referring file(s), "
+            f"regenerated {len(output['regenerated_indexes'])} index(es)",
             err=True,
         )
     else:
@@ -947,7 +951,7 @@ def index_cmd(  # noqa: C901 -- see #118
         index_path = d / "index.md"
         body = render_index_document(
             generated.body,
-            okf_version=_okf_version_for_index_write(bundle, d, force),
+            okf_version=okf_version_for_index_write(bundle, d, force),
         )
         index_path.parent.mkdir(parents=True, exist_ok=True)
         index_path.write_text(body, encoding="utf-8", newline="\n")
@@ -1004,22 +1008,6 @@ def index_cmd(  # noqa: C901 -- see #118
 
     if has_any_problems:
         sys.exit(1)
-
-
-def _okf_version_for_index_write(
-    bundle: Any, target_dir: Path, force: bool
-) -> str | None:
-    if target_dir != bundle.bundle_root:
-        return None
-    if bundle.okf_version is not None:
-        return bundle.okf_version
-    if force:
-        return None
-
-    index_path = bundle.bundle_root / "index.md"
-    if not index_path.is_file():
-        return None
-    return declared_okf_version(index_path.read_text(encoding="utf-8"))
 
 
 def _link_dict(link: Any) -> dict[str, Any]:
