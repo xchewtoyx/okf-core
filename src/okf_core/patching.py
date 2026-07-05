@@ -171,7 +171,7 @@ def _get_target_pattern(old_target: str) -> re.Pattern[str]:
 
     return re.compile(
         r"(?<!\\)(?<!\!)\["  # Check that opening bracket is not preceded by ! or \
-        r"(?:\\.|[^\[\]]|\[(?:\\.|[^\[\]])*\])*"  # Match link text, allowing nested/escaped brackets
+        r"(?:\\.|[^\]])*"  # Match link text, allowing escaped brackets
         r"\]\(\s*("
         rf"<(?P<bracketed>{target_pattern})>|"
         rf"(?P<plain>{target_pattern})"
@@ -179,38 +179,6 @@ def _get_target_pattern(old_target: str) -> re.Pattern[str]:
         r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?"
         r"\s*\)"
     )
-
-
-def _get_code_spans(body: str, tokens: list) -> list[tuple[int, int]]:
-    # Get character offsets of lines
-    lines = body.split("\n")
-    line_starts = []
-    current = 0
-    for line in lines:
-        line_starts.append(current)
-        current += len(line) + 1  # +1 for \n
-
-    code_spans: list[tuple[int, int]] = []
-    # For inline code spans, we use a simple regex
-    for m in re.finditer(r"`+[^`]+`+", body):
-        code_spans.append(m.span())
-
-    # For block-level code blocks (fences and indented blocks), we use the AST maps
-    for token in tokens:
-        if token.type in ("fence", "code_block") and token.map:
-            start_line, end_line = token.map
-            if start_line < len(line_starts):
-                start_char = line_starts[start_line]
-            else:
-                start_char = len(body)
-            # end_line is exclusive (start of the next line)
-            if end_line < len(line_starts):
-                end_char = line_starts[end_line]
-            else:
-                end_char = len(body)
-            code_spans.append((start_char, end_char))
-
-    return code_spans
 
 
 def _extract_ast_counts(tokens: list, targets: set[str]) -> dict[str, int]:
@@ -293,19 +261,20 @@ def plan_markdown_link_rewrite(
         body_offset = len(original_content) - len(body)
         frontmatter_content = original_content[:body_offset]
 
-        tokens = _MARKDOWN.parse(body)
-        code_spans = _get_code_spans(body, tokens)
+        env: dict[str, Any] = {}
+        tokens = _MARKDOWN.parse(body, env)
+        if env.get("references"):
+            raise DocumentChangePlanningError(
+                resolved_path,
+                "Reference-style links are not supported by the link rewriter.",
+            )
         ast_counts = _extract_ast_counts(tokens, set(old_targets))
 
         # Gather all matches and verify counts per target
         all_matches: list[tuple[re.Match[str], LinkRewrite]] = []
         for r in rewrites:
             pattern = _get_target_pattern(r.old_target)
-            matches = [
-                m
-                for m in pattern.finditer(body)
-                if not any(start <= m.start() < end for start, end in code_spans)
-            ]
+            matches = list(pattern.finditer(body))
             normalized_old = r.old_target.replace("%20", " ")
             if ast_counts[normalized_old] != len(matches):
                 raise DocumentChangePlanningError(
@@ -314,8 +283,9 @@ def plan_markdown_link_rewrite(
                         f"Link target mismatch for '{r.old_target}': "
                         f"AST shows {ast_counts[normalized_old]} occurrences, "
                         f"but raw content has {len(matches)} literal matches. "
-                        "This can happen if links are inside code blocks or "
-                        "use reference-style syntax."
+                        "This can happen if links are inside code blocks, "
+                        "use reference-style syntax, or use unsupported nested "
+                        "brackets/formatting inside the link text."
                     ),
                 )
             for m in matches:

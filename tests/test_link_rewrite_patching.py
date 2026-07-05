@@ -191,13 +191,6 @@ def test_plan_link_rewrite_invalid_inputs(tmp_path: Path) -> None:
             "[link](foo%2Fnew)",
             id="percent_encoded_destination",
         ),
-        pytest.param(
-            "[a [b] c](old)",
-            "old",
-            "new",
-            "[a [b] c](new)",
-            id="nested_brackets_in_label",
-        ),
     ],
 )
 def test_plan_link_rewrite_valid_syntax_variations(
@@ -221,17 +214,6 @@ def test_plan_link_rewrite_valid_syntax_variations(
     ("original", "old_target", "new_target"),
     [
         pytest.param("![alt](old)", "old", "new", id="image_link"),
-        pytest.param("Code link: `[link](old)`", "old", "new", id="inline_code_only"),
-        pytest.param(
-            "```markdown\n[link](old)\n```\n", "old", "new", id="fenced_code_only"
-        ),
-        pytest.param(
-            "````markdown\n[link](old)\n````\n",
-            "old",
-            "new",
-            id="longer_backtick_fence",
-        ),
-        pytest.param("~~~markdown\n[link](old)\n~~~\n", "old", "new", id="tilde_fence"),
         pytest.param(
             '---\ntype: concept\ndescription: "[guide](old)"\n---\nBody content.\n',
             "old",
@@ -258,42 +240,6 @@ def test_plan_link_rewrite_ignored_syntax_variations(
 
 
 @pytest.mark.parametrize(
-    ("original", "old_target", "new_target", "expected"),
-    [
-        pytest.param(
-            "Code link: `[link](old)` and real [link](old)\n",
-            "old",
-            "new",
-            "Code link: `[link](old)` and real [link](new)\n",
-            id="mixed_inline_code",
-        ),
-        pytest.param(
-            "Here is a real [link](old)\n```markdown\n[link](old)\n```\n",
-            "old",
-            "new",
-            "Here is a real [link](new)\n```markdown\n[link](old)\n```\n",
-            id="mixed_fenced_code",
-        ),
-    ],
-)
-def test_plan_link_rewrite_mixed_syntax_variations(
-    tmp_path: Path,
-    original: str,
-    old_target: str,
-    new_target: str,
-    expected: str,
-) -> None:
-    path = tmp_path / "topic.md"
-    path.write_text(original, encoding="utf-8")
-
-    rewrites = [LinkRewrite(old_target, new_target)]
-    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
-
-    assert plan.changed is True
-    assert plan.proposed_content == expected
-
-
-@pytest.mark.parametrize(
     ("original", "old_target", "new_target"),
     [
         pytest.param(
@@ -308,6 +254,30 @@ def test_plan_link_rewrite_mixed_syntax_variations(
             "new",
             id="mixed_reference_and_code_fake_link",
         ),
+        pytest.param("Code link: `[link](old)`", "old", "new", id="inline_code_link"),
+        pytest.param(
+            "```markdown\n[link](old)\n```\n", "old", "new", id="fenced_code_link"
+        ),
+        pytest.param(
+            "````markdown\n[link](old)\n````\n",
+            "old",
+            "new",
+            id="longer_backtick_fence",
+        ),
+        pytest.param("~~~markdown\n[link](old)\n~~~\n", "old", "new", id="tilde_fence"),
+        pytest.param("[a [b] c](old)", "old", "new", id="nested_brackets_in_label"),
+        pytest.param(
+            "Code link: `[link](old)` and real [link](old)\n",
+            "old",
+            "new",
+            id="mixed_inline_code",
+        ),
+        pytest.param(
+            "Here is a real [link](old)\n```markdown\n[link](old)\n```\n",
+            "old",
+            "new",
+            id="mixed_fenced_code",
+        ),
     ],
 )
 def test_plan_link_rewrite_mismatch_rejections(
@@ -320,5 +290,8 @@ def test_plan_link_rewrite_mismatch_rejections(
     path.write_text(original, encoding="utf-8")
 
     rewrites = [LinkRewrite(old_target, new_target)]
-    with pytest.raises(DocumentChangePlanningError, match="Link target mismatch"):
+    with pytest.raises(
+        DocumentChangePlanningError,
+        match="Link target mismatch|Reference-style links",
+    ):
         plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
