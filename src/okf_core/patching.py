@@ -181,22 +181,39 @@ def _get_target_pattern(old_target: str) -> re.Pattern[str]:
     )
 
 
-def _get_code_spans(body: str) -> list[tuple[int, int]]:
+def _get_code_spans(body: str, tokens: list) -> list[tuple[int, int]]:
+    # Get character offsets of lines
+    lines = body.split("\n")
+    line_starts = []
+    current = 0
+    for line in lines:
+        line_starts.append(current)
+        current += len(line) + 1  # +1 for \n
+
     code_spans: list[tuple[int, int]] = []
-    # Match fenced code blocks starting with at least 3 backticks or tildes,
-    # and matched by a closing fence of at least the same length with same indentation
-    for m in re.finditer(
-        r"(?:^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\1\2\s*(?:\n|$)",
-        body,
-    ):
-        code_spans.append(m.span())
+    # For inline code spans, we use a simple regex
     for m in re.finditer(r"`+[^`]+`+", body):
         code_spans.append(m.span())
+
+    # For block-level code blocks (fences and indented blocks), we use the AST maps
+    for token in tokens:
+        if token.type in ("fence", "code_block") and token.map:
+            start_line, end_line = token.map
+            if start_line < len(line_starts):
+                start_char = line_starts[start_line]
+            else:
+                start_char = len(body)
+            # end_line is exclusive (start of the next line)
+            if end_line < len(line_starts):
+                end_char = line_starts[end_line]
+            else:
+                end_char = len(body)
+            code_spans.append((start_char, end_char))
+
     return code_spans
 
 
-def _extract_ast_counts(body: str, targets: set[str]) -> dict[str, int]:
-    tokens = _MARKDOWN.parse(body)
+def _extract_ast_counts(tokens: list, targets: set[str]) -> dict[str, int]:
     normalized_targets = {t.replace("%20", " ") for t in targets}
     ast_counts = {t.replace("%20", " "): 0 for t in targets}
     for token in tokens:
@@ -276,8 +293,9 @@ def plan_markdown_link_rewrite(
         body_offset = len(original_content) - len(body)
         frontmatter_content = original_content[:body_offset]
 
-        code_spans = _get_code_spans(body)
-        ast_counts = _extract_ast_counts(body, set(old_targets))
+        tokens = _MARKDOWN.parse(body)
+        code_spans = _get_code_spans(body, tokens)
+        ast_counts = _extract_ast_counts(tokens, set(old_targets))
 
         # Gather all matches and verify counts per target
         all_matches: list[tuple[re.Match[str], LinkRewrite]] = []
