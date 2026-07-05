@@ -266,6 +266,67 @@ def test_links_caching_and_inbound_outbound(tmp_path: Path) -> None:
     assert graph2.links[0].text == "B"
 
 
+def test_cached_link_target_path_is_percent_decoded(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n", body="See [old](old%20file.md).\n")
+    _write_concept(root / "old file.md", "type: concept\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=cache_dir,
+    )
+
+    manifest = scan_bundle(bundle)
+    graph = build_bundle_graph(bundle, manifest=manifest)
+    assert graph.links[0].target_path == root / "old file.md"
+
+    # Second run hits the link cache (okf_fetch_resolve_links), which
+    # reconstructs target_path from the stored raw href -- must decode it
+    # the same way the fresh scan above did, or a later rebase (e.g. by
+    # okf move) would compute paths relative to the wrong (still-encoded)
+    # location.
+    graph2 = build_bundle_graph(bundle, manifest=manifest)
+    assert graph2.links[0].target_path == root / "old file.md"
+
+
+def test_cached_link_target_path_does_not_conflate_encoded_slash(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n", body="See [x](foo%2Fbar.md).\n")
+    _write_concept(root / "foo%2Fbar.md", "type: concept\n")
+    _write_concept(root / "foo" / "bar.md", "type: concept\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=cache_dir,
+    )
+
+    manifest = scan_bundle(bundle)
+    graph = build_bundle_graph(bundle, manifest=manifest)
+    assert graph.links == ()
+    assert graph.broken_links == ()
+
+    # Second run hits the link cache -- must agree with the fresh scan that
+    # this href is unresolvable, not silently resolve it via a decoded "/"
+    # to the nested "foo/bar.md" file.
+    graph2 = build_bundle_graph(bundle, manifest=manifest)
+    assert graph2.links == ()
+    assert graph2.broken_links == ()
+
+
 def test_pagerank_calculation_and_storage(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     # Create a small graph: A -> B -> C, and C -> A

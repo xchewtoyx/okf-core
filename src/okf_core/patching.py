@@ -71,6 +71,10 @@ class DocumentChangeApplyError(DocumentChangeError):
     """Raised when a validated document change cannot be written."""
 
 
+class FileMoveConflictError(DocumentChangeError):
+    """Raised when a file move's source or destination no longer matches its plan."""
+
+
 @dataclass(frozen=True)
 class DocumentChangePlan:
     """An inspectable proposed replacement for one existing bundle document."""
@@ -97,6 +101,36 @@ class DocumentChangeResult:
     original_sha256: str
     resulting_sha256: str
     changed: bool
+
+
+@dataclass(frozen=True)
+class FileMovePlan:
+    """An inspectable proposed relocation of one existing bundle file.
+
+    Planning reads and hashes the source but never moves it. Relative paths
+    for both source and dest are interpreted from the configured bundle root,
+    the same convention plan_document_change and its siblings use.
+    """
+
+    bundle_root: Path
+    source_path: Path
+    dest_path: Path
+    source_sha256: str
+
+    @property
+    def noop(self) -> bool:
+        """Return whether source and dest already resolve to the same path."""
+
+        return self.source_path == self.dest_path
+
+
+@dataclass(frozen=True)
+class FileMoveResult:
+    """The result of applying or confirming one file move plan."""
+
+    source_path: Path
+    dest_path: Path
+    moved: bool
 
 
 def plan_document_change(
@@ -548,6 +582,156 @@ def apply_document_change(
         resulting_sha256=plan.proposed_sha256,
         changed=True,
     )
+
+
+def plan_file_move(
+    bundle: BundleConfig,
+    source: Path | str,
+    dest: Path | str,
+) -> FileMovePlan:
+    """Prepare an inspectable relocation of one existing bundle file.
+
+    Planning reads and hashes the source but never moves or creates anything.
+    Relative paths for both source and dest are interpreted from the
+    configured bundle root, the same convention plan_document_change uses. If
+    source and dest resolve to the same path, the returned plan is idempotent
+    (``.noop`` is True) and apply_file_move will not touch the filesystem for
+    it.
+    """
+
+    try:
+        resolved_source, bundle_root = _resolve_existing_target(bundle, Path(source))
+    except DocumentChangePlanningError as exc:
+        # _resolve_existing_target's messages are phrased for the generic
+        # "document change target" case; reword for a move's source-specific
+        # meaning without duplicating its symlink/existence/shape checks.
+        raise DocumentChangePlanningError(
+            exc.path, str(exc).replace("Document change target", "Move source")
+        ) from exc
+    _require_bundle_write_safety(bundle)
+
+    dest_path = Path(dest)
+    candidate_dest = dest_path if dest_path.is_absolute() else bundle_root / dest_path
+    # Checked before .resolve() and before the noop short-circuit below: a
+    # symlinked DEST that happens to point at SOURCE must still be rejected
+    # as a symlink argument, not silently accepted as a no-op move.
+    if candidate_dest.is_symlink():
+        raise DocumentChangePlanningError(
+            candidate_dest.absolute(), "Move destination must not be a symbolic link"
+        )
+    resolved_dest = candidate_dest.resolve(strict=False)
+    source_sha256 = _sha256(_read_for_planning(resolved_source))
+
+    if resolved_dest == resolved_source:
+        return FileMovePlan(
+            bundle_root=bundle_root,
+            source_path=resolved_source,
+            dest_path=resolved_dest,
+            source_sha256=source_sha256,
+        )
+
+    try:
+        _require_plan_target(bundle_root, resolved_dest, planning=True)
+    except DocumentChangePlanningError as exc:
+        raise DocumentChangePlanningError(
+            exc.path, str(exc).replace("Document change target", "Move destination")
+        ) from exc
+    if resolved_dest.exists():
+        raise DocumentChangePlanningError(
+            resolved_dest, "Move destination already exists"
+        )
+
+    return FileMovePlan(
+        bundle_root=bundle_root,
+        source_path=resolved_source,
+        dest_path=resolved_dest,
+        source_sha256=source_sha256,
+    )
+
+
+def apply_file_move(bundle: BundleConfig, plan: FileMovePlan) -> FileMoveResult:
+    """Apply a file move if the source still matches its planned hash and the
+    destination still does not exist.
+
+    Uses a create-hard-link-then-unlink sequence rather than ``os.replace``,
+    so a destination that appears concurrently after planning is never
+    silently overwritten: ``os.link`` fails atomically with
+    ``FileExistsError`` in that case. If the link succeeds but removing the
+    source then fails, the document is left present at both paths rather than
+    lost -- the resulting DocumentChangeApplyError explains the manual
+    cleanup needed. This is a single-file optimistic-concurrency primitive,
+    not a multi-file transaction. Requires source and dest to reside on the
+    same filesystem.
+    """
+
+    bundle_root = bundle.bundle_root.resolve(strict=False)
+    if bundle_root != plan.bundle_root:
+        raise DocumentChangeApplyError(
+            plan.dest_path,
+            f"Plan belongs to bundle root {plan.bundle_root}, not {bundle_root}",
+        )
+
+    _require_plan_target(bundle_root, plan.source_path)
+    _require_plan_target(bundle_root, plan.dest_path)
+    _require_bundle_write_safety(bundle)
+
+    current_hash = _current_regular_file_sha256(plan.source_path)
+    if current_hash != plan.source_sha256:
+        raise FileMoveConflictError(
+            plan.source_path,
+            f"Move source changed after planning: {plan.source_path} "
+            f"(expected SHA-256 {plan.source_sha256}, "
+            f"got {current_hash if current_hash is not None else '<unavailable>'})",
+        )
+
+    if plan.noop:
+        return FileMoveResult(plan.source_path, plan.dest_path, moved=False)
+
+    if plan.dest_path.exists() or plan.dest_path.is_symlink():
+        raise FileMoveConflictError(
+            plan.dest_path, f"Move destination now exists: {plan.dest_path}"
+        )
+
+    dest_parent = plan.dest_path.parent
+    # Checked before mkdir(parents=True): if an ancestor was swapped for a
+    # symlink after planning, resolve() already diverges from the lexical
+    # path even though dest_parent itself doesn't exist yet, so this catches
+    # it before mkdir ever creates anything through that symlink.
+    _require_dest_parent_unchanged(plan.dest_path, dest_parent)
+
+    try:
+        dest_parent.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise DocumentChangeApplyError(
+            plan.dest_path, f"Could not create destination directory: {exc}"
+        ) from exc
+
+    # Re-checked immediately after mkdir: a narrower race where dest_parent
+    # was swapped for a symlink between the check above and mkdir returning.
+    _require_dest_parent_unchanged(plan.dest_path, dest_parent)
+
+    try:
+        os.link(plan.source_path, plan.dest_path)
+    except FileExistsError as exc:
+        raise FileMoveConflictError(
+            plan.dest_path, f"Move destination now exists: {plan.dest_path}"
+        ) from exc
+    except OSError as exc:
+        raise DocumentChangeApplyError(
+            plan.dest_path, f"Could not create move destination: {exc}"
+        ) from exc
+
+    try:
+        plan.source_path.unlink()
+    except OSError as exc:
+        raise DocumentChangeApplyError(
+            plan.source_path,
+            f"Created {plan.dest_path} but could not remove original "
+            f"{plan.source_path}: {exc}. Both copies currently exist; remove "
+            "the original manually once verified.",
+        ) from exc
+
+    return FileMoveResult(plan.source_path, plan.dest_path, moved=True)
 
 
 def _plan_document_change(
@@ -1173,6 +1357,31 @@ def _require_current_hash(plan: DocumentChangePlan) -> None:
             plan.original_sha256,
             actual_sha256,
         )
+
+
+def _require_dest_parent_unchanged(dest_path: Path, dest_parent: Path) -> None:
+    """Raise if dest_parent is now a symlink, or an ancestor of it is."""
+
+    if dest_parent.is_symlink() or dest_parent.resolve(strict=False) != dest_parent:
+        raise FileMoveConflictError(
+            dest_path,
+            f"Move destination directory changed after planning: {dest_parent}",
+        )
+
+
+def _current_regular_file_sha256(path: Path) -> str | None:
+    """Return path's current SHA-256, or None if it's missing/symlink/non-regular."""
+
+    try:
+        if (
+            path.is_symlink()
+            or path.resolve(strict=False) != path
+            or not path.is_file()
+        ):
+            return None
+        return _sha256(path.read_bytes())
+    except OSError:
+        return None
 
 
 def _write_temporary_file(path: Path, content: bytes, mode: int) -> Path:

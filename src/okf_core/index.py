@@ -18,11 +18,11 @@ from okf_core.documents import (
     parse_concept_document,
     serialize_concept_document,
 )
-from okf_core.manifest import ConceptManifestEntry
+from okf_core.manifest import BundleManifest, ConceptManifestEntry
 from okf_core.versions import normalize_okf_version_declaration
 
 if TYPE_CHECKING:
-    from okf_core.config import ProfileConfig, TaxonomyConfig
+    from okf_core.config import BundleConfig, ProfileConfig, TaxonomyConfig
 
 _MARKDOWN = MarkdownIt("commonmark")
 
@@ -102,6 +102,57 @@ def declared_okf_version(content: str) -> str | None:
     if "okf_version" not in document.frontmatter:
         return None
     return normalize_okf_version_declaration(document.frontmatter["okf_version"])
+
+
+def okf_version_for_index_write(
+    bundle: BundleConfig, target_dir: Path, force: bool = False
+) -> str | None:
+    """Return the ``okf_version`` to declare when (re)writing ``target_dir``'s index.md.
+
+    Only the bundle root's index.md carries an ``okf_version`` declaration;
+    every other directory's index.md gets ``None`` (no declaration). For the
+    root, an explicitly configured ``bundle.okf_version`` wins; otherwise an
+    existing supported declaration in the current root index.md is preserved
+    unless ``force`` is set, in which case it is dropped.
+    """
+
+    if target_dir.resolve() != bundle.bundle_root.resolve():
+        return None
+    if bundle.okf_version is not None:
+        return bundle.okf_version
+    if force:
+        return None
+
+    index_path = bundle.bundle_root / "index.md"
+    if not index_path.is_file():
+        return None
+    return declared_okf_version(index_path.read_text(encoding="utf-8"))
+
+
+def entries_for_directory(
+    directory: Path, manifest: BundleManifest
+) -> tuple[list[ConceptManifestEntry], list[Path]]:
+    """Return (direct_entries, subdirectories) for generate_index(directory, ...).
+
+    ``direct_entries`` are concepts whose immediate parent is ``directory``.
+    ``subdirectories`` are ``directory``'s immediate child directories that
+    contain a concept, directly or at any depth beneath them -- exactly what
+    generate_index expects for its own ``subdirectories`` argument.
+    """
+
+    resolved_dir = directory.resolve()
+    direct_entries: list[ConceptManifestEntry] = []
+    subdirs: set[Path] = set()
+    for entry in manifest.concepts:
+        try:
+            rel = entry.path.resolve().relative_to(resolved_dir)
+        except ValueError:
+            continue
+        if len(rel.parts) == 1:
+            direct_entries.append(entry)
+        else:
+            subdirs.add(resolved_dir / rel.parts[0])
+    return direct_entries, sorted(subdirs)
 
 
 def parse_index(content: str) -> ParsedIndex:

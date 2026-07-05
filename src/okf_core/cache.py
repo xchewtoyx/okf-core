@@ -8,7 +8,7 @@ import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Generator
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from okf_core.config import BundleConfig
 from okf_core.manifest import (
@@ -356,15 +356,28 @@ class SqliteCachePlugin:
             links = []
             for target_concept_id, text, target in rows:
                 parsed = urlsplit(target)
-                target_path_str = parsed.path
-                if target_path_str.startswith("/"):
-                    target_path = (
-                        bundle.bundle_root / target_path_str.lstrip("/")
-                    ).resolve(strict=False)
-                else:
-                    target_path = (entry.path.parent / target_path_str).resolve(
-                        strict=False
-                    )
+                # Mirror graph.py's _resolve_concept_link decoding exactly,
+                # including per-segment decoding, so a cached target_path
+                # matches what a fresh (uncached) scan would compute for the
+                # same percent-encoded href.
+                segments = [unquote(segment) for segment in parsed.path.split("/")]
+                if any("/" in segment for segment in segments):
+                    continue
+                target_path_str = "/".join(segments)
+                try:
+                    if target_path_str.startswith("/"):
+                        target_path = (
+                            bundle.bundle_root / target_path_str.lstrip("/")
+                        ).resolve(strict=False)
+                    else:
+                        target_path = (entry.path.parent / target_path_str).resolve(
+                            strict=False
+                        )
+                except ValueError:
+                    # A decoded href can contain characters invalid in a
+                    # filesystem path (e.g. an embedded NUL); such a link
+                    # would never have resolved to a real target, so skip it.
+                    continue
 
                 links.append(
                     ConceptLink(
