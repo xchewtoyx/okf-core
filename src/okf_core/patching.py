@@ -183,7 +183,7 @@ def _get_target_pattern(old_target: str) -> re.Pattern[str]:
 
 def _get_code_spans(body: str) -> list[tuple[int, int]]:
     code_spans: list[tuple[int, int]] = []
-    for m in re.finditer(r"```[sS]*?```", body):
+    for m in re.finditer(r"```[\s\S]*?```", body):
         code_spans.append(m.span())
     for m in re.finditer(r"`+[^`]+`+", body):
         code_spans.append(m.span())

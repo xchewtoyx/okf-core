@@ -371,6 +371,8 @@ node cannot preserve its semantics locally. Malformed or non-mapping
 frontmatter, duplicate mapping keys, and invalid update keys are also reported
 through `DocumentChangePlanningError`. The merge does not delete fields or
 recursively merge nested mappings. Applying its plan uses
+`apply_document_change()` and retains the same stale-content protection.
+
 `plan_markdown_link_rewrite(bundle, path, rewrites)` builds a safe plan to rewrite the target/href destinations of one or more inline Markdown links in the document body. `rewrites` must be a sequence of `LinkRewrite(old_target, new_target)` instances. The primitive operates strictly on the Markdown body, leaving the frontmatter completely untouched. Duplicate `old_target` inputs are rejected. The implementation uses a single-pass replacement to prevent offset drift and avoid double-replacement issues if multiple rewrites form chains. A mismatch between the number of real AST `link_open` targets and raw, unescaped literal inline links (excluding links inside code blocks/spans, reference-style links, or image links) will raise `DocumentChangePlanningError` to prevent unsafe or ambiguous edits. Applying the plan uses `apply_document_change()` and retains the same stale-content protection.
 
 ### Validation
