@@ -13,6 +13,7 @@ from okf_core.graph import backlinks_to, build_bundle_graph
 from okf_core.manifest import scan_bundle
 from okf_core.patching import (
     DocumentChangePlan,
+    DocumentChangePlanningError,
     FileMovePlan,
     LinkRewrite,
     apply_document_change,
@@ -83,9 +84,24 @@ def plan_move_concept(
                 )
             )
 
+        failures: list[tuple[Path, DocumentChangePlanningError]] = []
         for path, rewrites in rewrites_by_file.items():
-            link_rewrite_plans[path] = plan_markdown_link_rewrite(
-                bundle, path, tuple(rewrites.values())
+            try:
+                link_rewrite_plans[path] = plan_markdown_link_rewrite(
+                    bundle, path, tuple(rewrites.values())
+                )
+            except DocumentChangePlanningError as exc:
+                failures.append((path, exc))
+
+        if failures:
+            details = "; ".join(
+                f"{path}: {exc}"
+                for path, exc in sorted(failures, key=lambda item: item[0])
+            )
+            raise DocumentChangePlanningError(
+                failures[0][0],
+                f"Cannot plan link rewrites for {len(failures)} referring "
+                f"file(s): {details}",
             )
 
     return MovePreparation(

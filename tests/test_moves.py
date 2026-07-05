@@ -167,6 +167,34 @@ def test_move_concept_ignores_unrelated_similarly_named_links(tmp_path: Path) ->
     assert a.read_text(encoding="utf-8") == "See [link](unrelated.md).\n"
 
 
+def test_move_concept_reports_all_unplannable_files_not_just_first(
+    tmp_path: Path,
+) -> None:
+    old = tmp_path / "old.md"
+    _write(old, "Body.\n")
+    # Both referring files contain a reference-style link definition elsewhere
+    # in the document, unrelated to the actual link being rewritten -- this
+    # makes plan_markdown_link_rewrite reject the whole file.
+    a = tmp_path / "a.md"
+    _write(a, "See [link](old.md).\n\n[ref]: dest\n")
+    b = tmp_path / "b.md"
+    _write(b, "Also [link](old.md).\n\n[ref2]: dest2\n")
+    new = tmp_path / "new.md"
+
+    with pytest.raises(DocumentChangePlanningError) as excinfo:
+        move_concept(_bundle(tmp_path), old, new)
+
+    message = str(excinfo.value)
+    assert str(a) in message
+    assert str(b) in message
+    assert "2 referring file" in message
+    # Nothing should have been touched.
+    assert old.exists()
+    assert not new.exists()
+    assert a.read_text(encoding="utf-8") == "See [link](old.md).\n\n[ref]: dest\n"
+    assert b.read_text(encoding="utf-8") == "Also [link](old.md).\n\n[ref2]: dest2\n"
+
+
 def test_move_concept_source_missing_raises_document_change_planning_error(
     tmp_path: Path,
 ) -> None:
