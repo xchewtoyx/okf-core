@@ -73,24 +73,28 @@ def test_plan_link_rewrite_duplicate_old_targets(tmp_path: Path) -> None:
         plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
 
 
-def test_plan_link_rewrite_rejects_code_block_links(tmp_path: Path) -> None:
+def test_plan_link_rewrite_ignores_inline_code_links(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     original = "Code link: `[link](dest)`\n"
     path.write_text(original, encoding="utf-8")
 
     rewrites = [LinkRewrite("dest", "new_dest")]
-    with pytest.raises(DocumentChangePlanningError, match="Link target mismatch"):
-        plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+
+    assert plan.changed is False
+    assert plan.proposed_content == original
 
 
-def test_plan_link_rewrite_rejects_fenced_code_block_links(tmp_path: Path) -> None:
+def test_plan_link_rewrite_ignores_fenced_code_block_links(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     original = "```markdown\n[link](dest)\n```\n"
     path.write_text(original, encoding="utf-8")
 
     rewrites = [LinkRewrite("dest", "new_dest")]
-    with pytest.raises(DocumentChangePlanningError, match="Link target mismatch"):
-        plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+
+    assert plan.changed is False
+    assert plan.proposed_content == original
 
 
 def test_plan_link_rewrite_rejects_reference_style_links(tmp_path: Path) -> None:
@@ -113,3 +117,76 @@ def test_plan_link_rewrite_ignores_image_links(tmp_path: Path) -> None:
 
     assert plan.changed is False
     assert plan.proposed_content == original
+
+
+def test_plan_link_rewrite_ignores_frontmatter_link_shapes(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    original = (
+        "---\n"
+        "type: concept\n"
+        'description: "[guide](dest)"\n'
+        "---\n"
+        "Body content.\n"
+    )
+    path.write_text(original, encoding="utf-8")
+
+    rewrites = [LinkRewrite("dest", "new_dest")]
+    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+
+    # Frontmatter shouldn't be touched by the body link rewrite
+    assert plan.changed is False
+    assert plan.proposed_content == original
+
+
+def test_plan_link_rewrite_handles_escaped_brackets_in_link_text(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "topic.md"
+    original = "Here is [a\\]b](dest).\n"
+    path.write_text(original, encoding="utf-8")
+
+    rewrites = [LinkRewrite("dest", "new_dest")]
+    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+
+    assert plan.changed is True
+    assert plan.proposed_content == "Here is [a\\]b](new_dest).\n"
+
+
+def test_plan_link_rewrite_handles_escaped_parentheses_in_target(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "topic.md"
+    original = "Here is [link](old\\)target).\n"
+    path.write_text(original, encoding="utf-8")
+
+    rewrites = [LinkRewrite("old)target", "new)target")]
+    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+
+    assert plan.changed is True
+    # If the new target contains spaces or parentheses, it gets wrapped in angle brackets
+    assert plan.proposed_content == "Here is [link](<new)target>).\n"
+
+
+def test_plan_link_rewrite_handles_bracketed_target(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    original = "Here is [link](<old target>).\n"
+    path.write_text(original, encoding="utf-8")
+
+    rewrites = [LinkRewrite("old target", "new target")]
+    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+
+    assert plan.changed is True
+    assert plan.proposed_content == "Here is [link](<new target>).\n"
+
+
+def test_plan_link_rewrite_detects_count_cancellation(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    # AST shows 1 dest (reference link)
+    # Literal count not in code spans shows 0 dest (no inline link target dest)
+    # Fake link is in a code block so it is ignored by literal count
+    original = "Here is `[fake](dest)` and [real][ref].\n" "\n" "[ref]: dest\n"
+    path.write_text(original, encoding="utf-8")
+
+    rewrites = [LinkRewrite("dest", "new_dest")]
+    with pytest.raises(DocumentChangePlanningError, match="Link target mismatch"):
+        plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import stat
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -156,6 +157,94 @@ class LinkRewrite:
     new_target: str
 
 
+def _clean_raw_href(raw_href: str) -> str:
+    import re
+
+    raw_href = raw_href.strip()
+    if raw_href.startswith("<") and raw_href.endswith(">"):
+        raw_href = raw_href[1:-1].strip()
+    return re.sub(r"\\(.)", r"\1", raw_href)
+
+
+def _get_code_spans(body: str) -> list[tuple[int, int]]:
+    import re
+
+    code_spans: list[tuple[int, int]] = []
+    for m in re.finditer(r"```[sS]*?```", body):
+        code_spans.append(m.span())
+    for m in re.finditer(r"`+[^`]+`+", body):
+        code_spans.append(m.span())
+    return code_spans
+
+
+def _extract_ast_counts(body: str, targets: set[str]) -> dict[str, int]:
+    from urllib.parse import unquote
+
+    tokens = _MARKDOWN.parse(body)
+    ast_counts = {t: 0 for t in targets}
+    for token in tokens:
+        if token.type != "inline" or token.children is None:
+            continue
+        for child in token.children:
+            if child.type != "link_open":
+                continue
+            href = child.attrGet("href")
+            if isinstance(href, str):
+                decoded_href = unquote(href)
+                if decoded_href in ast_counts:
+                    ast_counts[decoded_href] += 1
+    return ast_counts
+
+
+def _verify_link_counts(
+    resolved_path: Path,
+    ast_counts: dict[str, int],
+    literal_counts: dict[str, int],
+) -> None:
+    for target, ast_count in ast_counts.items():
+        lit_count = literal_counts.get(target, 0)
+        if ast_count != lit_count:
+            raise DocumentChangePlanningError(
+                resolved_path,
+                (
+                    f"Link target mismatch for '{target}': "
+                    f"AST shows {ast_count} occurrences, "
+                    f"but raw content has {lit_count} literal matches. "
+                    "This can happen if links are inside code blocks or "
+                    "use reference-style syntax."
+                ),
+            )
+
+
+def _replace_link_targets(
+    body: str,
+    literal_matches: list[re.Match[str]],
+    code_spans: list[tuple[int, int]],
+    rewrites_map: dict[str, str],
+) -> str:
+    patched_body = body
+    for match in reversed(literal_matches):
+        if any(start <= match.start() < end for start, end in code_spans):
+            continue
+        raw_target = match.group(2)
+        cleaned = _clean_raw_href(raw_target)
+        if cleaned in rewrites_map:
+            new_target = rewrites_map[cleaned]
+            if raw_target.strip().startswith("<") and raw_target.strip().endswith(">"):
+                new_target_str = f"<{new_target}>"
+            elif " " in new_target or "(" in new_target or ")" in new_target:
+                new_target_str = f"<{new_target}>"
+            else:
+                new_target_str = new_target
+
+            start_idx = match.start(2)
+            end_idx = match.end(2)
+            patched_body = (
+                patched_body[:start_idx] + new_target_str + patched_body[end_idx:]
+            )
+    return patched_body
+
+
 def plan_markdown_link_rewrite(
     bundle: BundleConfig,
     path: Path | str,
@@ -168,9 +257,6 @@ def plan_markdown_link_rewrite(
     literal matches (e.g., links in code blocks or reference-style links)
     cause planning to raise DocumentChangePlanningError.
     """
-    import re
-
-    # Validate duplicate old targets
     old_targets = [r.old_target for r in rewrites]
     if len(old_targets) != len(set(old_targets)):
         raise DocumentChangePlanningError(
@@ -179,56 +265,55 @@ def plan_markdown_link_rewrite(
         )
 
     def rewrite_links(resolved_path: Path, original_content: str) -> str:
-        # Cross-check AST vs raw literal occurrences
-        tokens = _MARKDOWN.parse(original_content)
-        ast_counts: dict[str, int] = {r.old_target: 0 for r in rewrites}
+        try:
+            document = parse_concept_document(original_content)
+        except DocumentParseError as exc:
+            raise DocumentChangePlanningError(
+                resolved_path,
+                f"Could not parse document frontmatter: {exc}",
+            ) from exc
 
-        for token in tokens:
-            if token.type != "inline" or token.children is None:
+        body = document.body
+        body_offset = len(original_content) - len(body)
+        frontmatter_content = original_content[:body_offset]
+
+        code_spans = _get_code_spans(body)
+        ast_counts = _extract_ast_counts(body, set(old_targets))
+
+        # Regex for standard inline link destinations
+        import re
+
+        link_pattern = re.compile(
+            r"(?<!\\)(?<!\!)\[("
+            r"(?:\\.|[^\]])*"
+            r")\]\(\s*("
+            r"<[^>]*>|(?:\\[()]|[^)\s])*"
+            r")"
+            r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?"
+            r"\s*\)"
+        )
+
+        literal_matches = list(link_pattern.finditer(body))
+        literal_counts: dict[str, int] = {t: 0 for t in old_targets}
+
+        for match in literal_matches:
+            if any(start <= match.start() < end for start, end in code_spans):
                 continue
-            for child in token.children:
-                if child.type != "link_open":
-                    continue
-                href = child.attrGet("href")
-                if href in ast_counts:
-                    ast_counts[href] += 1
+            cleaned = _clean_raw_href(match.group(2))
+            if cleaned in literal_counts:
+                literal_counts[cleaned] += 1
 
-        for r in rewrites:
-            old_target = r.old_target
-            escaped = re.escape(old_target)
-            pattern = rf"(?<!\!)\[[^\]]*\]\(\s*{escaped}\s*(?:\)|(?:\s+[^)]*\)))"
-            literal_count = len(re.findall(pattern, original_content))
-
-            if ast_counts[old_target] != literal_count:
-                raise DocumentChangePlanningError(
-                    resolved_path,
-                    (
-                        f"Link target mismatch for '{old_target}': "
-                        f"AST shows {ast_counts[old_target]} occurrences, "
-                        f"but raw content has {literal_count} literal matches. "
-                        "This can happen if links are inside code blocks or "
-                        "use reference-style syntax."
-                    ),
-                )
+        _verify_link_counts(resolved_path, ast_counts, literal_counts)
 
         if not rewrites:
             return original_content
 
-        # Build mapping and perform single-pass replacement
         rewrites_map = {r.old_target: r.new_target for r in rewrites}
-        sorted_old_targets = sorted(rewrites_map.keys(), key=len, reverse=True)
-        escaped_targets = "|".join(re.escape(t) for t in sorted_old_targets)
-
-        sub_pattern = (
-            rf"((?<!\!)\[[^\]]*\]\(\s*)({escaped_targets})(\s*(?:\)|(?:\s+[^)]*\))))"
+        patched_body = _replace_link_targets(
+            body, literal_matches, code_spans, rewrites_map
         )
 
-        def replace_fn(match: re.Match[str]) -> str:
-            old_t = match.group(2)
-            new_t = rewrites_map[old_t]
-            return match.group(1) + new_t + match.group(3)
-
-        return re.sub(sub_pattern, replace_fn, original_content)
+        return frontmatter_content + patched_body
 
     return _plan_document_change(
         bundle,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
 import pytest
 
 
@@ -9,9 +8,20 @@ import pytest
 def _force_lf_write_text(monkeypatch: pytest.MonkeyPatch) -> None:
     original_write_text = Path.write_text
 
-    def new_write_text(self: Path, data: str, *args: Any, **kwargs: Any) -> Any:
+    def new_write_text(
+        self: Path,
+        data: str,
+        encoding: str | None = None,
+        errors: str | None = None,
+        newline: str | None = None,
+    ) -> int:
         # Force LF line endings
-        kwargs["newline"] = "\n"
-        return original_write_text(self, data, *args, **kwargs)
+        return original_write_text(
+            self,
+            data,
+            encoding=encoding,
+            errors=errors,
+            newline="\n",
+        )
 
     monkeypatch.setattr(Path, "write_text", new_write_text)
