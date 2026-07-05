@@ -183,7 +183,12 @@ def _get_target_pattern(old_target: str) -> re.Pattern[str]:
 
 def _get_code_spans(body: str) -> list[tuple[int, int]]:
     code_spans: list[tuple[int, int]] = []
-    for m in re.finditer(r"```[\s\S]*?```", body):
+    # Match fenced code blocks starting with at least 3 backticks or tildes,
+    # and matched by a closing fence of at least the same length with same indentation
+    for m in re.finditer(
+        r"(?:^|\n)( {0,3})(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\1\2\s*(?:\n|$)",
+        body,
+    ):
         code_spans.append(m.span())
     for m in re.finditer(r"`+[^`]+`+", body):
         code_spans.append(m.span())
@@ -191,10 +196,9 @@ def _get_code_spans(body: str) -> list[tuple[int, int]]:
 
 
 def _extract_ast_counts(body: str, targets: set[str]) -> dict[str, int]:
-    from urllib.parse import unquote
-
     tokens = _MARKDOWN.parse(body)
-    ast_counts = {t: 0 for t in targets}
+    normalized_targets = {t.replace("%20", " ") for t in targets}
+    ast_counts = {t.replace("%20", " "): 0 for t in targets}
     for token in tokens:
         if token.type != "inline" or token.children is None:
             continue
@@ -203,8 +207,8 @@ def _extract_ast_counts(body: str, targets: set[str]) -> dict[str, int]:
                 continue
             href = child.attrGet("href")
             if isinstance(href, str):
-                decoded_href = unquote(href)
-                if decoded_href in ast_counts:
+                decoded_href = href.replace("%20", " ")
+                if decoded_href in normalized_targets:
                     ast_counts[decoded_href] += 1
     return ast_counts
 
@@ -284,12 +288,13 @@ def plan_markdown_link_rewrite(
                 for m in pattern.finditer(body)
                 if not any(start <= m.start() < end for start, end in code_spans)
             ]
-            if ast_counts[r.old_target] != len(matches):
+            normalized_old = r.old_target.replace("%20", " ")
+            if ast_counts[normalized_old] != len(matches):
                 raise DocumentChangePlanningError(
                     resolved_path,
                     (
                         f"Link target mismatch for '{r.old_target}': "
-                        f"AST shows {ast_counts[r.old_target]} occurrences, "
+                        f"AST shows {ast_counts[normalized_old]} occurrences, "
                         f"but raw content has {len(matches)} literal matches. "
                         "This can happen if links are inside code blocks or "
                         "use reference-style syntax."

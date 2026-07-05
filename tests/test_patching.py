@@ -45,7 +45,7 @@ def _can_symlink() -> bool:
             link = p / "link"
             link.symlink_to(target)
             return True
-    except OSError:
+    except (OSError, NotImplementedError):
         return False
 
 

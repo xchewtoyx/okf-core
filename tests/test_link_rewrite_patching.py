@@ -176,6 +176,13 @@ def test_plan_link_rewrite_invalid_inputs(tmp_path: Path) -> None:
             "[link](new#sec)",
             id="fragment_destination",
         ),
+        pytest.param(
+            "[link](foo%2Fbar)",
+            "foo%2Fbar",
+            "foo%2Fnew",
+            "[link](foo%2Fnew)",
+            id="percent_encoded_destination",
+        ),
     ],
 )
 def test_plan_link_rewrite_valid_syntax_variations(
@@ -203,6 +210,13 @@ def test_plan_link_rewrite_valid_syntax_variations(
         pytest.param(
             "```markdown\n[link](old)\n```\n", "old", "new", id="fenced_code_only"
         ),
+        pytest.param(
+            "````markdown\n[link](old)\n````\n",
+            "old",
+            "new",
+            id="longer_backtick_fence",
+        ),
+        pytest.param("~~~markdown\n[link](old)\n~~~\n", "old", "new", id="tilde_fence"),
         pytest.param(
             '---\ntype: concept\ndescription: "[guide](old)"\n---\nBody content.\n',
             "old",
