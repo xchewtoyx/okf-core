@@ -11,7 +11,7 @@ from datetime import date, datetime
 from hashlib import sha256
 from math import isfinite
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
 from markdown_it import MarkdownIt
@@ -21,6 +21,11 @@ from yaml.tokens import AliasToken
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError, parse_concept_document
 from okf_core.write_safety import check_bundle_write_safety
+
+if TYPE_CHECKING:
+    from markdown_it.rules_core.state_core import StateCore
+    from markdown_it.rules_inline.state_inline import StateInline
+    from markdown_it.token import Token
 
 _MARKDOWN = MarkdownIt("commonmark")
 
@@ -145,6 +150,312 @@ def plan_markdown_section_patch(
             body,
             level,
         ),
+    )
+
+
+@dataclass(frozen=True)
+class LinkRewrite:
+    """A requested target/destination rewrite for inline Markdown links."""
+
+    old_target: str
+    new_target: str
+
+
+def _normalize_target(target: str) -> str:
+    """Normalize a caller-supplied target the same way markdown-it-py normalizes hrefs.
+
+    Using the library's own normalizer (rather than a hand-rolled %20-only
+    substitution) keeps comparisons consistent for every kind of escaping
+    markdown-it-py applies to a real link destination: spaces, non-ASCII
+    characters, and already-percent-encoded sequences all round-trip through
+    the same function, so callers can pass the plain-text target regardless
+    of how it happens to appear in the source file.
+    """
+
+    return _MARKDOWN.normalizeLink(target)
+
+
+@dataclass(frozen=True)
+class _LinkOccurrence:
+    """The exact source span of one real inline link's destination."""
+
+    dest_start: int
+    dest_end: int
+    href: str
+
+
+_LINK_OCCURRENCES_ENV_KEY = "_okf_link_rewrite_occurrences"
+_BLOCK_OFFSET_ENV_KEY = "_okf_link_rewrite_block_offset"
+
+
+def _locate_link_destination(
+    state: StateInline, label_start: int
+) -> tuple[int, int] | None:
+    """Re-derive a just-parsed link's destination span using the parser's own helpers.
+
+    markdown-it-py's inline tokens carry no character offsets, so this replays
+    the label/destination lookup with the same ``state.md.helpers`` functions
+    the "link" rule itself used a moment earlier, instead of re-scanning the
+    raw text with a regex. Returns None for reference-style links, which have
+    no literal destination text in the body to rewrite.
+    """
+
+    label_end = state.md.helpers.parseLinkLabel(state, label_start, True)
+    if label_end < 0:
+        return None
+    pos = label_end + 1
+    maximum = state.posMax
+    if pos >= maximum or state.src[pos] != "(":
+        return None
+    pos += 1
+    while pos < maximum and state.src[pos] in ("\t", " ", "\n"):
+        pos += 1
+    dest_start = pos
+    result = state.md.helpers.parseLinkDestination(state.src, pos, maximum)
+    if result.ok:
+        return dest_start, result.pos
+    if pos < maximum and state.src[pos] == ")":
+        # Empty destination, e.g. `[label]()`: parseLinkDestination reports
+        # this as unmatched, but the "link" rule itself still treats it as a
+        # real link with an empty href, so record a zero-length span here too.
+        return dest_start, dest_start
+    return None
+
+
+def _find_block_offset(src: str, token: Token) -> int | None:
+    """Locate one block-level "inline" token's content within the whole source.
+
+    markdown-it-py parses each block's inline content as an independent
+    string, so positions captured while parsing it are relative to that
+    block, not the document. `.map` gives the block's original line range, so
+    its content can be found unambiguously within that range and used as a
+    baseline to translate block-relative offsets back to document offsets.
+    """
+
+    if token.map is None:
+        return None
+    line_offsets = _line_offsets(src)
+    start_line, end_line = token.map
+    if not (0 <= start_line < len(line_offsets)) or not (
+        0 <= end_line < len(line_offsets)
+    ):
+        return None
+    found = src.find(token.content, line_offsets[start_line], line_offsets[end_line])
+    return found if found >= 0 else None
+
+
+def _instrumented_core_inline_rule(state: StateCore) -> None:
+    """Wrap the core "inline" rule to record each block's absolute start offset.
+
+    This mirrors the library's own rule (see markdown_it.rules_core.inline)
+    exactly, adding only the offset bookkeeping `_instrumented_link_rule`
+    needs to translate its block-relative spans into document-relative ones.
+    """
+
+    for token in state.tokens:
+        if token.type != "inline":
+            continue
+        if token.children is None:
+            token.children = []
+        state.env[_BLOCK_OFFSET_ENV_KEY] = _find_block_offset(state.src, token)
+        state.md.inline.parse(token.content, state.md, state.env, token.children)
+    state.env.pop(_BLOCK_OFFSET_ENV_KEY, None)
+
+
+def _instrumented_link_rule(state: StateInline, silent: bool) -> bool:
+    """Wrap the "link" rule to record each real link's destination span as it parses.
+
+    This is a pure observer: it defers entirely to the library's own rule for
+    matching and token creation, and only inspects the outcome afterward, so
+    it cannot change what the parser recognizes as a link.
+    """
+
+    label_start = state.pos
+    tokens_before = len(state.tokens)
+    assert _link_inline_rule is not None
+    matched = _link_inline_rule(state, silent)
+    if matched and not silent and len(state.tokens) > tokens_before:
+        # state.push() flushes any pending plain text into its own token first,
+        # so the link_open this call produced isn't necessarily at tokens_before.
+        token = next(
+            (t for t in state.tokens[tokens_before:] if t.type == "link_open"), None
+        )
+        if token is not None:
+            href = token.attrGet("href")
+            location = _locate_link_destination(state, label_start)
+            block_offset = state.env.get(_BLOCK_OFFSET_ENV_KEY)
+            if (
+                location is not None
+                and isinstance(href, str)
+                and isinstance(block_offset, int)
+            ):
+                dest_start, dest_end = location
+                state.env.setdefault(_LINK_OCCURRENCES_ENV_KEY, []).append(
+                    _LinkOccurrence(
+                        dest_start=block_offset + dest_start,
+                        dest_end=block_offset + dest_end,
+                        href=href,
+                    )
+                )
+    return matched
+
+
+_link_inline_rule: Callable[[StateInline, bool], bool] | None = None
+_LINK_REWRITE_MARKDOWN: MarkdownIt | None = None
+
+
+def _get_link_rewrite_markdown(resolved_path: Path) -> MarkdownIt:
+    """Build (once) the MarkdownIt instance instrumented for link-span capture.
+
+    The instrumentation wraps markdown-it-py's own "link" inline rule and
+    "inline" core rule -- undocumented implementation details, not public API.
+    Importing them lazily, only when link rewriting is actually requested,
+    keeps a hypothetical upstream internal refactor from breaking every
+    consumer of this module instead of just this one primitive.
+    """
+
+    global _link_inline_rule, _LINK_REWRITE_MARKDOWN
+    if _LINK_REWRITE_MARKDOWN is None:
+        try:
+            from markdown_it.rules_inline import link as link_rule
+        except ImportError as exc:
+            raise DocumentChangePlanningError(
+                resolved_path,
+                "plan_markdown_link_rewrite requires markdown-it-py internals "
+                f"that are unavailable in this installed version: {exc}",
+            ) from exc
+        _link_inline_rule = link_rule
+        md = MarkdownIt("commonmark")
+        md.core.ruler.at("inline", _instrumented_core_inline_rule)
+        md.inline.ruler.at("link", _instrumented_link_rule)
+        _LINK_REWRITE_MARKDOWN = md
+    return _LINK_REWRITE_MARKDOWN
+
+
+def _format_destination(new_target: str, *, wrap: bool) -> str:
+    if not wrap:
+        return new_target
+    escaped = new_target.replace("<", "\\<").replace(">", "\\>")
+    return f"<{escaped}>"
+
+
+def _validate_link_rewrites(resolved_path: Path, rewrites: Any) -> None:
+    if not isinstance(rewrites, (list, tuple, Sequence)) or isinstance(
+        rewrites, (str, bytes)
+    ):
+        raise DocumentChangePlanningError(
+            resolved_path,
+            "rewrites must be a sequence of LinkRewrite objects",
+        )
+
+    for i, r in enumerate(rewrites):
+        if not isinstance(r, LinkRewrite):
+            raise DocumentChangePlanningError(
+                resolved_path,
+                f"Element at index {i} in rewrites is not a LinkRewrite object: {r!r}",
+            )
+        if not isinstance(getattr(r, "old_target", None), str) or not isinstance(
+            getattr(r, "new_target", None), str
+        ):
+            raise DocumentChangePlanningError(
+                resolved_path,
+                f"LinkRewrite at index {i} must have string old_target and new_target: {r!r}",
+            )
+
+    old_targets_normalized = [_normalize_target(r.old_target) for r in rewrites]
+    if len(old_targets_normalized) != len(set(old_targets_normalized)):
+        raise DocumentChangePlanningError(
+            resolved_path,
+            "Duplicate old_target values in rewrites list",
+        )
+
+
+def plan_markdown_link_rewrite(
+    bundle: BundleConfig,
+    path: Path | str,
+    rewrites: Sequence[LinkRewrite],
+) -> DocumentChangePlan:
+    """Plan rewriting target destinations of one or more inline Markdown links.
+
+    Rewrites match real inline links only: a target is located by parsing the
+    document and comparing each link's resolved href against a caller-supplied
+    target, normalized the same way markdown-it-py normalizes hrefs (so %20,
+    other percent-encoding, and non-ASCII characters all compare consistently
+    regardless of how they appear in the source). Text that merely looks like
+    a link but isn't one to the parser - inside code spans or fenced code
+    blocks, or in frontmatter - is never touched. Duplicate old_target entries
+    (after normalization) are rejected. Reference-style links are not
+    supported and cause planning to raise DocumentChangePlanningError.
+    """
+    resolved_path = Path(path)
+    _validate_link_rewrites(resolved_path, rewrites)
+
+    def rewrite_links(resolved_path: Path, original_content: str) -> str:
+        if not rewrites:
+            return original_content
+
+        try:
+            document = parse_concept_document(original_content)
+        except DocumentParseError as exc:
+            raise DocumentChangePlanningError(
+                resolved_path,
+                f"Could not parse document frontmatter: {exc}",
+            ) from exc
+
+        body = document.body
+        body_offset = len(original_content) - len(body)
+        frontmatter_content = original_content[:body_offset]
+
+        # markdown-it-py normalizes CRLF/CR to LF internally before parsing, so
+        # parser-derived offsets are only valid against an equally-normalized
+        # copy of the body. The original line-ending style is restored below.
+        line_ending = _first_line_ending(body)
+        normalized_body = _normalize_line_endings(body)
+
+        env: dict[str, Any] = {}
+        _get_link_rewrite_markdown(resolved_path).parse(normalized_body, env)
+        if env.get("references"):
+            raise DocumentChangePlanningError(
+                resolved_path,
+                "Reference-style links are not supported by the link rewriter.",
+            )
+
+        occurrences_by_href: dict[str, list[_LinkOccurrence]] = {}
+        for occurrence in env.get(_LINK_OCCURRENCES_ENV_KEY, []):
+            occurrences_by_href.setdefault(occurrence.href, []).append(occurrence)
+
+        all_matches: list[tuple[_LinkOccurrence, LinkRewrite]] = [
+            (occurrence, r)
+            for r in rewrites
+            for occurrence in occurrences_by_href.get(
+                _normalize_target(r.old_target), []
+            )
+        ]
+
+        # Sort matches in reverse order of their start positions to prevent offset drift
+        all_matches.sort(key=lambda item: item[0].dest_start, reverse=True)
+
+        patched_body = normalized_body
+        for occurrence, r in all_matches:
+            wrap = patched_body[occurrence.dest_start] == "<" or (
+                " " in r.new_target or "(" in r.new_target or ")" in r.new_target
+            )
+            new_target_str = _format_destination(r.new_target, wrap=wrap)
+            patched_body = (
+                patched_body[: occurrence.dest_start]
+                + new_target_str
+                + patched_body[occurrence.dest_end :]
+            )
+
+        if line_ending != "\n":
+            patched_body = patched_body.replace("\n", line_ending)
+
+        return frontmatter_content + patched_body
+
+    return _plan_document_change(
+        bundle,
+        Path(path),
+        rewrite_links,
     )
 
 
@@ -401,6 +712,12 @@ def _first_line_ending(content: str) -> str:
                 return "\r\n"
             return "\r"
     return "\n"
+
+
+def _normalize_line_endings(text: str) -> str:
+    """Collapse CRLF/CR line endings to LF, mirroring markdown-it-py's own normalization."""
+
+    return text.replace("\r\n", "\n").replace("\r", "\n")
 
 
 def _count_trailing_line_endings(content: str) -> int:
