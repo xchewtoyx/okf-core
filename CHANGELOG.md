@@ -16,6 +16,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Reduced cyclomatic complexity of `validate_concept_document_with_profile` and `build_context_pack` below the lint threshold via helper extraction; no behavior change. (#119, #123)
 
+### Fixed
+
+- `build_bundle_graph()` now percent-decodes Markdown link hrefs before resolving them against on-disk concept paths, so a link to a path containing a space or other percent-encoded character (e.g. `[old](old%20file.md)`) is no longer treated as broken.
+
 ## [0.4.1] - 2026-07-04
 
 ### Added

@@ -9,7 +9,7 @@ import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from markdown_it import MarkdownIt
 
@@ -550,15 +550,17 @@ def _resolve_concept_link(
     parsed = urlsplit(target)
     if parsed.scheme or parsed.netloc or not parsed.path:
         return None
-    if not parsed.path.endswith(".md"):
+    # Markdown-it emits percent-encoded hrefs for paths with spaces/special
+    # characters (e.g. "old%20file.md"); decode before matching against the
+    # literal on-disk path, or such links are wrongly treated as broken.
+    path = unquote(parsed.path)
+    if not path.endswith(".md"):
         return None
 
-    if parsed.path.startswith("/"):
-        target_path = (bundle.bundle_root / parsed.path.lstrip("/")).resolve(
-            strict=False
-        )
+    if path.startswith("/"):
+        target_path = (bundle.bundle_root / path.lstrip("/")).resolve(strict=False)
     else:
-        target_path = (source.path.parent / parsed.path).resolve(strict=False)
+        target_path = (source.path.parent / path).resolve(strict=False)
 
     try:
         target_concept_id = path_to_concept_id(target_path, bundle)

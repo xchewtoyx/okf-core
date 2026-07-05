@@ -179,6 +179,50 @@ def test_move_concept_rebases_self_link_when_directory_changes(tmp_path: Path) -
     assert new.read_text(encoding="utf-8") == "Self: [self](new.md)\n"
 
 
+def test_move_concept_rebases_own_outbound_links_when_directory_changes(
+    tmp_path: Path,
+) -> None:
+    old = tmp_path / "sub1" / "old.md"
+    _write(old, "See [sibling](sibling.md).\n")
+    sibling = tmp_path / "sub1" / "sibling.md"
+    _write(sibling, "Body.\n")
+    new = tmp_path / "sub2" / "deep" / "new.md"
+
+    result = move_concept(_bundle(tmp_path), old, new)
+
+    assert result.moved is True
+    assert new.read_text(encoding="utf-8") == "See [sibling](../../sub1/sibling.md).\n"
+    # The sibling itself is untouched -- only its href text in the moved
+    # file changed, not the sibling file or its own content.
+    assert sibling.read_text(encoding="utf-8") == "Body.\n"
+
+
+def test_move_concept_does_not_rebase_own_outbound_links_in_same_directory(
+    tmp_path: Path,
+) -> None:
+    old = tmp_path / "old.md"
+    _write(old, "See [sibling](sibling.md).\n")
+    sibling = tmp_path / "sibling.md"
+    _write(sibling, "Body.\n")
+    new = tmp_path / "renamed.md"
+
+    move_concept(_bundle(tmp_path), old, new)
+
+    assert new.read_text(encoding="utf-8") == "See [sibling](sibling.md).\n"
+
+
+def test_move_concept_preserves_absolute_style_outbound_links(tmp_path: Path) -> None:
+    old = tmp_path / "sub1" / "old.md"
+    _write(old, "See [abs](/sub1/sibling.md).\n")
+    sibling = tmp_path / "sub1" / "sibling.md"
+    _write(sibling, "Body.\n")
+    new = tmp_path / "sub2" / "new.md"
+
+    move_concept(_bundle(tmp_path), old, new)
+
+    assert new.read_text(encoding="utf-8") == "See [abs](/sub1/sibling.md).\n"
+
+
 def test_move_concept_aborts_when_a_file_fails_to_scan(tmp_path: Path) -> None:
     old = tmp_path / "old.md"
     _write(old, "Body.\n")

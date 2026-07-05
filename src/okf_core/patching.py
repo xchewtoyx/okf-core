@@ -599,7 +599,15 @@ def plan_file_move(
     it.
     """
 
-    resolved_source, bundle_root = _resolve_existing_target(bundle, Path(source))
+    try:
+        resolved_source, bundle_root = _resolve_existing_target(bundle, Path(source))
+    except DocumentChangePlanningError as exc:
+        # _resolve_existing_target's messages are phrased for the generic
+        # "document change target" case; reword for a move's source-specific
+        # meaning without duplicating its symlink/existence/shape checks.
+        raise DocumentChangePlanningError(
+            exc.path, str(exc).replace("Document change target", "Move source")
+        ) from exc
     _require_bundle_write_safety(bundle)
 
     dest_path = Path(dest)

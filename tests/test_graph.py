@@ -115,6 +115,17 @@ def test_graph_resolves_nested_relative_and_bundle_absolute_links(
     ]
 
 
+def test_graph_resolves_percent_encoded_links(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [old](old%20file.md).")
+    _write_concept(root / "old file.md")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert [link.target_concept_id for link in links_from(graph, "a")] == ["old file"]
+    assert [link.source_concept_id for link in backlinks_to(graph, "old file")] == ["a"]
+
+
 def test_graph_reports_broken_internal_links(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", body="See [missing](missing.md).")

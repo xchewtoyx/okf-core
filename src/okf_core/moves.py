@@ -9,7 +9,7 @@ from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit, urlunsplit
 
 from okf_core.config import BundleConfig
-from okf_core.graph import backlinks_to, build_bundle_graph
+from okf_core.graph import backlinks_to, build_bundle_graph, links_from
 from okf_core.manifest import scan_bundle
 from okf_core.patching import (
     DocumentChangePlan,
@@ -109,6 +109,26 @@ def plan_move_concept(
                 )
             )
 
+        # The moved file's own outbound links to OTHER concepts must also be
+        # rebased when the move changes directory, since a relative href is
+        # resolved from the file's own directory. Self-links are excluded
+        # here (target_concept_id == source_concept_id): the loop above
+        # already rewrites them using file_move_plan.dest_path as the new
+        # TARGET location, whereas link.target_path for a self-link is the
+        # file's OLD on-disk path, not where it is moving to.
+        for link in links_from(graph, source_concept_id):
+            if link.target_concept_id == source_concept_id:
+                continue
+            new_target = _link_target_for_new_location(
+                bundle,
+                original_target=link.target,
+                source_path=file_move_plan.dest_path,
+                new_target_path=link.target_path,
+            )
+            rewrites_by_file.setdefault(file_move_plan.source_path, {})[link.target] = (
+                LinkRewrite(old_target=link.target, new_target=new_target)
+            )
+
         failures: list[tuple[Path, DocumentChangePlanningError]] = []
         for path, rewrites in rewrites_by_file.items():
             try:
@@ -189,9 +209,13 @@ def _resolve_bundle_path(bundle_root: Path, raw: Path | str) -> Path:
     used literally. Deliberately does not call ``.resolve()``: doing so here
     would silently follow a symlink in the argument itself before
     plan_file_move's own symlink checks ever see it, defeating them.
-    plan_file_move (via ``_resolve_existing_target``) and path_to_concept_id
-    each do their own resolution downstream once the symlink checks have had
-    a chance to run against the literal argument.
+    path_to_concept_id also resolves its argument internally, but only to
+    validate path shape and bundle-root containment -- the path it computes
+    is discarded, never fed into a file operation, so its resolution has no
+    bearing on this function's symlink-safety contract. plan_file_move (via
+    ``_resolve_existing_target``) is what actually rejects a symlinked
+    argument, and it runs after both path_to_concept_id calls in
+    plan_move_concept.
     """
 
     candidate = Path(raw)

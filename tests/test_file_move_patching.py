@@ -93,6 +93,13 @@ def test_plan_file_move_source_is_symlink_raises_planning_error(tmp_path: Path) 
         plan_file_move(_bundle(tmp_path), source, tmp_path / "new.md")
 
 
+def test_plan_file_move_source_not_found_error_uses_move_specific_wording(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(DocumentChangePlanningError, match="Move source does not exist"):
+        plan_file_move(_bundle(tmp_path), tmp_path / "missing.md", tmp_path / "new.md")
+
+
 def test_plan_file_move_dest_already_exists_raises_planning_error(
     tmp_path: Path,
 ) -> None:
