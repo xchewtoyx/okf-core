@@ -356,10 +356,14 @@ class SqliteCachePlugin:
             links = []
             for target_concept_id, text, target in rows:
                 parsed = urlsplit(target)
-                # Mirror graph.py's _resolve_concept_link decoding, so a
-                # cached target_path matches what a fresh (uncached) scan
-                # would compute for the same percent-encoded href.
-                target_path_str = unquote(parsed.path)
+                # Mirror graph.py's _resolve_concept_link decoding exactly,
+                # including per-segment decoding, so a cached target_path
+                # matches what a fresh (uncached) scan would compute for the
+                # same percent-encoded href.
+                segments = [unquote(segment) for segment in parsed.path.split("/")]
+                if any("/" in segment for segment in segments):
+                    continue
+                target_path_str = "/".join(segments)
                 try:
                     if target_path_str.startswith("/"):
                         target_path = (
