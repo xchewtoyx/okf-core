@@ -73,126 +73,190 @@ def test_plan_link_rewrite_duplicate_old_targets(tmp_path: Path) -> None:
         plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
 
 
-def test_plan_link_rewrite_ignores_inline_code_links(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("original", "old_target", "new_target", "expected"),
+    [
+        pytest.param("[link](old)", "old", "new", "[link](new)", id="standard"),
+        pytest.param(
+            "[some link text](old)",
+            "old",
+            "new",
+            "[some link text](new)",
+            id="spaces_in_link_text",
+        ),
+        pytest.param(
+            "[link\ntext](old)",
+            "old",
+            "new",
+            "[link\ntext](new)",
+            id="newline_in_link_text",
+        ),
+        pytest.param(
+            "[a\\]b](old)",
+            "old",
+            "new",
+            "[a\\]b](new)",
+            id="escaped_brackets_in_link_text",
+        ),
+        pytest.param(
+            "[link](<old>)", "old", "new", "[link](<new>)", id="bracketed_destination"
+        ),
+        pytest.param(
+            '[link](old "title")',
+            "old",
+            "new",
+            '[link](new "title")',
+            id="double_quoted_title",
+        ),
+        pytest.param(
+            "[link](old 'title')",
+            "old",
+            "new",
+            "[link](new 'title')",
+            id="single_quoted_title",
+        ),
+        pytest.param(
+            "[link](old (title))",
+            "old",
+            "new",
+            "[link](new (title))",
+            id="parenthesized_title",
+        ),
+        pytest.param(
+            "[link](<old target>)",
+            "old target",
+            "new target",
+            "[link](<new target>)",
+            id="spaces_in_bracketed_destination",
+        ),
+        pytest.param(
+            "[link](old\\)target)",
+            "old)target",
+            "new)target",
+            "[link](<new)target>)",
+            id="escaped_parenthesis_in_unbracketed_destination",
+        ),
+        pytest.param(
+            "[link](old#sec)",
+            "old#sec",
+            "new#sec",
+            "[link](new#sec)",
+            id="fragment_destination",
+        ),
+    ],
+)
+def test_plan_link_rewrite_valid_syntax_variations(
+    tmp_path: Path,
+    original: str,
+    old_target: str,
+    new_target: str,
+    expected: str,
+) -> None:
     path = tmp_path / "topic.md"
-    original = "Code link: `[link](dest)` and real [link](dest)\n"
     path.write_text(original, encoding="utf-8")
 
-    rewrites = [LinkRewrite("dest", "new_dest")]
+    rewrites = [LinkRewrite(old_target, new_target)]
     plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
 
-    # It should rewrite the real link, but ignore the inline code link
     assert plan.changed is True
-    assert (
-        plan.proposed_content == "Code link: `[link](dest)` and real [link](new_dest)\n"
-    )
+    assert plan.proposed_content == expected
 
 
-def test_plan_link_rewrite_ignores_fenced_code_block_links(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("original", "old_target", "new_target"),
+    [
+        pytest.param("![alt](old)", "old", "new", id="image_link"),
+        pytest.param("Code link: `[link](old)`", "old", "new", id="inline_code_only"),
+        pytest.param(
+            "```markdown\n[link](old)\n```\n", "old", "new", id="fenced_code_only"
+        ),
+        pytest.param(
+            '---\ntype: concept\ndescription: "[guide](old)"\n---\nBody content.\n',
+            "old",
+            "new",
+            id="frontmatter_link_shape",
+        ),
+        pytest.param("\\[link](old)", "old", "new", id="escaped_brackets_prefix"),
+    ],
+)
+def test_plan_link_rewrite_ignored_syntax_variations(
+    tmp_path: Path,
+    original: str,
+    old_target: str,
+    new_target: str,
+) -> None:
     path = tmp_path / "topic.md"
-    original = "Here is a real [link](dest)\n" "```markdown\n" "[link](dest)\n" "```\n"
     path.write_text(original, encoding="utf-8")
 
-    rewrites = [LinkRewrite("dest", "new_dest")]
-    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
-
-    # It should rewrite the real link, but ignore the fenced block link
-    assert plan.changed is True
-    assert plan.proposed_content == (
-        "Here is a real [link](new_dest)\n" "```markdown\n" "[link](dest)\n" "```\n"
-    )
-
-
-def test_plan_link_rewrite_rejects_reference_style_links(tmp_path: Path) -> None:
-    path = tmp_path / "topic.md"
-    original = "Here is a [link][ref].\n" "\n" "[ref]: dest\n"
-    path.write_text(original, encoding="utf-8")
-
-    rewrites = [LinkRewrite("dest", "new_dest")]
-    with pytest.raises(DocumentChangePlanningError, match="Link target mismatch"):
-        plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
-
-
-def test_plan_link_rewrite_ignores_image_links(tmp_path: Path) -> None:
-    path = tmp_path / "topic.md"
-    original = "![alt](dest)\n"
-    path.write_text(original, encoding="utf-8")
-
-    rewrites = [LinkRewrite("dest", "new_dest")]
+    rewrites = [LinkRewrite(old_target, new_target)]
     plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
 
     assert plan.changed is False
     assert plan.proposed_content == original
 
 
-def test_plan_link_rewrite_ignores_frontmatter_link_shapes(tmp_path: Path) -> None:
-    path = tmp_path / "topic.md"
-    original = (
-        "---\n"
-        "type: concept\n"
-        'description: "[guide](dest)"\n'
-        "---\n"
-        "Body content.\n"
-    )
-    path.write_text(original, encoding="utf-8")
-
-    rewrites = [LinkRewrite("dest", "new_dest")]
-    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
-
-    # Frontmatter shouldn't be touched by the body link rewrite
-    assert plan.changed is False
-    assert plan.proposed_content == original
-
-
-def test_plan_link_rewrite_handles_escaped_brackets_in_link_text(
+@pytest.mark.parametrize(
+    ("original", "old_target", "new_target", "expected"),
+    [
+        pytest.param(
+            "Code link: `[link](old)` and real [link](old)\n",
+            "old",
+            "new",
+            "Code link: `[link](old)` and real [link](new)\n",
+            id="mixed_inline_code",
+        ),
+        pytest.param(
+            "Here is a real [link](old)\n```markdown\n[link](old)\n```\n",
+            "old",
+            "new",
+            "Here is a real [link](new)\n```markdown\n[link](old)\n```\n",
+            id="mixed_fenced_code",
+        ),
+    ],
+)
+def test_plan_link_rewrite_mixed_syntax_variations(
     tmp_path: Path,
+    original: str,
+    old_target: str,
+    new_target: str,
+    expected: str,
 ) -> None:
     path = tmp_path / "topic.md"
-    original = "Here is [a\\]b](dest).\n"
     path.write_text(original, encoding="utf-8")
 
-    rewrites = [LinkRewrite("dest", "new_dest")]
+    rewrites = [LinkRewrite(old_target, new_target)]
     plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
 
     assert plan.changed is True
-    assert plan.proposed_content == "Here is [a\\]b](new_dest).\n"
+    assert plan.proposed_content == expected
 
 
-def test_plan_link_rewrite_handles_escaped_parentheses_in_target(
+@pytest.mark.parametrize(
+    ("original", "old_target", "new_target"),
+    [
+        pytest.param(
+            "[link][ref]\n\n[ref]: old\n", "old", "new", id="reference_style_link"
+        ),
+        pytest.param(
+            "[ref]\n\n[ref]: old\n", "old", "new", id="shortcut_reference_link"
+        ),
+        pytest.param(
+            "[link][ref] and `[fake](old)`\n\n[ref]: old\n",
+            "old",
+            "new",
+            id="mixed_reference_and_code_fake_link",
+        ),
+    ],
+)
+def test_plan_link_rewrite_mismatch_rejections(
     tmp_path: Path,
+    original: str,
+    old_target: str,
+    new_target: str,
 ) -> None:
     path = tmp_path / "topic.md"
-    original = "Here is [link](old\\)target).\n"
     path.write_text(original, encoding="utf-8")
 
-    rewrites = [LinkRewrite("old)target", "new)target")]
-    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
-
-    assert plan.changed is True
-    # If the new target contains spaces or parentheses, it gets wrapped in angle brackets
-    assert plan.proposed_content == "Here is [link](<new)target>).\n"
-
-
-def test_plan_link_rewrite_handles_bracketed_target(tmp_path: Path) -> None:
-    path = tmp_path / "topic.md"
-    original = "Here is [link](<old target>).\n"
-    path.write_text(original, encoding="utf-8")
-
-    rewrites = [LinkRewrite("old target", "new target")]
-    plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
-
-    assert plan.changed is True
-    assert plan.proposed_content == "Here is [link](<new target>).\n"
-
-
-def test_plan_link_rewrite_detects_count_cancellation(tmp_path: Path) -> None:
-    path = tmp_path / "topic.md"
-    # AST shows 1 dest (reference link)
-    # Literal count not in code spans shows 0 dest (no inline link target dest)
-    # Fake link is in a code block so it is ignored by literal count
-    original = "Here is `[fake](dest)` and [real][ref].\n" "\n" "[ref]: dest\n"
-    path.write_text(original, encoding="utf-8")
-
-    rewrites = [LinkRewrite("dest", "new_dest")]
+    rewrites = [LinkRewrite(old_target, new_target)]
     with pytest.raises(DocumentChangePlanningError, match="Link target mismatch"):
         plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
