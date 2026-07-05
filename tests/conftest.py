@@ -15,13 +15,13 @@ def _force_lf_write_text(monkeypatch: pytest.MonkeyPatch) -> None:
         errors: str | None = None,
         newline: str | None = None,
     ) -> int:
-        # Force LF line endings
+        # Force LF line endings unless the caller explicitly requests otherwise
         return original_write_text(
             self,
             data,
             encoding=encoding,
             errors=errors,
-            newline="\n",
+            newline=newline if newline is not None else "\n",
         )
 
     monkeypatch.setattr(Path, "write_text", new_write_text)
