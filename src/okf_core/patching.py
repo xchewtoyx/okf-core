@@ -630,7 +630,12 @@ def plan_file_move(
             source_sha256=source_sha256,
         )
 
-    _require_plan_target(bundle_root, resolved_dest, planning=True)
+    try:
+        _require_plan_target(bundle_root, resolved_dest, planning=True)
+    except DocumentChangePlanningError as exc:
+        raise DocumentChangePlanningError(
+            exc.path, str(exc).replace("Document change target", "Move destination")
+        ) from exc
     if resolved_dest.exists():
         raise DocumentChangePlanningError(
             resolved_dest, "Move destination already exists"

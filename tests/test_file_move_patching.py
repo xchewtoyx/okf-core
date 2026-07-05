@@ -141,6 +141,21 @@ def test_plan_file_move_dest_outside_bundle_root_raises_planning_error(
         plan_file_move(_bundle(bundle_root), source, outside_dest)
 
 
+def test_plan_file_move_dest_outside_bundle_root_error_uses_move_specific_wording(
+    tmp_path: Path,
+) -> None:
+    bundle_root = tmp_path / "bundle"
+    bundle_root.mkdir()
+    source = bundle_root / "old.md"
+    source.write_text("Body.\n", encoding="utf-8")
+    outside_dest = tmp_path / "outside.md"
+
+    with pytest.raises(
+        DocumentChangePlanningError, match="Move destination is outside bundle root"
+    ):
+        plan_file_move(_bundle(bundle_root), source, outside_dest)
+
+
 def test_plan_file_move_dest_is_symlink_raises_planning_error(tmp_path: Path) -> None:
     if not _can_symlink():
         pytest.skip("System does not support symlinks or requires elevated privileges")
