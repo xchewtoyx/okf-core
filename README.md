@@ -281,6 +281,18 @@ SOURCE and DEST are concept file paths, not concept IDs: relative to the bundle 
 
 If SOURCE's old directory and/or DEST's new directory already has an `index.md`, it is regenerated from a fresh scan to reflect the move (an index that doesn't already exist is never created as a side effect). `--dry-run` does not preview which indexes would be regenerated, since this refresh only runs after a real move.
 
+### `okf graph-repair`
+
+Repairs broken concept links whose target moved, by asking a pluggable hook whether it knows the target's new location:
+
+```sh
+okf graph-repair [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+Every broken link in the bundle (a link whose target concept doesn't exist at the path it points to) is checked against any plugin implementing the `okf_fetch_moved_concept_path(dead_concept_id, bundle) -> Path | None` hook. If a plugin resolves a dead concept ID to a path, that link's href is rewritten to point there; if no plugin resolves it -- including the out-of-the-box default, since no plugin ships with `okf-core` today -- the link is reported as unresolved rather than causing a failure. A link whose target escapes the bundle root entirely (no concept-id-shaped target to look up) is also reported unresolved. Exits `1` only for an operational failure: a scan/parse problem elsewhere in the bundle (which could be hiding broken links, so the run aborts rather than risk an incomplete repair) or an unrelated write-safety refusal. Unresolved links never affect the exit code -- that's an expected steady state, not an error; check the `unresolved_links` field in the JSON output if you need to know whether anything is still broken.
+
+If a broken link's containing file also has an unrelated reference-style link definition anywhere in it, planning that file's rewrite fails -- but only that file's link(s) are downgraded to unresolved; every other file's resolvable links are still repaired.
+
 ### `okf orient`
 
 Shows onboarding and orientation guidance for OKF bundles:
@@ -394,6 +406,12 @@ Matching is driven entirely by parsing the document with `markdown-it-py`: each 
 ### Concept Relocation
 
 `plan_move_concept(bundle, source, dest)` and `move_concept(bundle, source, dest)` compose the primitives above into a concept-aware move: every other file that currently links to the concept at `source` has its link rewritten to point at `dest` (preserving each link's original `#fragment`/`?query` suffix and its relative-vs-bundle-root-anchored style), and only then is the concept file itself relocated. The moved file's own body can also change: a self-referential link is rewritten to point at its new location, and any relative outbound link to another concept is rebased if the move changes directory (an absolute, bundle-root-anchored link is left untouched either way). `plan_move_concept` is read-only (safe for a `--dry-run` preview); `move_concept` applies every referring file's rewrite before moving the concept file last, so a failure partway through always leaves the concept file at a well-defined location, and re-running `move_concept` with the same arguments resumes and completes the operation. After a successful move, `MoveResult.regenerated_indexes` lists any `index.md` (in SOURCE's old directory and/or DEST's new directory) that was refreshed via `generate_index` to reflect the new state; an index that didn't already exist is never created. See `okf move` above for the CLI entry point.
+
+### Graph Repair
+
+`plan_graph_repair(bundle)` and `repair_graph(bundle)` compose the graph and patching primitives into a self-healing pass over every broken link in the bundle: for each one, a plugin implementing the `okf_fetch_moved_concept_path(dead_concept_id, bundle) -> Path | None` hook is asked whether the dead concept's ID has a new on-disk location; the first plugin to answer wins (`firstresult=True`). If a plugin returns a path, the link's href is rewritten there (preserving fragment/query and relative-vs-absolute style, exactly like concept relocation above); if every plugin returns `None` -- including the out-of-the-box default, since no plugin ships with `okf-core` today -- or the link's target escapes the bundle root entirely (no concept-id-shaped target to look up), the link is instead recorded as an `UnresolvedBrokenLink` with a reason (`"no-plugin-registered"` or `"not-concept-shaped"`). The hook is called at most once per distinct `dead_concept_id` per run, and rewrites are deduped by `(file, href)` so multiple broken links sharing an identical href in one file produce a single rewrite.
+
+`plan_graph_repair` is read-only (safe for a `--dry-run` preview) and returns a `RepairPreparation`; `repair_graph` applies every plan and returns a `RepairResult` with the files actually changed. If a broken link's containing file cannot be planned -- e.g. it also has an unrelated reference-style link definition, which makes `plan_markdown_link_rewrite` reject the whole file -- only that file's link(s) are downgraded to unresolved (reason `"planning-failed: ..."`); the run continues and every other file's resolvable links are still repaired. Only an upfront scan/parse failure elsewhere in the bundle aborts the whole run, since it means the broken-links view can't be trusted as complete. See `okf graph-repair` above for the CLI entry point.
 
 ### Validation
 

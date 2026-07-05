@@ -36,6 +36,7 @@ from okf_core import (
     serialize_concept_document,
 )
 from okf_core.moves import move_concept, plan_move_concept
+from okf_core.repair import plan_graph_repair, repair_graph
 from okf_core.write_safety import check_bundle_write_safety
 from okf_core.orientation import ORIENTATION_GUIDE
 
@@ -749,6 +750,82 @@ def move_cmd(
         )
 
 
+@cli.command("graph-repair")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show planned repairs without writing anything.",
+)
+def graph_repair_cmd(
+    config_path: str | None,
+    bundle_name: str,
+    dry_run: bool,
+) -> None:
+    """Repair broken concept links whose target moved, via registered hooks.
+
+    Every broken link in the bundle is checked against any plugin
+    implementing the okf_fetch_moved_concept_path hook. A link the hook
+    can't resolve -- including when no plugin is registered at all, which is
+    the default -- is reported as unresolved rather than causing a failure;
+    this is an expected steady state, not an error, so it does not affect
+    the exit code.
+    """
+    _, bundle = _load(config_path, bundle_name)
+
+    try:
+        if dry_run:
+            prep = plan_graph_repair(bundle)
+            output: dict[str, Any] = {
+                "bundle": bundle.name,
+                "would_update_files": sorted(
+                    str(path)
+                    for path, plan in prep.link_rewrite_plans.items()
+                    if plan.changed
+                ),
+                "resolved_links": [_link_dict(link) for link in prep.resolved_links],
+                "unresolved_links": [
+                    _unresolved_link_dict(u) for u in prep.unresolved_links
+                ],
+            }
+        else:
+            result = repair_graph(bundle)
+            output = {
+                "bundle": bundle.name,
+                "updated_files": [str(path) for path in result.updated_files],
+                "resolved_links": [_link_dict(link) for link in result.resolved_links],
+                "unresolved_links": [
+                    _unresolved_link_dict(u) for u in result.unresolved_links
+                ],
+            }
+    except DocumentChangeError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
+    verb = "would resolve" if dry_run else "Resolved"
+    click.echo(
+        f"{'Dry run: ' if dry_run else ''}{verb} "
+        f"{len(output['resolved_links'])} link(s), "
+        f"{len(output['unresolved_links'])} unresolved",
+        err=True,
+    )
+
+
 @cli.command("list-bundles")
 @click.option(
     "--config",
@@ -1028,6 +1105,13 @@ def _graph_problem_dict(problem: Any) -> dict[str, Any]:
         "path": str(problem.path),
         "kind": problem.kind,
         "message": problem.message,
+    }
+
+
+def _unresolved_link_dict(unresolved: Any) -> dict[str, Any]:
+    return {
+        "link": _link_dict(unresolved.link),
+        "reason": unresolved.reason,
     }
 
 

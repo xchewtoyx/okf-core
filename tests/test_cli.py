@@ -66,6 +66,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "list-bundles" in result.stdout
     assert "orient" in result.stdout
     assert "move" in result.stdout
+    assert "graph-repair" in result.stdout
 
 
 def test_scan_help_exits_zero() -> None:
@@ -2101,6 +2102,92 @@ def test_cli_move_source_escapes_bundle_root(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 2
+
+
+def test_cli_graph_repair_dry_run_no_plugin_reports_unresolved(
+    tmp_path: Path,
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [dead](dead.md).\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = _runner().invoke(
+        cli, ["graph-repair", "--dry-run", "--config", str(config_path)]
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["would_update_files"] == []
+    assert payload["resolved_links"] == []
+    assert len(payload["unresolved_links"]) == 1
+    assert payload["unresolved_links"][0]["reason"] == "no-plugin-registered"
+    assert "unresolved" in result.stderr
+
+
+def test_cli_graph_repair_resolves_link_via_registered_plugin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [dead](dead.md).\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    _write_concept(tmp_path / "new.md", title="New")
+
+    import okf_core.hooks as hooks_module
+    from okf_core.hooks import hookimpl
+
+    class _ResolvingPlugin:
+        @hookimpl
+        def okf_fetch_moved_concept_path(self, dead_concept_id, bundle):  # type: ignore[no-untyped-def]
+            return tmp_path / "new.md" if dead_concept_id == "dead" else None
+
+    original_get_hook_manager = hooks_module.get_hook_manager
+
+    def patched(bundle):  # type: ignore[no-untyped-def]
+        pm = original_get_hook_manager(bundle)
+        pm.register(_ResolvingPlugin())
+        return pm
+
+    monkeypatch.setattr(hooks_module, "get_hook_manager", patched)
+
+    result = _runner().invoke(cli, ["graph-repair", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["updated_files"] == [str(tmp_path / "a.md")]
+    assert len(payload["resolved_links"]) == 1
+    assert payload["unresolved_links"] == []
+    assert "Resolved" in result.stderr
+    assert "See [dead](new.md)." in (tmp_path / "a.md").read_text(encoding="utf-8")
+
+
+def test_cli_graph_repair_scan_failure_exits_one(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    (tmp_path / "a.md").write_text(
+        "---\ntype: concept\ntitle: A\n---\nSee [dead](dead.md).\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+    (tmp_path / "bad.md").write_text("---\ntype: concept\n", encoding="utf-8")
+
+    result = _runner().invoke(cli, ["graph-repair", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert result.stderr.strip() != ""
 
 
 def test_index_recurse_generates_nested_indexes(tmp_path: Path) -> None:

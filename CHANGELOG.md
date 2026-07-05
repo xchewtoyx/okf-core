@@ -12,6 +12,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`okf move` CLI command and `plan_file_move`/`move_concept` primitives**: relocates a concept file within a bundle while rewriting inbound Markdown links in every referring file, preserving link-graph integrity across the move. `move_concept` also refreshes an existing `index.md` in the source and/or destination directory to reflect the move. (#69)
 - **`entries_for_directory()` / `okf_version_for_index_write()`**: extracted from `okf index`'s internal logic into reusable `index.py` primitives, so other callers (e.g. `move_concept`) can regenerate a single directory's `index.md` without reimplementing its directory/subdirectory bookkeeping. (#69)
 - **Cyclomatic complexity linting**: `ruff`'s `C901` (mccabe) rule enabled with `max-complexity = 14` as part of `just lint` / CI. (#125)
+- **`okf graph-repair` CLI command and `plan_graph_repair`/`repair_graph` primitives**: repairs broken concept links whose target moved, via a new pluggable `okf_fetch_moved_concept_path` hook; links left unresolved (no plugin, hook returned `None`, or a `DocumentChangePlanningError` in one referring file) are reported rather than aborting the run. (#63)
 
 ### Changed
 
