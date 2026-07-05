@@ -139,6 +139,23 @@ def test_graph_ignores_percent_encoded_links_with_invalid_path_characters(
     assert graph.problems == ()
 
 
+def test_graph_does_not_conflate_encoded_slash_with_a_real_path_separator(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [x](foo%2Fbar.md).")
+    # Both a literal "foo%2Fbar.md" file and a nested "foo/bar.md" exist --
+    # decoding "%2F" into a real "/" would wrongly resolve the href to the
+    # nested file instead of correctly treating it as unresolvable.
+    _write_concept(root / "foo%2Fbar.md")
+    _write_concept(root / "foo" / "bar.md")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert graph.links == ()
+    assert graph.broken_links == ()
+
+
 def test_graph_reports_broken_internal_links(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", body="See [missing](missing.md).")

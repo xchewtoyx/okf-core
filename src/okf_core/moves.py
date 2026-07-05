@@ -23,6 +23,13 @@ from okf_core.patching import (
 )
 from okf_core.paths import path_to_concept_id
 
+# Manifest/graph problem kinds that mean a file's links could not be
+# extracted at all -- as opposed to e.g. "stable-id-missing", a validation
+# annotation on an entry whose body (and links) were still fully parsed.
+_SCAN_FAILURE_KINDS = frozenset(
+    {"path-error", "read-error", "decode-error", "parse-error"}
+)
+
 
 @dataclass(frozen=True)
 class MovePreparation:
@@ -73,19 +80,25 @@ def plan_move_concept(
         manifest = scan_bundle(bundle)
         graph = build_bundle_graph(bundle, manifest=manifest)
 
-        if graph.problems:
+        scan_failures = [
+            problem for problem in graph.problems if problem.kind in _SCAN_FAILURE_KINDS
+        ]
+        if scan_failures:
             # A file that failed to scan or parse contributes no links to
             # the graph, so backlinks_to() cannot be trusted as a complete
             # set of referring files -- proceeding could silently leave a
-            # stale link in a file we never got to look at.
+            # stale link in a file we never got to look at. Other manifest
+            # problems (e.g. a missing/duplicate stable ID) are validation
+            # annotations on an otherwise fully link-extracted entry, and
+            # don't affect backlink completeness, so they don't block a move.
             problem_paths = ", ".join(
                 str(problem.path)
-                for problem in sorted(graph.problems, key=lambda p: str(p.path))
+                for problem in sorted(scan_failures, key=lambda p: str(p.path))
             )
             raise DocumentChangePlanningError(
-                graph.problems[0].path,
+                scan_failures[0].path,
                 f"Cannot reliably find every file referencing this concept: "
-                f"{len(graph.problems)} file(s) failed to scan and may "
+                f"{len(scan_failures)} file(s) failed to scan and may "
                 f"contain undetected links: {problem_paths}",
             )
 

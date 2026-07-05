@@ -255,6 +255,30 @@ def test_move_concept_aborts_when_a_file_fails_to_scan(tmp_path: Path) -> None:
     assert a.read_text(encoding="utf-8") == "See [link](old.md).\n"
 
 
+def test_move_concept_succeeds_despite_stable_id_only_manifest_problems(
+    tmp_path: Path,
+) -> None:
+    bundle = BundleConfig(
+        name="test",
+        bundle_root=tmp_path,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        stable_id_field="id",
+    )
+    old = tmp_path / "old.md"
+    _write(old, "Body.\n")
+    a = tmp_path / "a.md"
+    _write(a, "See [link](old.md).\n")
+    new = tmp_path / "new.md"
+
+    result = move_concept(bundle, old, new)
+
+    assert result.moved is True
+    assert a.read_text(encoding="utf-8") == "See [link](new.md).\n"
+
+
 def test_move_concept_ignores_unrelated_similarly_named_links(tmp_path: Path) -> None:
     old = tmp_path / "old.md"
     _write(old, "Body.\n")

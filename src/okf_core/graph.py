@@ -553,7 +553,14 @@ def _resolve_concept_link(
     # Markdown-it emits percent-encoded hrefs for paths with spaces/special
     # characters (e.g. "old%20file.md"); decode before matching against the
     # literal on-disk path, or such links are wrongly treated as broken.
-    path = unquote(parsed.path)
+    # Decoded per-segment (not as one string) so an encoded separator like
+    # "%2F" can't be conflated with a real "/" path boundary: if decoding a
+    # single segment produces its own "/", that segment can't correspond to
+    # an actual filesystem path component, so the link is unresolvable.
+    segments = [unquote(segment) for segment in parsed.path.split("/")]
+    if any("/" in segment for segment in segments):
+        return None
+    path = "/".join(segments)
     if not path.endswith(".md"):
         return None
 
