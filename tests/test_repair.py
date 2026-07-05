@@ -107,9 +107,9 @@ def test_plan_graph_repair_downgrades_only_the_link_with_an_out_of_root_resoluti
     _write(root / "a.md", "See [dead](/dead.md) and [dead2](dead2.md).\n")
     new2 = root / "new2.md"
     _write(new2, "Body.\n")
-    # A misbehaving plugin resolves an absolute (bundle-root-anchored) link
-    # to a path outside the bundle root -- that can't be expressed in
-    # bundle-root-anchored style, so link_target_for_new_location raises.
+    # A misbehaving plugin resolves "dead" to a path outside the bundle
+    # root -- _validate_hook_path rejects it via path_to_concept_id's
+    # containment check before it ever reaches link_target_for_new_location.
     outside = tmp_path / "outside.md"
     _write(outside, "Body.\n")
 
@@ -180,8 +180,9 @@ def test_plan_graph_repair_resolves_relative_hook_path_against_bundle_root(
     unrelated_cwd = tmp_path.parent
     monkeypatch.chdir(unrelated_cwd)
 
-    # The plugin returns a bundle-root-relative Path, as concept_id_to_path()
-    # would naturally produce, not an absolute one.
+    # The plugin returns a bundle-root-relative Path rather than an absolute
+    # one (unlike concept_id_to_path(), which always returns absolute paths)
+    # to exercise the non-absolute normalization branch specifically.
     plugin = _ResolvingPlugin({"dead": Path("sub2/new.md")})
     _register_plugin(monkeypatch, plugin)
 
