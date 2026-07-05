@@ -209,6 +209,38 @@ def _extract_ast_counts(body: str, targets: set[str]) -> dict[str, int]:
     return ast_counts
 
 
+def _validate_link_rewrites(resolved_path: Path, rewrites: Any) -> list[str]:
+    if not isinstance(rewrites, (list, tuple, Sequence)) or isinstance(
+        rewrites, (str, bytes)
+    ):
+        raise DocumentChangePlanningError(
+            resolved_path,
+            "rewrites must be a sequence of LinkRewrite objects",
+        )
+
+    for i, r in enumerate(rewrites):
+        if not isinstance(r, LinkRewrite):
+            raise DocumentChangePlanningError(
+                resolved_path,
+                f"Element at index {i} in rewrites is not a LinkRewrite object: {r!r}",
+            )
+        if not isinstance(getattr(r, "old_target", None), str) or not isinstance(
+            getattr(r, "new_target", None), str
+        ):
+            raise DocumentChangePlanningError(
+                resolved_path,
+                f"LinkRewrite at index {i} must have string old_target and new_target: {r!r}",
+            )
+
+    old_targets = [r.old_target for r in rewrites]
+    if len(old_targets) != len(set(old_targets)):
+        raise DocumentChangePlanningError(
+            resolved_path,
+            "Duplicate old_target values in rewrites list",
+        )
+    return old_targets
+
+
 def plan_markdown_link_rewrite(
     bundle: BundleConfig,
     path: Path | str,
@@ -216,17 +248,16 @@ def plan_markdown_link_rewrite(
 ) -> DocumentChangePlan:
     """Plan rewriting target destinations of one or more inline Markdown links.
 
-    Rewrites match exact target URLs literally. Duplicate old_target entries are
-    rejected. Mismatches between the number of AST link occurrences and raw
-    literal matches (e.g., links in code blocks or reference-style links)
-    cause planning to raise DocumentChangePlanningError.
+    Rewrites match targets based on exact, unescaped target URL destinations. For
+    robustness, matching tolerates standard Markdown escaping variations in the raw
+    document file (such as %20 for spaces or optional backslashes for parentheses) and
+    optional angle brackets. Duplicate old_target entries are rejected. Mismatches
+    between the number of AST link occurrences and raw literal matches (e.g., links in
+    code blocks or reference-style links) cause planning to raise
+    DocumentChangePlanningError.
     """
-    old_targets = [r.old_target for r in rewrites]
-    if len(old_targets) != len(set(old_targets)):
-        raise DocumentChangePlanningError(
-            Path(path),
-            "Duplicate old_target values in rewrites list",
-        )
+    resolved_path = Path(path)
+    old_targets = _validate_link_rewrites(resolved_path, rewrites)
 
     def rewrite_links(resolved_path: Path, original_content: str) -> str:
         try:

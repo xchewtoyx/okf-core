@@ -73,6 +73,39 @@ def test_plan_link_rewrite_duplicate_old_targets(tmp_path: Path) -> None:
         plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
 
 
+def test_plan_link_rewrite_invalid_inputs(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("[link](dest)\n", encoding="utf-8")
+
+    # Not a sequence
+    with pytest.raises(
+        DocumentChangePlanningError, match="must be a sequence of LinkRewrite objects"
+    ):
+        plan_markdown_link_rewrite(_bundle(tmp_path), path, "not a sequence")  # type: ignore
+
+    # None in sequence
+    with pytest.raises(
+        DocumentChangePlanningError,
+        match="Element at index 0 in rewrites is not a LinkRewrite object",
+    ):
+        plan_markdown_link_rewrite(_bundle(tmp_path), path, [None])  # type: ignore
+
+    # Non-LinkRewrite element
+    with pytest.raises(
+        DocumentChangePlanningError,
+        match="Element at index 0 in rewrites is not a LinkRewrite object",
+    ):
+        plan_markdown_link_rewrite(
+            _bundle(tmp_path), path, [{"old_target": "a", "new_target": "b"}]  # type: ignore
+        )
+
+    # Non-string targets
+    with pytest.raises(
+        DocumentChangePlanningError, match="must have string old_target and new_target"
+    ):
+        plan_markdown_link_rewrite(_bundle(tmp_path), path, [LinkRewrite(123, "new_dest")])  # type: ignore
+
+
 @pytest.mark.parametrize(
     ("original", "old_target", "new_target", "expected"),
     [
