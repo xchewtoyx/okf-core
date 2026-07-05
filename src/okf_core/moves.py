@@ -50,9 +50,13 @@ def plan_move_concept(
     """Read-only planning for a concept move.
 
     Validates source/dest, computes a file move plan, and (if the move is
-    not a no-op) a link-rewrite plan for every other file that currently
-    links to the concept at ``source``, against CURRENT file contents. Never
-    writes anything -- safe to call repeatedly, e.g. for a dry-run preview.
+    not a no-op) a link-rewrite plan for every file with a link that needs
+    updating, against CURRENT file contents: every other file that currently
+    links to the concept at ``source``, plus the moved file itself if it
+    contains a self-link (rebased to its new location) or a relative
+    outbound link to another concept (rebased if the move changes
+    directory). Never writes anything -- safe to call repeatedly, e.g. for a
+    dry-run preview.
     """
 
     bundle_root = bundle.bundle_root.resolve(strict=False)
