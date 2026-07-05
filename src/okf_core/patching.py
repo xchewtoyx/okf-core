@@ -157,18 +157,31 @@ class LinkRewrite:
     new_target: str
 
 
-def _clean_raw_href(raw_href: str) -> str:
-    import re
+def _get_target_pattern(old_target: str) -> re.Pattern[str]:
+    # We support url-encoded space %20 in the raw file if the target has spaces
+    target_pattern = re.escape(old_target)
+    if " " in old_target:
+        target_pattern = target_pattern.replace(r"\ ", r"(?:\ |%20)")
 
-    raw_href = raw_href.strip()
-    if raw_href.startswith("<") and raw_href.endswith(">"):
-        raw_href = raw_href[1:-1].strip()
-    return re.sub(r"\\(.)", r"\1", raw_href)
+    if "(" in old_target or ")" in old_target:
+        escaped_target_alt = (
+            re.escape(old_target).replace(r"\(", r"\\?\(").replace(r"\)", r"\\?\)")
+        )
+        target_pattern = f"(?:{target_pattern}|{escaped_target_alt})"
+
+    return re.compile(
+        r"(?<!\\)(?<!\!)\["  # Check that opening bracket is not preceded by ! or \
+        r"(?:\\.|[^\]])*"  # Match link text, allowing escaped brackets
+        r"\]\(\s*("
+        rf"<(?P<bracketed>{target_pattern})>|"
+        rf"(?P<plain>{target_pattern})"
+        r")"
+        r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?"
+        r"\s*\)"
+    )
 
 
 def _get_code_spans(body: str) -> list[tuple[int, int]]:
-    import re
-
     code_spans: list[tuple[int, int]] = []
     for m in re.finditer(r"```[sS]*?```", body):
         code_spans.append(m.span())
@@ -194,55 +207,6 @@ def _extract_ast_counts(body: str, targets: set[str]) -> dict[str, int]:
                 if decoded_href in ast_counts:
                     ast_counts[decoded_href] += 1
     return ast_counts
-
-
-def _verify_link_counts(
-    resolved_path: Path,
-    ast_counts: dict[str, int],
-    literal_counts: dict[str, int],
-) -> None:
-    for target, ast_count in ast_counts.items():
-        lit_count = literal_counts.get(target, 0)
-        if ast_count != lit_count:
-            raise DocumentChangePlanningError(
-                resolved_path,
-                (
-                    f"Link target mismatch for '{target}': "
-                    f"AST shows {ast_count} occurrences, "
-                    f"but raw content has {lit_count} literal matches. "
-                    "This can happen if links are inside code blocks or "
-                    "use reference-style syntax."
-                ),
-            )
-
-
-def _replace_link_targets(
-    body: str,
-    literal_matches: list[re.Match[str]],
-    code_spans: list[tuple[int, int]],
-    rewrites_map: dict[str, str],
-) -> str:
-    patched_body = body
-    for match in reversed(literal_matches):
-        if any(start <= match.start() < end for start, end in code_spans):
-            continue
-        raw_target = match.group(2)
-        cleaned = _clean_raw_href(raw_target)
-        if cleaned in rewrites_map:
-            new_target = rewrites_map[cleaned]
-            if raw_target.strip().startswith("<") and raw_target.strip().endswith(">"):
-                new_target_str = f"<{new_target}>"
-            elif " " in new_target or "(" in new_target or ")" in new_target:
-                new_target_str = f"<{new_target}>"
-            else:
-                new_target_str = new_target
-
-            start_idx = match.start(2)
-            end_idx = match.end(2)
-            patched_body = (
-                patched_body[:start_idx] + new_target_str + patched_body[end_idx:]
-            )
-    return patched_body
 
 
 def plan_markdown_link_rewrite(
@@ -280,38 +244,51 @@ def plan_markdown_link_rewrite(
         code_spans = _get_code_spans(body)
         ast_counts = _extract_ast_counts(body, set(old_targets))
 
-        # Regex for standard inline link destinations
-        import re
-
-        link_pattern = re.compile(
-            r"(?<!\\)(?<!\!)\[("
-            r"(?:\\.|[^\]])*"
-            r")\]\(\s*("
-            r"<[^>]*>|(?:\\[()]|[^)\s])*"
-            r")"
-            r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?"
-            r"\s*\)"
-        )
-
-        literal_matches = list(link_pattern.finditer(body))
-        literal_counts: dict[str, int] = {t: 0 for t in old_targets}
-
-        for match in literal_matches:
-            if any(start <= match.start() < end for start, end in code_spans):
-                continue
-            cleaned = _clean_raw_href(match.group(2))
-            if cleaned in literal_counts:
-                literal_counts[cleaned] += 1
-
-        _verify_link_counts(resolved_path, ast_counts, literal_counts)
+        # Gather all matches and verify counts per target
+        all_matches: list[tuple[re.Match[str], LinkRewrite]] = []
+        for r in rewrites:
+            pattern = _get_target_pattern(r.old_target)
+            matches = [
+                m
+                for m in pattern.finditer(body)
+                if not any(start <= m.start() < end for start, end in code_spans)
+            ]
+            if ast_counts[r.old_target] != len(matches):
+                raise DocumentChangePlanningError(
+                    resolved_path,
+                    (
+                        f"Link target mismatch for '{r.old_target}': "
+                        f"AST shows {ast_counts[r.old_target]} occurrences, "
+                        f"but raw content has {len(matches)} literal matches. "
+                        "This can happen if links are inside code blocks or "
+                        "use reference-style syntax."
+                    ),
+                )
+            for m in matches:
+                all_matches.append((m, r))
 
         if not rewrites:
             return original_content
 
-        rewrites_map = {r.old_target: r.new_target for r in rewrites}
-        patched_body = _replace_link_targets(
-            body, literal_matches, code_spans, rewrites_map
-        )
+        # Sort matches in reverse order of their start positions to prevent offset drift
+        all_matches.sort(key=lambda x: x[0].start(), reverse=True)
+
+        patched_body = body
+        for match, r in all_matches:
+            # Replace only the target portion in the raw string (Group 1)
+            raw_target_text = match.group(1)
+            if raw_target_text.startswith("<") and raw_target_text.endswith(">"):
+                new_target_str = f"<{r.new_target}>"
+            elif " " in r.new_target or "(" in r.new_target or ")" in r.new_target:
+                new_target_str = f"<{r.new_target}>"
+            else:
+                new_target_str = r.new_target
+
+            start_idx = match.start(1)
+            end_idx = match.end(1)
+            patched_body = (
+                patched_body[:start_idx] + new_target_str + patched_body[end_idx:]
+            )
 
         return frontmatter_content + patched_body
 
