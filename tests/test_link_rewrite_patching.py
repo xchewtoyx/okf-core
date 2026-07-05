@@ -191,6 +191,62 @@ def test_plan_link_rewrite_invalid_inputs(tmp_path: Path) -> None:
             "[link](foo%2Fnew)",
             id="percent_encoded_destination",
         ),
+        pytest.param(
+            "[link](<a b>)",
+            "a%20b",
+            "new b",
+            "[link](<new b>)",
+            id="percent_encoded_old_target_matches_bracketed_space",
+        ),
+        pytest.param(
+            "[intro](café.md)",
+            "café.md",
+            "intro.md",
+            "[intro](intro.md)",
+            id="non_ascii_percent_encoded_href",
+        ),
+        pytest.param(
+            "\\![label](old)",
+            "old",
+            "new",
+            "\\![label](new)",
+            id="escaped_image_marker_is_a_real_link",
+        ),
+        pytest.param(
+            "[link](<old>)",
+            "old",
+            "new>target",
+            "[link](<new\\>target>)",
+            id="angle_bracket_in_new_target_is_escaped",
+        ),
+        pytest.param(
+            "[a [b] c](old)",
+            "old",
+            "new",
+            "[a [b] c](new)",
+            id="nested_brackets_in_label",
+        ),
+        pytest.param(
+            "Code link: `[link](old)` and real [link](old)\n",
+            "old",
+            "new",
+            "Code link: `[link](old)` and real [link](new)\n",
+            id="mixed_inline_code",
+        ),
+        pytest.param(
+            "Here is a real [link](old)\n```markdown\n[link](old)\n```\n",
+            "old",
+            "new",
+            "Here is a real [link](new)\n```markdown\n[link](old)\n```\n",
+            id="mixed_fenced_code",
+        ),
+        pytest.param(
+            "`[fake](old)` and [a [b] c](old)",
+            "old",
+            "new",
+            "`[fake](old)` and [a [b] c](new)",
+            id="fake_code_span_and_nested_bracket_label_disambiguated",
+        ),
     ],
 )
 def test_plan_link_rewrite_valid_syntax_variations(
@@ -221,6 +277,23 @@ def test_plan_link_rewrite_valid_syntax_variations(
             id="frontmatter_link_shape",
         ),
         pytest.param("\\[link](old)", "old", "new", id="escaped_brackets_prefix"),
+        pytest.param("Code link: `[link](old)`", "old", "new", id="inline_code_link"),
+        pytest.param(
+            "``[fake](old) ` more``",
+            "old",
+            "new",
+            id="inline_code_span_double_backtick_fence",
+        ),
+        pytest.param(
+            "```markdown\n[link](old)\n```\n", "old", "new", id="fenced_code_link"
+        ),
+        pytest.param(
+            "````markdown\n[link](old)\n````\n",
+            "old",
+            "new",
+            id="longer_backtick_fence",
+        ),
+        pytest.param("~~~markdown\n[link](old)\n~~~\n", "old", "new", id="tilde_fence"),
     ],
 )
 def test_plan_link_rewrite_ignored_syntax_variations(
@@ -253,30 +326,6 @@ def test_plan_link_rewrite_ignored_syntax_variations(
             "old",
             "new",
             id="mixed_reference_and_code_fake_link",
-        ),
-        pytest.param("Code link: `[link](old)`", "old", "new", id="inline_code_link"),
-        pytest.param(
-            "```markdown\n[link](old)\n```\n", "old", "new", id="fenced_code_link"
-        ),
-        pytest.param(
-            "````markdown\n[link](old)\n````\n",
-            "old",
-            "new",
-            id="longer_backtick_fence",
-        ),
-        pytest.param("~~~markdown\n[link](old)\n~~~\n", "old", "new", id="tilde_fence"),
-        pytest.param("[a [b] c](old)", "old", "new", id="nested_brackets_in_label"),
-        pytest.param(
-            "Code link: `[link](old)` and real [link](old)\n",
-            "old",
-            "new",
-            id="mixed_inline_code",
-        ),
-        pytest.param(
-            "Here is a real [link](old)\n```markdown\n[link](old)\n```\n",
-            "old",
-            "new",
-            id="mixed_fenced_code",
         ),
     ],
 )

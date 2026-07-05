@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import os
-import re
 import stat
 import tempfile
 from collections.abc import Callable, Mapping, Sequence
@@ -16,6 +15,9 @@ from typing import Any
 
 import yaml
 from markdown_it import MarkdownIt
+from markdown_it.common.utils import isStrSpace
+from markdown_it.rules_inline import link as _link_inline_rule
+from markdown_it.rules_inline.state_inline import StateInline
 from yaml.nodes import MappingNode, Node
 from yaml.tokens import AliasToken
 
@@ -157,48 +159,101 @@ class LinkRewrite:
     new_target: str
 
 
-def _get_target_pattern(old_target: str) -> re.Pattern[str]:
-    # We support url-encoded space %20 in the raw file if the target has spaces
-    target_pattern = re.escape(old_target)
-    if " " in old_target:
-        target_pattern = target_pattern.replace(r"\ ", r"(?:\ |%20)")
+def _normalize_target(target: str) -> str:
+    """Normalize a caller-supplied target the same way markdown-it-py normalizes hrefs.
 
-    if "(" in old_target or ")" in old_target:
-        escaped_target_alt = (
-            re.escape(old_target).replace(r"\(", r"\\?\(").replace(r"\)", r"\\?\)")
+    Using the library's own normalizer (rather than a hand-rolled %20-only
+    substitution) keeps comparisons consistent for every kind of escaping
+    markdown-it-py applies to a real link destination: spaces, non-ASCII
+    characters, and already-percent-encoded sequences all round-trip through
+    the same function, so callers can pass the plain-text target regardless
+    of how it happens to appear in the source file.
+    """
+
+    return _MARKDOWN.normalizeLink(target)
+
+
+@dataclass(frozen=True)
+class _LinkOccurrence:
+    """The exact source span of one real inline link's destination."""
+
+    dest_start: int
+    dest_end: int
+    href: str
+
+
+_LINK_OCCURRENCES_ENV_KEY = "_okf_link_rewrite_occurrences"
+
+
+def _locate_link_destination(
+    state: StateInline, label_start: int
+) -> tuple[int, int] | None:
+    """Re-derive a just-parsed link's destination span using the parser's own helpers.
+
+    markdown-it-py's inline tokens carry no character offsets, so this replays
+    the label/destination lookup with the same ``state.md.helpers`` functions
+    the "link" rule itself used a moment earlier, instead of re-scanning the
+    raw text with a regex. Returns None for reference-style links, which have
+    no literal destination text in the body to rewrite.
+    """
+
+    label_end = state.md.helpers.parseLinkLabel(state, label_start, True)
+    if label_end < 0:
+        return None
+    pos = label_end + 1
+    maximum = state.posMax
+    if pos >= maximum or state.src[pos] != "(":
+        return None
+    pos += 1
+    while pos < maximum and (isStrSpace(state.src[pos]) or state.src[pos] == "\n"):
+        pos += 1
+    dest_start = pos
+    result = state.md.helpers.parseLinkDestination(state.src, pos, maximum)
+    if not result.ok:
+        return None
+    return dest_start, result.pos
+
+
+def _instrumented_link_rule(state: StateInline, silent: bool) -> bool:
+    """Wrap the "link" rule to record each real link's destination span as it parses.
+
+    This is a pure observer: it defers entirely to the library's own rule for
+    matching and token creation, and only inspects the outcome afterward, so
+    it cannot change what the parser recognizes as a link.
+    """
+
+    label_start = state.pos
+    tokens_before = len(state.tokens)
+    matched = _link_inline_rule(state, silent)
+    if matched and not silent and len(state.tokens) > tokens_before:
+        # state.push() flushes any pending plain text into its own token first,
+        # so the link_open this call produced isn't necessarily at tokens_before.
+        token = next(
+            (t for t in state.tokens[tokens_before:] if t.type == "link_open"), None
         )
-        target_pattern = f"(?:{target_pattern}|{escaped_target_alt})"
-
-    return re.compile(
-        r"(?<!\\)(?<!\!)\["  # Check that opening bracket is not preceded by ! or \
-        r"(?:\\.|[^\]])*"  # Match link text, allowing escaped brackets
-        r"\]\(\s*("
-        rf"<(?P<bracketed>{target_pattern})>|"
-        rf"(?P<plain>{target_pattern})"
-        r")"
-        r"(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?"
-        r"\s*\)"
-    )
+        if token is not None:
+            href = token.attrGet("href")
+            location = _locate_link_destination(state, label_start)
+            if location is not None and isinstance(href, str):
+                dest_start, dest_end = location
+                state.env.setdefault(_LINK_OCCURRENCES_ENV_KEY, []).append(
+                    _LinkOccurrence(dest_start=dest_start, dest_end=dest_end, href=href)
+                )
+    return matched
 
 
-def _extract_ast_counts(tokens: list, targets: set[str]) -> dict[str, int]:
-    normalized_targets = {t.replace("%20", " ") for t in targets}
-    ast_counts = {t.replace("%20", " "): 0 for t in targets}
-    for token in tokens:
-        if token.type != "inline" or token.children is None:
-            continue
-        for child in token.children:
-            if child.type != "link_open":
-                continue
-            href = child.attrGet("href")
-            if isinstance(href, str):
-                decoded_href = href.replace("%20", " ")
-                if decoded_href in normalized_targets:
-                    ast_counts[decoded_href] += 1
-    return ast_counts
+_MARKDOWN_LINK_REWRITE = MarkdownIt("commonmark")
+_MARKDOWN_LINK_REWRITE.inline.ruler.at("link", _instrumented_link_rule)
 
 
-def _validate_link_rewrites(resolved_path: Path, rewrites: Any) -> list[str]:
+def _format_destination(new_target: str, *, wrap: bool) -> str:
+    if not wrap:
+        return new_target
+    escaped = new_target.replace("<", "\\<").replace(">", "\\>")
+    return f"<{escaped}>"
+
+
+def _validate_link_rewrites(resolved_path: Path, rewrites: Any) -> None:
     if not isinstance(rewrites, (list, tuple, Sequence)) or isinstance(
         rewrites, (str, bytes)
     ):
@@ -221,13 +276,12 @@ def _validate_link_rewrites(resolved_path: Path, rewrites: Any) -> list[str]:
                 f"LinkRewrite at index {i} must have string old_target and new_target: {r!r}",
             )
 
-    old_targets_normalized = [r.old_target.replace("%20", " ") for r in rewrites]
+    old_targets_normalized = [_normalize_target(r.old_target) for r in rewrites]
     if len(old_targets_normalized) != len(set(old_targets_normalized)):
         raise DocumentChangePlanningError(
             resolved_path,
             "Duplicate old_target values in rewrites list",
         )
-    return [r.old_target for r in rewrites]
 
 
 def plan_markdown_link_rewrite(
@@ -237,18 +291,23 @@ def plan_markdown_link_rewrite(
 ) -> DocumentChangePlan:
     """Plan rewriting target destinations of one or more inline Markdown links.
 
-    Rewrites match targets based on exact, unescaped target URL destinations. For
-    robustness, matching tolerates standard Markdown escaping variations in the raw
-    document file (such as %20 for spaces or optional backslashes for parentheses) and
-    optional angle brackets. Duplicate old_target entries are rejected. Mismatches
-    between the number of AST link occurrences and raw literal matches (e.g., links in
-    code blocks or reference-style links) cause planning to raise
-    DocumentChangePlanningError.
+    Rewrites match real inline links only: a target is located by parsing the
+    document and comparing each link's resolved href against a caller-supplied
+    target, normalized the same way markdown-it-py normalizes hrefs (so %20,
+    other percent-encoding, and non-ASCII characters all compare consistently
+    regardless of how they appear in the source). Text that merely looks like
+    a link but isn't one to the parser - inside code spans or fenced code
+    blocks, or in frontmatter - is never touched. Duplicate old_target entries
+    (after normalization) are rejected. Reference-style links are not
+    supported and cause planning to raise DocumentChangePlanningError.
     """
     resolved_path = Path(path)
-    old_targets = _validate_link_rewrites(resolved_path, rewrites)
+    _validate_link_rewrites(resolved_path, rewrites)
 
     def rewrite_links(resolved_path: Path, original_content: str) -> str:
+        if not rewrites:
+            return original_content
+
         try:
             document = parse_concept_document(original_content)
         except DocumentParseError as exc:
@@ -262,56 +321,38 @@ def plan_markdown_link_rewrite(
         frontmatter_content = original_content[:body_offset]
 
         env: dict[str, Any] = {}
-        tokens = _MARKDOWN.parse(body, env)
+        _MARKDOWN_LINK_REWRITE.parse(body, env)
         if env.get("references"):
             raise DocumentChangePlanningError(
                 resolved_path,
                 "Reference-style links are not supported by the link rewriter.",
             )
-        ast_counts = _extract_ast_counts(tokens, set(old_targets))
 
-        # Gather all matches and verify counts per target
-        all_matches: list[tuple[re.Match[str], LinkRewrite]] = []
-        for r in rewrites:
-            pattern = _get_target_pattern(r.old_target)
-            matches = list(pattern.finditer(body))
-            normalized_old = r.old_target.replace("%20", " ")
-            if ast_counts[normalized_old] != len(matches):
-                raise DocumentChangePlanningError(
-                    resolved_path,
-                    (
-                        f"Link target mismatch for '{r.old_target}': "
-                        f"AST shows {ast_counts[normalized_old]} occurrences, "
-                        f"but raw content has {len(matches)} literal matches. "
-                        "This can happen if links are inside code blocks, "
-                        "use reference-style syntax, or use unsupported nested "
-                        "brackets/formatting inside the link text."
-                    ),
-                )
-            for m in matches:
-                all_matches.append((m, r))
+        occurrences_by_href: dict[str, list[_LinkOccurrence]] = {}
+        for occurrence in env.get(_LINK_OCCURRENCES_ENV_KEY, []):
+            occurrences_by_href.setdefault(occurrence.href, []).append(occurrence)
 
-        if not rewrites:
-            return original_content
+        all_matches: list[tuple[_LinkOccurrence, LinkRewrite]] = [
+            (occurrence, r)
+            for r in rewrites
+            for occurrence in occurrences_by_href.get(
+                _normalize_target(r.old_target), []
+            )
+        ]
 
         # Sort matches in reverse order of their start positions to prevent offset drift
-        all_matches.sort(key=lambda x: x[0].start(), reverse=True)
+        all_matches.sort(key=lambda item: item[0].dest_start, reverse=True)
 
         patched_body = body
-        for match, r in all_matches:
-            # Replace only the target portion in the raw string (Group 1)
-            raw_target_text = match.group(1)
-            if raw_target_text.startswith("<") and raw_target_text.endswith(">"):
-                new_target_str = f"<{r.new_target}>"
-            elif " " in r.new_target or "(" in r.new_target or ")" in r.new_target:
-                new_target_str = f"<{r.new_target}>"
-            else:
-                new_target_str = r.new_target
-
-            start_idx = match.start(1)
-            end_idx = match.end(1)
+        for occurrence, r in all_matches:
+            wrap = patched_body[occurrence.dest_start] == "<" or (
+                " " in r.new_target or "(" in r.new_target or ")" in r.new_target
+            )
+            new_target_str = _format_destination(r.new_target, wrap=wrap)
             patched_body = (
-                patched_body[:start_idx] + new_target_str + patched_body[end_idx:]
+                patched_body[: occurrence.dest_start]
+                + new_target_str
+                + patched_body[occurrence.dest_end :]
             )
 
         return frontmatter_content + patched_body
