@@ -55,13 +55,18 @@ def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
     Builds the bundle graph and, for every broken link, asks the
     ``okf_fetch_moved_concept_path`` hook (once per distinct dead concept ID)
     whether its former target moved. A link is left unresolved -- not an
-    error -- if it has no concept-id-shaped target, if the hook returns None
-    for its dead concept ID (including when no plugin is registered at all,
-    the default), or if planning the containing file's rewrite raises
-    DocumentChangePlanningError (e.g. an unrelated reference-style link
-    elsewhere in that file): in that last case, only that file's links are
-    downgraded to unresolved -- other files' rewrites still proceed. Never
-    writes anything -- safe to call repeatedly, e.g. for a dry-run preview.
+    error -- for any of these reasons: it has no concept-id-shaped target
+    (``"not-concept-shaped"``); no plugin implements the hook at all
+    (``"no-plugin-registered"``); a plugin is registered but returned None
+    for this dead concept ID (``"unresolved"``); the resolved path can't be
+    expressed in the link's original style, e.g. a plugin resolves a
+    bundle-root-anchored link outside bundle_root
+    (``"invalid-resolved-path: ..."``); or planning the containing file's
+    rewrite raises DocumentChangePlanningError, e.g. an unrelated
+    reference-style link elsewhere in that file (``"planning-failed: ..."``,
+    downgrading only that file's links -- other files' rewrites still
+    proceed). Never writes anything -- safe to call repeatedly, e.g. for a
+    dry-run preview.
     """
 
     from okf_core.hooks import get_hook_manager
@@ -89,6 +94,7 @@ def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
         )
 
     pm = get_hook_manager(bundle)
+    hook_has_impls = bool(pm.hook.okf_fetch_moved_concept_path.get_hookimpls())
     resolved_paths_by_dead_id: dict[str, Path | None] = {}
     rewrites_by_file: dict[Path, dict[str, LinkRewrite]] = {}
     links_by_file: dict[Path, dict[str, ConceptLink]] = {}
@@ -107,15 +113,26 @@ def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
         new_path = resolved_paths_by_dead_id[dead_id]
 
         if new_path is None:
-            unresolved.append(UnresolvedBrokenLink(link, "no-plugin-registered"))
+            reason = "no-plugin-registered" if not hook_has_impls else "unresolved"
+            unresolved.append(UnresolvedBrokenLink(link, reason))
             continue
 
-        new_target = link_target_for_new_location(
-            bundle,
-            original_target=link.target,
-            source_path=link.source_path,
-            new_target_path=new_path,
-        )
+        try:
+            new_target = link_target_for_new_location(
+                bundle,
+                original_target=link.target,
+                source_path=link.source_path,
+                new_target_path=new_path,
+            )
+        except ValueError as exc:
+            # A plugin can return any Path it likes; a bundle-root-anchored
+            # link whose resolved path falls outside bundle_root can't be
+            # expressed in that style. Don't let one plugin's bad answer
+            # abort every other link's repair.
+            unresolved.append(
+                UnresolvedBrokenLink(link, f"invalid-resolved-path: {exc}")
+            )
+            continue
         rewrites_by_file.setdefault(link.source_path, {})[link.target] = LinkRewrite(
             old_target=link.target, new_target=new_target
         )

@@ -84,6 +84,56 @@ def test_plan_graph_repair_reports_out_of_root_link_as_not_concept_shaped(
     assert prep.unresolved_links[0].link.target == "../outside.md"
 
 
+def test_plan_graph_repair_reports_hook_returning_none_as_unresolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path / "a.md", "See [dead](dead.md).\n")
+
+    plugin = _ResolvingPlugin({})  # registered, but resolves nothing
+    _register_plugin(monkeypatch, plugin)
+
+    prep = plan_graph_repair(_bundle(tmp_path))
+
+    assert prep.resolved_links == ()
+    assert len(prep.unresolved_links) == 1
+    assert prep.unresolved_links[0].reason == "unresolved"
+    assert prep.unresolved_links[0].link.target == "dead.md"
+
+
+def test_plan_graph_repair_downgrades_only_the_link_with_an_out_of_root_resolution(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "docs"
+    _write(root / "a.md", "See [dead](/dead.md) and [dead2](dead2.md).\n")
+    new2 = root / "new2.md"
+    _write(new2, "Body.\n")
+    # A misbehaving plugin resolves an absolute (bundle-root-anchored) link
+    # to a path outside the bundle root -- that can't be expressed in
+    # bundle-root-anchored style, so link_target_for_new_location raises.
+    outside = tmp_path / "outside.md"
+    _write(outside, "Body.\n")
+
+    plugin = _ResolvingPlugin({"dead": outside, "dead2": new2})
+    _register_plugin(monkeypatch, plugin)
+
+    prep = plan_graph_repair(_bundle(root))
+
+    assert len(prep.resolved_links) == 1
+    assert prep.resolved_links[0].target == "dead2.md"
+
+    assert len(prep.unresolved_links) == 1
+    unresolved = prep.unresolved_links[0]
+    assert unresolved.link.target == "/dead.md"
+    assert "invalid-resolved-path" in unresolved.reason
+
+    # The run must not raise despite the plugin's bad answer.
+    result = repair_graph(_bundle(root))
+    assert result.updated_files == (root / "a.md",)
+    assert (root / "a.md").read_text(encoding="utf-8") == (
+        "See [dead](/dead.md) and [dead2](new2.md).\n"
+    )
+
+
 def test_plan_graph_repair_resolves_link_via_registered_plugin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
