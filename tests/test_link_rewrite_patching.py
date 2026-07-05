@@ -75,26 +75,32 @@ def test_plan_link_rewrite_duplicate_old_targets(tmp_path: Path) -> None:
 
 def test_plan_link_rewrite_ignores_inline_code_links(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
-    original = "Code link: `[link](dest)`\n"
+    original = "Code link: `[link](dest)` and real [link](dest)\n"
     path.write_text(original, encoding="utf-8")
 
     rewrites = [LinkRewrite("dest", "new_dest")]
     plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
 
-    assert plan.changed is False
-    assert plan.proposed_content == original
+    # It should rewrite the real link, but ignore the inline code link
+    assert plan.changed is True
+    assert (
+        plan.proposed_content == "Code link: `[link](dest)` and real [link](new_dest)\n"
+    )
 
 
 def test_plan_link_rewrite_ignores_fenced_code_block_links(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
-    original = "```markdown\n[link](dest)\n```\n"
+    original = "Here is a real [link](dest)\n" "```markdown\n" "[link](dest)\n" "```\n"
     path.write_text(original, encoding="utf-8")
 
     rewrites = [LinkRewrite("dest", "new_dest")]
     plan = plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
 
-    assert plan.changed is False
-    assert plan.proposed_content == original
+    # It should rewrite the real link, but ignore the fenced block link
+    assert plan.changed is True
+    assert plan.proposed_content == (
+        "Here is a real [link](new_dest)\n" "```markdown\n" "[link](dest)\n" "```\n"
+    )
 
 
 def test_plan_link_rewrite_rejects_reference_style_links(tmp_path: Path) -> None:
