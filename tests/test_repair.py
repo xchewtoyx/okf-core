@@ -219,11 +219,69 @@ def test_plan_graph_repair_dedupes_multiple_occurrences_in_one_file(
     plugin = _ResolvingPlugin({"dead": new})
     _register_plugin(monkeypatch, plugin)
 
+    prep = plan_graph_repair(_bundle(tmp_path))
+    # Both occurrences share one LinkRewrite (there's only one distinct href
+    # to rewrite), but each is still a separate broken link and must be
+    # separately accounted for, not overwritten in the reported count.
+    assert len(prep.resolved_links) == 2
+
     result = repair_graph(_bundle(tmp_path))
 
     assert result.updated_files == (tmp_path / "a.md",)
     assert (tmp_path / "a.md").read_text(encoding="utf-8") == (
         "First [x](new.md) and second [y](new.md).\n"
+    )
+    assert len(result.resolved_links) == 2
+
+
+def test_plan_graph_repair_downgrades_every_occurrence_on_planning_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(
+        tmp_path / "a.md",
+        "First [x](dead.md) and second [y](dead.md).\n\n[ref]: something.md\n",
+    )
+    new = tmp_path / "new.md"
+    _write(new, "Body.\n")
+
+    plugin = _ResolvingPlugin({"dead": new})
+    _register_plugin(monkeypatch, plugin)
+
+    prep = plan_graph_repair(_bundle(tmp_path))
+
+    assert prep.resolved_links == ()
+    assert len(prep.unresolved_links) == 2
+    assert all("planning-failed" in u.reason for u in prep.unresolved_links)
+
+
+def test_plan_graph_repair_reports_missing_resolved_file_as_invalid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path / "a.md", "See [dead](dead.md) and [dead2](dead2.md).\n")
+    new2 = tmp_path / "new2.md"
+    _write(new2, "Body.\n")
+    # A misbehaving (or stale-cache) plugin resolves "dead" to a path that's
+    # a valid bundle-root-contained .md location but doesn't actually exist.
+    missing = tmp_path / "does-not-exist.md"
+
+    plugin = _ResolvingPlugin({"dead": missing, "dead2": new2})
+    _register_plugin(monkeypatch, plugin)
+
+    prep = plan_graph_repair(_bundle(tmp_path))
+
+    assert len(prep.resolved_links) == 1
+    assert prep.resolved_links[0].target == "dead2.md"
+
+    assert len(prep.unresolved_links) == 1
+    unresolved = prep.unresolved_links[0]
+    assert unresolved.link.target == "dead.md"
+    assert "invalid-resolved-path" in unresolved.reason
+    assert "does not exist" in unresolved.reason
+
+    result = repair_graph(_bundle(tmp_path))
+    assert result.updated_files == (tmp_path / "a.md",)
+    assert (tmp_path / "a.md").read_text(encoding="utf-8") == (
+        "See [dead](dead.md) and [dead2](new2.md).\n"
     )
 
 

@@ -60,12 +60,14 @@ def _validate_hook_path(
 
     A plugin's answer is untrusted input: it may return a path relative to
     the current working directory rather than bundle_root (the natural
-    frame of reference for a concept's location), or a path that escapes
-    bundle_root entirely. Resolving relative to bundle_root and validating
-    via path_to_concept_id (the same containment/shape check graph.py
-    already applies to on-disk link targets) catches both, recording a
+    frame of reference for a concept's location), a path that escapes
+    bundle_root entirely, or a path to a concept that (per a stale cache or
+    other plugin bug) doesn't actually exist on disk. Resolving relative to
+    bundle_root, validating via path_to_concept_id (the same
+    containment/shape check graph.py already applies to on-disk link
+    targets), and confirming the file exists catches all three, recording a
     reason so the bad answer downgrades to unresolved instead of silently
-    producing a wrong href or raising later.
+    producing a wrong -- or newly broken -- href.
     """
 
     if raw_path is None:
@@ -76,6 +78,11 @@ def _validate_hook_path(
         path_to_concept_id(candidate, bundle)
     except ConceptPathError as exc:
         invalid_reason_by_dead_id[dead_id] = f"invalid-resolved-path: {exc}"
+        return None
+    if not candidate.is_file():
+        invalid_reason_by_dead_id[dead_id] = (
+            f"invalid-resolved-path: resolved concept file does not exist: {candidate}"
+        )
         return None
     return candidate
 
@@ -89,11 +96,11 @@ def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
     error -- for any of these reasons: it has no concept-id-shaped target
     (``"not-concept-shaped"``); no plugin implements the hook at all
     (``"no-plugin-registered"``); a plugin is registered but returned None
-    for this dead concept ID (``"unresolved"``); the resolved path can't be
-    expressed in the link's original style, e.g. a plugin resolves a
-    bundle-root-anchored link outside bundle_root
-    (``"invalid-resolved-path: ..."``); or planning the containing file's
-    rewrite raises DocumentChangePlanningError, e.g. an unrelated
+    for this dead concept ID (``"unresolved"``); the plugin's resolved path
+    escapes bundle_root, isn't a Markdown file, doesn't exist on disk, or
+    (for a bundle-root-anchored link specifically) can't be expressed in
+    that style (``"invalid-resolved-path: ..."``); or planning the
+    containing file's rewrite raises DocumentChangePlanningError, e.g. an unrelated
     reference-style link elsewhere in that file (``"planning-failed: ..."``,
     downgrading only that file's links -- other files' rewrites still
     proceed). Never writes anything -- safe to call repeatedly, e.g. for a
@@ -129,7 +136,11 @@ def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
     resolved_paths_by_dead_id: dict[str, Path | None] = {}
     invalid_reason_by_dead_id: dict[str, str] = {}
     rewrites_by_file: dict[Path, dict[str, LinkRewrite]] = {}
-    links_by_file: dict[Path, dict[str, ConceptLink]] = {}
+    # Keyed by (path, href) like rewrites_by_file, but a list: a single href
+    # can occur more than once in one file (e.g. two separate [text](dead.md)
+    # occurrences), and every occurrence must still show up in
+    # resolved_links/unresolved_links even though they share one LinkRewrite.
+    links_by_file: dict[Path, dict[str, list[ConceptLink]]] = {}
     unresolved: list[UnresolvedBrokenLink] = []
 
     for link in graph.broken_links:
@@ -176,7 +187,9 @@ def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
         rewrites_by_file.setdefault(link.source_path, {})[link.target] = LinkRewrite(
             old_target=link.target, new_target=new_target
         )
-        links_by_file.setdefault(link.source_path, {})[link.target] = link
+        links_by_file.setdefault(link.source_path, {}).setdefault(
+            link.target, []
+        ).append(link)
 
     link_rewrite_plans: dict[Path, DocumentChangePlan] = {}
     resolved: list[ConceptLink] = []
@@ -189,12 +202,14 @@ def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
             # Per-file catch-and-continue: a planning failure in one file
             # (e.g. an unrelated reference-style link definition elsewhere
             # in it) must not abort repairs to every other file.
-            for referring_link in links_by_file[path].values():
-                unresolved.append(
-                    UnresolvedBrokenLink(referring_link, f"planning-failed: {exc}")
-                )
+            for referring_links in links_by_file[path].values():
+                for referring_link in referring_links:
+                    unresolved.append(
+                        UnresolvedBrokenLink(referring_link, f"planning-failed: {exc}")
+                    )
             continue
-        resolved.extend(links_by_file[path].values())
+        for referring_links in links_by_file[path].values():
+            resolved.extend(referring_links)
 
     return RepairPreparation(
         link_rewrite_plans=link_rewrite_plans,
