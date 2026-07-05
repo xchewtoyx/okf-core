@@ -683,6 +683,13 @@ def apply_file_move(bundle: BundleConfig, plan: FileMovePlan) -> FileMoveResult:
             plan.dest_path, f"Could not create destination directory: {exc}"
         ) from exc
 
+    dest_parent = plan.dest_path.parent
+    if dest_parent.is_symlink() or dest_parent.resolve(strict=False) != dest_parent:
+        raise FileMoveConflictError(
+            plan.dest_path,
+            f"Move destination directory changed after planning: {dest_parent}",
+        )
+
     try:
         os.link(plan.source_path, plan.dest_path)
     except FileExistsError as exc:

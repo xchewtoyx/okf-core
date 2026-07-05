@@ -34,6 +34,21 @@ def _write(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _can_symlink() -> bool:
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d)
+            target = p / "target"
+            target.touch()
+            link = p / "link"
+            link.symlink_to(target)
+            return True
+    except (OSError, NotImplementedError):
+        return False
+
+
 def test_move_concept_rewrites_single_referring_file(tmp_path: Path) -> None:
     old = tmp_path / "old.md"
     _write(old, "Body.\n")
@@ -152,6 +167,36 @@ def test_move_concept_handles_self_referential_link(tmp_path: Path) -> None:
     assert new.read_text(encoding="utf-8") == "Self: [self](renamed.md)\n"
 
 
+def test_move_concept_rebases_self_link_when_directory_changes(tmp_path: Path) -> None:
+    old = tmp_path / "sub1" / "old.md"
+    _write(old, "Self: [self](old.md)\n")
+    new = tmp_path / "sub2" / "deep" / "new.md"
+
+    result = move_concept(_bundle(tmp_path), old, new)
+
+    assert result.moved is True
+    assert not old.exists()
+    assert new.read_text(encoding="utf-8") == "Self: [self](new.md)\n"
+
+
+def test_move_concept_aborts_when_a_file_fails_to_scan(tmp_path: Path) -> None:
+    old = tmp_path / "old.md"
+    _write(old, "Body.\n")
+    a = tmp_path / "a.md"
+    _write(a, "See [link](old.md).\n")
+    bad = tmp_path / "bad.md"
+    _write(bad, "---\ntype: concept\n")
+    new = tmp_path / "new.md"
+
+    with pytest.raises(DocumentChangePlanningError) as excinfo:
+        move_concept(_bundle(tmp_path), old, new)
+
+    assert str(bad) in str(excinfo.value)
+    assert old.exists()
+    assert not new.exists()
+    assert a.read_text(encoding="utf-8") == "See [link](old.md).\n"
+
+
 def test_move_concept_ignores_unrelated_similarly_named_links(tmp_path: Path) -> None:
     old = tmp_path / "old.md"
     _write(old, "Body.\n")
@@ -236,6 +281,45 @@ def test_move_concept_source_escapes_bundle_root_raises_concept_path_error(
 
     with pytest.raises(ConceptPathError):
         move_concept(_bundle(bundle_root), outside_source, dest)
+
+
+def test_move_concept_source_argument_symlink_is_rejected_not_followed(
+    tmp_path: Path,
+) -> None:
+    if not _can_symlink():
+        pytest.skip("symlinks not supported in this environment")
+
+    real = tmp_path / "real.md"
+    _write(real, "Body.\n")
+    linked = tmp_path / "linked.md"
+    linked.symlink_to(real)
+    new = tmp_path / "new.md"
+
+    with pytest.raises(DocumentChangePlanningError):
+        move_concept(_bundle(tmp_path), linked, new)
+
+    assert real.exists()
+    assert not new.exists()
+
+
+def test_move_concept_dest_argument_symlink_is_rejected_not_followed(
+    tmp_path: Path,
+) -> None:
+    if not _can_symlink():
+        pytest.skip("symlinks not supported in this environment")
+
+    old = tmp_path / "old.md"
+    _write(old, "Body.\n")
+    somewhere_else = tmp_path / "somewhere_else.md"
+    _write(somewhere_else, "Other.\n")
+    linked_dest = tmp_path / "linked_dest.md"
+    linked_dest.symlink_to(somewhere_else)
+
+    with pytest.raises(DocumentChangePlanningError):
+        move_concept(_bundle(tmp_path), old, linked_dest)
+
+    assert old.exists()
+    assert somewhere_else.read_text(encoding="utf-8") == "Other.\n"
 
 
 def test_move_concept_accepts_absolute_paths_inside_bundle_root(tmp_path: Path) -> None:

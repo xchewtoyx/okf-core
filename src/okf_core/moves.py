@@ -69,12 +69,37 @@ def plan_move_concept(
         manifest = scan_bundle(bundle)
         graph = build_bundle_graph(bundle, manifest=manifest)
 
+        if graph.problems:
+            # A file that failed to scan or parse contributes no links to
+            # the graph, so backlinks_to() cannot be trusted as a complete
+            # set of referring files -- proceeding could silently leave a
+            # stale link in a file we never got to look at.
+            problem_paths = ", ".join(
+                str(problem.path)
+                for problem in sorted(graph.problems, key=lambda p: str(p.path))
+            )
+            raise DocumentChangePlanningError(
+                graph.problems[0].path,
+                f"Cannot reliably find every file referencing this concept: "
+                f"{len(graph.problems)} file(s) failed to scan and may "
+                f"contain undetected links: {problem_paths}",
+            )
+
         rewrites_by_file: dict[Path, dict[str, LinkRewrite]] = {}
         for link in backlinks_to(graph, source_concept_id):
+            # A self-referential link's relative text must be rebased from
+            # the concept's NEW directory, not its old one: the file itself
+            # is moving, so a link written inside it is interpreted relative
+            # to wherever it ends up, not where it used to be.
+            reference_dir = (
+                file_move_plan.dest_path
+                if link.source_path == file_move_plan.source_path
+                else link.source_path
+            )
             new_target = _link_target_for_new_location(
                 bundle,
                 original_target=link.target,
-                source_path=link.source_path,
+                source_path=reference_dir,
                 new_target_path=file_move_plan.dest_path,
             )
             rewrites_by_file.setdefault(link.source_path, {})[link.target] = (
@@ -158,16 +183,21 @@ def move_concept(
 
 
 def _resolve_bundle_path(bundle_root: Path, raw: Path | str) -> Path:
-    """Resolve a SOURCE/DEST argument the same way patching.py's primitives do.
+    """Join a SOURCE/DEST argument to bundle_root without following symlinks.
 
     A relative argument is joined to bundle_root; an absolute argument is
-    used literally. Both are then fully resolved (symlinks, ``..`` segments).
+    used literally. Deliberately does not call ``.resolve()``: doing so here
+    would silently follow a symlink in the argument itself before
+    plan_file_move's own symlink checks ever see it, defeating them.
+    plan_file_move (via ``_resolve_existing_target``) and path_to_concept_id
+    each do their own resolution downstream once the symlink checks have had
+    a chance to run against the literal argument.
     """
 
     candidate = Path(raw)
     if not candidate.is_absolute():
         candidate = bundle_root / candidate
-    return candidate.resolve(strict=False)
+    return candidate
 
 
 def _link_target_for_new_location(
