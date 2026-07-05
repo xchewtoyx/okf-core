@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path, PurePosixPath
-from urllib.parse import quote, urlsplit, urlunsplit
+from pathlib import Path
 
 from okf_core.config import BundleConfig
-from okf_core.graph import backlinks_to, build_bundle_graph, links_from
+from okf_core.graph import (
+    SCAN_FAILURE_KINDS,
+    backlinks_to,
+    build_bundle_graph,
+    links_from,
+)
 from okf_core.index import (
     entries_for_directory,
     generate_index,
@@ -24,17 +27,11 @@ from okf_core.patching import (
     LinkRewrite,
     apply_document_change,
     apply_file_move,
+    link_target_for_new_location,
     plan_file_move,
     plan_markdown_link_rewrite,
 )
 from okf_core.paths import path_to_concept_id
-
-# Manifest/graph problem kinds that mean a file's links could not be
-# extracted at all -- as opposed to e.g. "stable-id-missing", a validation
-# annotation on an entry whose body (and links) were still fully parsed.
-_SCAN_FAILURE_KINDS = frozenset(
-    {"path-error", "read-error", "decode-error", "parse-error"}
-)
 
 
 @dataclass(frozen=True)
@@ -88,7 +85,7 @@ def plan_move_concept(
         graph = build_bundle_graph(bundle, manifest=manifest)
 
         scan_failures = [
-            problem for problem in graph.problems if problem.kind in _SCAN_FAILURE_KINDS
+            problem for problem in graph.problems if problem.kind in SCAN_FAILURE_KINDS
         ]
         if scan_failures:
             # A file that failed to scan or parse contributes no links to
@@ -120,7 +117,7 @@ def plan_move_concept(
                 if link.source_path == file_move_plan.source_path
                 else link.source_path
             )
-            new_target = _link_target_for_new_location(
+            new_target = link_target_for_new_location(
                 bundle,
                 original_target=link.target,
                 source_path=reference_dir,
@@ -143,7 +140,7 @@ def plan_move_concept(
         for link in links_from(graph, source_concept_id):
             if link.target_concept_id == source_concept_id:
                 continue
-            new_target = _link_target_for_new_location(
+            new_target = link_target_for_new_location(
                 bundle,
                 original_target=link.target,
                 source_path=file_move_plan.dest_path,
@@ -291,38 +288,3 @@ def _resolve_bundle_path(bundle_root: Path, raw: Path | str) -> Path:
     if not candidate.is_absolute():
         candidate = bundle_root / candidate
     return candidate
-
-
-def _link_target_for_new_location(
-    bundle: BundleConfig,
-    *,
-    original_target: str,
-    source_path: Path,
-    new_target_path: Path,
-) -> str:
-    """Recompute a Markdown link href after its target concept file has moved.
-
-    Preserves the '#fragment'/'?query' suffix and the absolute-vs-relative
-    style of original_target exactly (a target already written in
-    bundle-root-anchored '/...' form stays in that form; anything else is
-    rewritten as a path relative to source_path's own directory, using POSIX
-    '/' separators and '../' as needed for sibling/cousin directories). Only
-    the path portion is recalculated. The recomputed path is percent-encoded
-    (leaving '/' as a literal separator) so a target containing a space or
-    other special character comes out in the same normalized form markdown-it
-    already emits for such hrefs, rather than an unencoded path that CommonMark
-    would require wrapping in '<...>'.
-    """
-
-    parsed = urlsplit(original_target)
-    bundle_root = bundle.bundle_root.resolve(strict=False)
-
-    if parsed.path.startswith("/"):
-        new_path = "/" + new_target_path.relative_to(bundle_root).as_posix()
-    else:
-        relative = os.path.relpath(new_target_path, source_path.parent)
-        new_path = PurePosixPath(relative.replace("\\", "/")).as_posix()
-
-    return urlunsplit(
-        ("", "", quote(new_path, safe="/"), parsed.query, parsed.fragment)
-    )

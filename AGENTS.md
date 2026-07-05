@@ -77,7 +77,8 @@ consume `okf-core`.
   Use `start`/`end`/`abort` as the verb for whole-phase lifecycle hooks (called once at the
   beginning/end/failure of a scan or graph build transaction, e.g. `okf_start_scan`,
   `okf_end_graph`). Use `fetch` as the verb for substitution/caching hooks (which return
-  a value or `None` to bypass core computation, e.g. `okf_fetch_scan_concept`). Use `enter`/`exit`
+  a value or `None` to bypass core computation, e.g. `okf_fetch_scan_concept`,
+  `okf_fetch_moved_concept_path`). Use `enter`/`exit`
   as the verb for per-item observation hooks (called symmetrically for observation/metrics,
   always firing, e.g. `okf_enter_scan_concept`, `okf_exit_resolve_links`).
 - **Surface problems explicitly; never fail silently.** When a function

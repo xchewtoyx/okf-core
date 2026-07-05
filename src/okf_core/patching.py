@@ -10,8 +10,9 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from hashlib import sha256
 from math import isfinite
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, urlsplit, urlunsplit
 
 import yaml
 from markdown_it import MarkdownIt
@@ -490,6 +491,41 @@ def plan_markdown_link_rewrite(
         bundle,
         Path(path),
         rewrite_links,
+    )
+
+
+def link_target_for_new_location(
+    bundle: BundleConfig,
+    *,
+    original_target: str,
+    source_path: Path,
+    new_target_path: Path,
+) -> str:
+    """Recompute a Markdown link href after its target concept file has moved.
+
+    Preserves the '#fragment'/'?query' suffix and the absolute-vs-relative
+    style of original_target exactly (a target already written in
+    bundle-root-anchored '/...' form stays in that form; anything else is
+    rewritten as a path relative to source_path's own directory, using POSIX
+    '/' separators and '../' as needed for sibling/cousin directories). Only
+    the path portion is recalculated. The recomputed path is percent-encoded
+    (leaving '/' as a literal separator) so a target containing a space or
+    other special character comes out in the same normalized form markdown-it
+    already emits for such hrefs, rather than an unencoded path that CommonMark
+    would require wrapping in '<...>'.
+    """
+
+    parsed = urlsplit(original_target)
+    bundle_root = bundle.bundle_root.resolve(strict=False)
+
+    if parsed.path.startswith("/"):
+        new_path = "/" + new_target_path.relative_to(bundle_root).as_posix()
+    else:
+        relative = os.path.relpath(new_target_path, source_path.parent)
+        new_path = PurePosixPath(relative.replace("\\", "/")).as_posix()
+
+    return urlunsplit(
+        ("", "", quote(new_path, safe="/"), parsed.query, parsed.fragment)
     )
 
 

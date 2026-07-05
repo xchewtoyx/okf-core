@@ -20,8 +20,9 @@ All hooks in this module follow the ``okf_verb_noun`` naming pattern:
   substitute a result (e.g., from a cache) and bypass the core computation.
   They are defined with ``firstresult=True``::
 
-      okf_fetch_scan_concept     -- try to retrieve scanned concept (skip parsing)
-      okf_fetch_resolve_links    -- try to retrieve resolved links (skip parsing)
+      okf_fetch_scan_concept       -- try to retrieve scanned concept (skip parsing)
+      okf_fetch_resolve_links      -- try to retrieve resolved links (skip parsing)
+      okf_fetch_moved_concept_path -- try to resolve a dead concept id's new path
 
 * **Per-item observation hooks** use ``enter`` / ``exit`` as the verb. These are
   void hooks called symmetrically for observation, logging, or metrics. They
@@ -172,6 +173,20 @@ class OkfSpec:
         bundle: BundleConfig,
     ) -> None:
         """Invoked if a graph build fails, allowing plugins to abort transactions/cleanup."""
+
+    @hookspec(firstresult=True)
+    def okf_fetch_moved_concept_path(
+        self,
+        dead_concept_id: str,
+        bundle: BundleConfig,
+    ) -> Path | None:
+        """Invoked to ask whether a broken link's former target concept moved.
+
+        If a registered plugin returns a Path, graph repair treats it as the
+        concept's new on-disk location and rewrites the broken link's href
+        to point there. Returning None (the default when no plugin is
+        registered) leaves the link untouched and reported as unresolved.
+        """
 
 
 def get_hook_manager(bundle: BundleConfig) -> pluggy.PluginManager:

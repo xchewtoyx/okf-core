@@ -106,6 +106,13 @@ from okf_core.moves import (
     move_concept,
     plan_move_concept,
 )
+from okf_core.repair import (
+    RepairPreparation,
+    RepairResult,
+    UnresolvedBrokenLink,
+    plan_graph_repair,
+    repair_graph,
+)
 
 import importlib.metadata
 
@@ -150,6 +157,9 @@ __all__ = [
     "ManifestProblem",
     "MovePreparation",
     "MoveResult",
+    "RepairPreparation",
+    "RepairResult",
+    "UnresolvedBrokenLink",
     "OkfConfig",
     "ProfileConfig",
     "TaxonomyConfig",
@@ -183,9 +193,11 @@ __all__ = [
     "plan_file_move",
     "plan_frontmatter_merge",
     "plan_document_change",
+    "plan_graph_repair",
     "plan_markdown_link_rewrite",
     "plan_markdown_section_patch",
     "plan_move_concept",
+    "repair_graph",
     "concept_id_to_path",
     "check_bundle_write_safety",
     "is_reserved_concept_path",

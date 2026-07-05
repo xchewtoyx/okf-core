@@ -105,6 +105,16 @@ class GraphProblem:
     message: str
 
 
+# GraphProblem.kind values that mean a file's links could not be extracted at
+# all -- as opposed to e.g. "stable-id-missing", a validation annotation on
+# an entry whose body (and links) were still fully parsed. Callers that need
+# a complete view of the link graph (e.g. concept moves, graph repair) treat
+# any of these as a reason the graph can't be trusted as complete.
+SCAN_FAILURE_KINDS = frozenset(
+    {"path-error", "read-error", "decode-error", "parse-error"}
+)
+
+
 @dataclass(frozen=True)
 class LinkSuggestion:
     """A candidate link: concept title mentioned in body without a Markdown link."""
