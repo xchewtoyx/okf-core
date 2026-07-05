@@ -169,6 +169,29 @@ def test_plan_graph_repair_preserves_fragment_and_rebases_across_directories(
     )
 
 
+def test_plan_graph_repair_resolves_relative_hook_path_against_bundle_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _write(tmp_path / "sub1" / "a.md", "See [dead](../dead.md).\n")
+    new = tmp_path / "sub2" / "new.md"
+    _write(new, "Body.\n")
+    # Run from an unrelated cwd so a naive os.path.relpath/Path join against
+    # cwd (rather than bundle.bundle_root) would resolve to the wrong place.
+    unrelated_cwd = tmp_path.parent
+    monkeypatch.chdir(unrelated_cwd)
+
+    # The plugin returns a bundle-root-relative Path, as concept_id_to_path()
+    # would naturally produce, not an absolute one.
+    plugin = _ResolvingPlugin({"dead": Path("sub2/new.md")})
+    _register_plugin(monkeypatch, plugin)
+
+    repair_graph(_bundle(tmp_path))
+
+    assert (tmp_path / "sub1" / "a.md").read_text(encoding="utf-8") == (
+        "See [dead](../sub2/new.md).\n"
+    )
+
+
 def test_plan_graph_repair_dedupes_hook_calls_by_dead_concept_id(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

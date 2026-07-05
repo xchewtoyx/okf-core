@@ -17,6 +17,7 @@ from okf_core.patching import (
     link_target_for_new_location,
     plan_markdown_link_rewrite,
 )
+from okf_core.paths import ConceptPathError, path_to_concept_id
 
 
 @dataclass(frozen=True)
@@ -47,6 +48,36 @@ class RepairResult:
 
 def _link_sort_key(link: ConceptLink) -> tuple[str, str]:
     return (str(link.source_path), link.target)
+
+
+def _validate_hook_path(
+    bundle: BundleConfig,
+    raw_path: Path | None,
+    invalid_reason_by_dead_id: dict[str, str],
+    dead_id: str,
+) -> Path | None:
+    """Normalize and validate a hook-returned Path, or None if unusable.
+
+    A plugin's answer is untrusted input: it may return a path relative to
+    the current working directory rather than bundle_root (the natural
+    frame of reference for a concept's location), or a path that escapes
+    bundle_root entirely. Resolving relative to bundle_root and validating
+    via path_to_concept_id (the same containment/shape check graph.py
+    already applies to on-disk link targets) catches both, recording a
+    reason so the bad answer downgrades to unresolved instead of silently
+    producing a wrong href or raising later.
+    """
+
+    if raw_path is None:
+        return None
+    candidate = raw_path if raw_path.is_absolute() else bundle.bundle_root / raw_path
+    candidate = candidate.resolve(strict=False)
+    try:
+        path_to_concept_id(candidate, bundle)
+    except ConceptPathError as exc:
+        invalid_reason_by_dead_id[dead_id] = f"invalid-resolved-path: {exc}"
+        return None
+    return candidate
 
 
 def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
@@ -96,6 +127,7 @@ def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
     pm = get_hook_manager(bundle)
     hook_has_impls = bool(pm.hook.okf_fetch_moved_concept_path.get_hookimpls())
     resolved_paths_by_dead_id: dict[str, Path | None] = {}
+    invalid_reason_by_dead_id: dict[str, str] = {}
     rewrites_by_file: dict[Path, dict[str, LinkRewrite]] = {}
     links_by_file: dict[Path, dict[str, ConceptLink]] = {}
     unresolved: list[UnresolvedBrokenLink] = []
@@ -107,13 +139,21 @@ def plan_graph_repair(bundle: BundleConfig) -> RepairPreparation:
             continue
 
         if dead_id not in resolved_paths_by_dead_id:
-            resolved_paths_by_dead_id[dead_id] = pm.hook.okf_fetch_moved_concept_path(
+            raw_path = pm.hook.okf_fetch_moved_concept_path(
                 dead_concept_id=dead_id, bundle=bundle
+            )
+            resolved_paths_by_dead_id[dead_id] = _validate_hook_path(
+                bundle, raw_path, invalid_reason_by_dead_id, dead_id
             )
         new_path = resolved_paths_by_dead_id[dead_id]
 
         if new_path is None:
-            reason = "no-plugin-registered" if not hook_has_impls else "unresolved"
+            if dead_id in invalid_reason_by_dead_id:
+                reason = invalid_reason_by_dead_id[dead_id]
+            elif hook_has_impls:
+                reason = "unresolved"
+            else:
+                reason = "no-plugin-registered"
             unresolved.append(UnresolvedBrokenLink(link, reason))
             continue
 
