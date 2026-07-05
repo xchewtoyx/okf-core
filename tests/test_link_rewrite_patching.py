@@ -72,6 +72,14 @@ def test_plan_link_rewrite_duplicate_old_targets(tmp_path: Path) -> None:
     with pytest.raises(DocumentChangePlanningError, match="Duplicate old_target"):
         plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
 
+    # Duplicates with space and %20 should also be rejected
+    rewrites2 = [
+        LinkRewrite("a b", "new1"),
+        LinkRewrite("a%20b", "new2"),
+    ]
+    with pytest.raises(DocumentChangePlanningError, match="Duplicate old_target"):
+        plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites2)
+
 
 def test_plan_link_rewrite_invalid_inputs(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
@@ -182,6 +190,13 @@ def test_plan_link_rewrite_invalid_inputs(tmp_path: Path) -> None:
             "foo%2Fnew",
             "[link](foo%2Fnew)",
             id="percent_encoded_destination",
+        ),
+        pytest.param(
+            "[a [b] c](old)",
+            "old",
+            "new",
+            "[a [b] c](new)",
+            id="nested_brackets_in_label",
         ),
     ],
 )

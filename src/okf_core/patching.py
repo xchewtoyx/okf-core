@@ -171,7 +171,7 @@ def _get_target_pattern(old_target: str) -> re.Pattern[str]:
 
     return re.compile(
         r"(?<!\\)(?<!\!)\["  # Check that opening bracket is not preceded by ! or \
-        r"(?:\\.|[^\]])*"  # Match link text, allowing escaped brackets
+        r"(?:\\.|[^\[\]]|\[(?:\\.|[^\[\]])*\])*"  # Match link text, allowing nested/escaped brackets
         r"\]\(\s*("
         rf"<(?P<bracketed>{target_pattern})>|"
         rf"(?P<plain>{target_pattern})"
@@ -253,13 +253,13 @@ def _validate_link_rewrites(resolved_path: Path, rewrites: Any) -> list[str]:
                 f"LinkRewrite at index {i} must have string old_target and new_target: {r!r}",
             )
 
-    old_targets = [r.old_target for r in rewrites]
-    if len(old_targets) != len(set(old_targets)):
+    old_targets_normalized = [r.old_target.replace("%20", " ") for r in rewrites]
+    if len(old_targets_normalized) != len(set(old_targets_normalized)):
         raise DocumentChangePlanningError(
             resolved_path,
             "Duplicate old_target values in rewrites list",
         )
-    return old_targets
+    return [r.old_target for r in rewrites]
 
 
 def plan_markdown_link_rewrite(
