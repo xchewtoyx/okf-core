@@ -612,6 +612,13 @@ def plan_file_move(
 
     dest_path = Path(dest)
     candidate_dest = dest_path if dest_path.is_absolute() else bundle_root / dest_path
+    # Checked before .resolve() and before the noop short-circuit below: a
+    # symlinked DEST that happens to point at SOURCE must still be rejected
+    # as a symlink argument, not silently accepted as a no-op move.
+    if candidate_dest.is_symlink():
+        raise DocumentChangePlanningError(
+            candidate_dest.absolute(), "Move destination must not be a symbolic link"
+        )
     resolved_dest = candidate_dest.resolve(strict=False)
     source_sha256 = _sha256(_read_for_planning(resolved_source))
 
@@ -623,10 +630,6 @@ def plan_file_move(
             source_sha256=source_sha256,
         )
 
-    if candidate_dest.is_symlink():
-        raise DocumentChangePlanningError(
-            candidate_dest.absolute(), "Move destination must not be a symbolic link"
-        )
     _require_plan_target(bundle_root, resolved_dest, planning=True)
     if resolved_dest.exists():
         raise DocumentChangePlanningError(

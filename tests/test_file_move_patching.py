@@ -100,6 +100,20 @@ def test_plan_file_move_source_not_found_error_uses_move_specific_wording(
         plan_file_move(_bundle(tmp_path), tmp_path / "missing.md", tmp_path / "new.md")
 
 
+def test_plan_file_move_dest_symlink_to_source_is_rejected_not_treated_as_noop(
+    tmp_path: Path,
+) -> None:
+    if not _can_symlink():
+        pytest.skip("System does not support symlinks or requires elevated privileges")
+    source = tmp_path / "old.md"
+    source.write_text("Body.\n", encoding="utf-8")
+    dest = tmp_path / "link.md"
+    dest.symlink_to(source)
+
+    with pytest.raises(DocumentChangePlanningError, match="symbolic link"):
+        plan_file_move(_bundle(tmp_path), source, dest)
+
+
 def test_plan_file_move_dest_already_exists_raises_planning_error(
     tmp_path: Path,
 ) -> None:

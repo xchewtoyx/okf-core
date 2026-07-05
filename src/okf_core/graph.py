@@ -557,10 +557,17 @@ def _resolve_concept_link(
     if not path.endswith(".md"):
         return None
 
-    if path.startswith("/"):
-        target_path = (bundle.bundle_root / path.lstrip("/")).resolve(strict=False)
-    else:
-        target_path = (source.path.parent / path).resolve(strict=False)
+    try:
+        if path.startswith("/"):
+            target_path = (bundle.bundle_root / path.lstrip("/")).resolve(strict=False)
+        else:
+            target_path = (source.path.parent / path).resolve(strict=False)
+    except ValueError:
+        # A decoded href can contain characters invalid in a filesystem path
+        # (e.g. "%00" decodes to an embedded NUL), which raises ValueError
+        # from Path construction/resolve rather than yielding a normal
+        # broken link -- treat it the same as any other unresolvable link.
+        return None
 
     try:
         target_concept_id = path_to_concept_id(target_path, bundle)

@@ -126,6 +126,19 @@ def test_graph_resolves_percent_encoded_links(tmp_path: Path) -> None:
     assert [link.source_concept_id for link in backlinks_to(graph, "old file")] == ["a"]
 
 
+def test_graph_ignores_percent_encoded_links_with_invalid_path_characters(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [bad](bad%00name.md).")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert graph.links == ()
+    assert graph.broken_links == ()
+    assert graph.problems == ()
+
+
 def test_graph_reports_broken_internal_links(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", body="See [missing](missing.md).")
