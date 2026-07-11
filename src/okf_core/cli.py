@@ -95,8 +95,8 @@ def _concept_directories(
     ``concept_dirs`` is seeded with ``resolved_bundle_root`` and extended with
     every ancestor directory (up to the bundle root) of each concept's parent
     directory. ``concepts_by_parent`` maps each concept's resolved parent
-    directory to the concepts directly within it. Concepts whose resolved path
-    falls outside ``resolved_bundle_root`` are silently skipped.
+    directory to the concepts directly within it; concepts outside
+    ``resolved_bundle_root`` are excluded from ``concept_dirs`` but still recorded in ``concepts_by_parent``.
     """
     concept_dirs = {resolved_bundle_root}
     concepts_by_parent: dict[Path, list[ConceptManifestEntry]] = {}
