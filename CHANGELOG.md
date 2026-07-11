@@ -6,9 +6,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-07-11
+
 ### Fixed
 
-- SQLite cache no longer holds the write lock for the duration of a scan or graph build. Per-concept writes are buffered and flushed in a single short transaction at the end of the phase, and PageRank rows are only rewritten when their value changes, so warming a cache (the common bundle-access path) is read-only and no longer serializes concurrent readers behind a single writer. Connections also run in autocommit mode with `synchronous=NORMAL` and a longer `busy_timeout`, and schema initialisation is read-only once the cache exists.
+- `okf context` (and any `build_bundle_graph()` call made without a precomputed manifest) no longer fails intermittently with `sqlite3.OperationalError: database is locked`. The graph phase opened a write transaction and then ran a nested `scan_bundle()` on a second connection to the same cache database, which deadlocked against the first — deterministically, even against a freshly created cache. Scan and graph phases now buffer their writes and hold the write lock only for a brief flush at phase end, so the nested scan no longer contends with the enclosing graph phase.
+- Reduced SQLite cache lock contention more broadly: warming an already-current cache is now read-only and takes no write lock, PageRank rows are rewritten only when their value changes, connections run in autocommit mode with `synchronous = NORMAL` and a longer `busy_timeout`, and schema initialisation performs no writes once the cache exists.
 
 ## [0.4.1] - 2026-07-04
 
@@ -124,7 +127,8 @@ Initial release.
 - **`generate_index()` / `parse_index()`**: produce and parse conformant `index.md` files; entries grouped by type and sorted alphabetically; round-trips without loss.
 - **CLI (`okf`)**: `scan`, `validate`, `index` commands. JSON to stdout, summary to stderr, exit 2 on config/usage errors.
 
-[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/xchewtoyx/okf-core/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/xchewtoyx/okf-core/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/xchewtoyx/okf-core/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/xchewtoyx/okf-core/compare/v0.2.1...v0.3.0
