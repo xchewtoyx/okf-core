@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import datetime
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
@@ -75,7 +75,7 @@ class BundleManifest:
     problems: tuple[ManifestProblem, ...] = ()
 
 
-def scan_bundle(bundle: BundleConfig) -> BundleManifest:  # noqa: C901 -- see #124
+def scan_bundle(bundle: BundleConfig) -> BundleManifest:
     """Scan a configured bundle into concept entries and non-fatal problems."""
     root = bundle.bundle_root.resolve(strict=False)
     if not root.is_dir():
@@ -128,28 +128,7 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:  # noqa: C901 -- see #1
 
         # Check for duplicate stable IDs
         if bundle.stable_id_field is not None:
-            stable_id_to_paths: dict[str, list[Path]] = {}
-            for entry in entries:
-                if entry.stable_id is not None:
-                    stable_id_to_paths.setdefault(entry.stable_id, []).append(
-                        entry.path
-                    )
-
-            for stable_id, paths in stable_id_to_paths.items():
-                if len(paths) > 1:
-                    for path in paths:
-                        others = [
-                            str(p.relative_to(root).as_posix())
-                            for p in paths
-                            if p != path
-                        ]
-                        problems.append(
-                            ManifestProblem(
-                                path=path,
-                                kind="stable-id-conflict",
-                                message=f"Duplicate stable ID '{stable_id}' shared with: {', '.join(others)}",
-                            )
-                        )
+            problems.extend(_find_stable_id_conflicts(entries, root))
 
         manifest = BundleManifest(
             bundle_name=bundle.name,
@@ -165,6 +144,31 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:  # noqa: C901 -- see #1
     except Exception:
         pm.hook.okf_abort_scan(bundle=bundle)
         raise
+
+
+def _find_stable_id_conflicts(
+    entries: Sequence[ConceptManifestEntry], root: Path
+) -> list[ManifestProblem]:
+    stable_id_to_paths: dict[str, list[Path]] = {}
+    for entry in entries:
+        if entry.stable_id is not None:
+            stable_id_to_paths.setdefault(entry.stable_id, []).append(entry.path)
+
+    problems: list[ManifestProblem] = []
+    for stable_id, paths in stable_id_to_paths.items():
+        if len(paths) > 1:
+            for path in paths:
+                others = [
+                    str(p.relative_to(root).as_posix()) for p in paths if p != path
+                ]
+                problems.append(
+                    ManifestProblem(
+                        path=path,
+                        kind="stable-id-conflict",
+                        message=f"Duplicate stable ID '{stable_id}' shared with: {', '.join(others)}",
+                    )
+                )
+    return problems
 
 
 def _iter_included_paths(root: Path, bundle: BundleConfig) -> tuple[Path, ...]:
