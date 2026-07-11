@@ -18,6 +18,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Changed
 
 - Reduced cyclomatic complexity of `validate_concept_document_with_profile` and `build_context_pack` below the lint threshold via helper extraction; no behavior change. (#119, #123)
+- Reduced cyclomatic complexity of `scan_bundle`, `build_bundle_graph`, `find_unlinked_mentions`, `generate_index`, and the `okf index` CLI command below the lint threshold by extracting staged helpers, retiring their grandfathered `noqa: C901` suppressions; no behavior change. `AGENTS.md` gains a Code Structure section codifying the extraction patterns so new code stays under the budget. (#118, #120, #121, #122, #124)
 
 ### Fixed
 

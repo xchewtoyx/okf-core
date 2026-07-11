@@ -101,6 +101,42 @@ consume `okf-core`.
   primary problem channel — they are invisible to library callers and
   untestable without patching.
 
+## Code Structure
+
+These rules exist to stop cyclomatic complexity from accumulating in the first
+place, rather than being refactored out later (as the v0.5.1 sweep — #118,
+#120–#122, #124 — had to do). They interact with the complexity budget in
+Testing Guidelines: code written this way stays under the C901 threshold
+naturally.
+
+- **Collector loops delegate per-item work.** A loop that walks a collection
+  accumulating results and problems should call a per-item helper returning
+  `(result | None, problem | None)` (or a small result/problems tuple); the
+  loop body itself only dispatches hooks and appends. The "surface problems
+  explicitly" rule above means per-item processing legitimately carries several
+  `except`/validation arms — put those branches in the helper, not the loop.
+  Exemplars: `_resolve_entry_links` and `_collect_linked_pairs_and_prose` in
+  `graph.py`, `_find_stable_id_conflicts` in `manifest.py`.
+- **A comment introducing a block is a function name in disguise.** If a block
+  under a stage comment (e.g. `# Check for duplicate stable IDs`) has its own
+  local state and reports into a shared `problems` list, write it as a named
+  helper returning its results and let the enclosing function orchestrate.
+  Structure multi-stage pipelines as orchestrator + stage helpers from the
+  first draft — not as a refactor after the function is already over budget.
+  Exemplars: `_group_entries` / `_load_directory_metadata` /
+  `_subdirectory_entries` under `generate_index` in `index.py`.
+- **CLI commands are thin adapters**: option parsing and validation, one or two
+  library calls, then output formatting and exit codes. Any traversal,
+  matching, or content-generation loop growing inside a `cli.py` command body
+  belongs in a library module or a module-level helper with explicit
+  parameters — history shows CLI-embedded logic ends up needed by the library
+  anyway (`entries_for_directory` had to be extracted from `index_cmd` when
+  `move_concept` needed it, #69).
+- **Check complexity at draft time.** Run
+  `python -m ruff check --select C901 <touched files>` as soon as a first
+  draft compiles, while restructuring is cheap — do not discover it at
+  `just ci` time and bolt on a `noqa`.
+
 ## Changelog
 
 The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) format.
@@ -176,7 +212,7 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   .venv/bin/actionlint .github/workflows/*.yml
   ```
   `ruff` checks Python style and common bugs in the codebase and scripts, including cyclomatic complexity (`C901`, `max-complexity = 14`); `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. `actionlint` is in the `.[actionlint]` optional dep group (installed automatically by `just install` unless a system `actionlint` is found on PATH). Note: `just lint` does not include the Black formatting check — use `just ci` before pushing.
-- **Complexity budget**: New or modified functions must stay at or under cyclomatic complexity 14 (enforced by `ruff`'s `C901`). Do not add `# noqa: C901` to new code — refactor instead. If a function's complexity is genuinely essential (e.g. a hand-rolled parser/state machine where splitting would only relocate shared mutable state, not reduce it), a `# noqa: C901` is acceptable but must carry an inline comment naming the specific constraint — a bare `# noqa: C901` is not. The remaining pre-existing functions grandfathered this way are known debt, not a precedent for suppressing the check without justification on new code.
+- **Complexity budget**: New or modified functions must stay at or under cyclomatic complexity 14 (enforced by `ruff`'s `C901`). Do not add `# noqa: C901` to new code — refactor instead, following the Code Structure section above (which is designed to keep new code under this budget from the first draft). If a function's complexity is genuinely essential (e.g. a hand-rolled parser/state machine where splitting would only relocate shared mutable state, not reduce it), a `# noqa: C901` is acceptable but must carry an inline comment naming the specific constraint — a bare `# noqa: C901` is not. The one remaining suppression (`_entry_from_inline_token` in `index.py`, with its justifying comment) is tracked debt (#153), not a precedent for suppressing the check without justification on new code.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
 - **Before pushing**, always run `just ci` — it is the definitive local equivalent of the full CI pipeline:
   ```sh
