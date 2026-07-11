@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- SQLite cache no longer holds the write lock for the duration of a scan or graph build. Per-concept writes are buffered and flushed in a single short transaction at the end of the phase, and PageRank rows are only rewritten when their value changes, so warming a cache (the common bundle-access path) is read-only and no longer serializes concurrent readers behind a single writer. Connections also run in autocommit mode with `synchronous=NORMAL` and a longer `busy_timeout`, and schema initialisation is read-only once the cache exists.
+
 ## [0.4.1] - 2026-07-04
 
 ### Added

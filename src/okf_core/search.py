@@ -69,9 +69,10 @@ def search_concepts(
         problems = listing.problems
 
     with sqlite3.connect(db_path) as conn:
-        conn.execute("PRAGMA busy_timeout = 5000;")
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
         _ensure_search_schema(conn)
         if listing is not None:
             _refresh_search_index(conn, bundle, listing)
