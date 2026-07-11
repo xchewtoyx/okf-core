@@ -12,7 +12,13 @@ from typing import Any, Literal, cast
 import click
 
 from okf_core import (
+    BundleConfig,
+    BundleManifest,
+    ConceptManifestEntry,
     ConfigError,
+    ManifestProblem,
+    ProfileConfig,
+    TaxonomyConfig,
     __version__,
     backlinks_to,
     build_context_pack,
@@ -79,6 +85,101 @@ def _reserved_files_in_directory(directory: Path, bundle: Any) -> list[dict[str,
         if child.is_file() and child.name.casefold() in reserved_filenames:
             excluded.append({"path": str(child), "filename": child.name})
     return excluded
+
+
+def _concept_directories(
+    manifest: BundleManifest, resolved_bundle_root: Path
+) -> tuple[set[Path], dict[Path, list[ConceptManifestEntry]]]:
+    """Return the set of concept-bearing directories and their direct entries.
+
+    ``concept_dirs`` is seeded with ``resolved_bundle_root`` and extended with
+    every ancestor directory (up to the bundle root) of each concept's parent
+    directory. ``concepts_by_parent`` maps each concept's resolved parent
+    directory to the concepts directly within it. Concepts whose resolved path
+    falls outside ``resolved_bundle_root`` are silently skipped.
+    """
+    concept_dirs = {resolved_bundle_root}
+    concepts_by_parent: dict[Path, list[ConceptManifestEntry]] = {}
+
+    for c in manifest.concepts:
+        try:
+            resolved_path = c.path.resolve()
+            curr = resolved_path.parent
+            concepts_by_parent.setdefault(curr, []).append(c)
+
+            curr.relative_to(resolved_bundle_root)
+            while curr != resolved_bundle_root and curr.parts:
+                concept_dirs.add(curr)
+                curr = curr.parent
+        except ValueError:
+            pass
+
+    return concept_dirs, concepts_by_parent
+
+
+def _index_one_directory(
+    d: Path,
+    *,
+    bundle: BundleConfig,
+    concepts_by_parent: dict[Path, list[ConceptManifestEntry]],
+    concept_dirs: set[Path],
+    problems_resolved: list[tuple[Path, ManifestProblem]],
+    profile_cfg: ProfileConfig | None,
+    project_taxonomy: TaxonomyConfig | None,
+    force: bool,
+) -> dict[str, Any]:
+    """Generate and write ``index.md`` for a single directory ``d``.
+
+    Returns the JSON-serializable result dict for ``d`` (``path``, ``entries``,
+    ``problems``, ``scan_problems``, ``excluded_reserved_files``). Callers own
+    all CLI echoing and exit-code decisions.
+    """
+    direct_entries = concepts_by_parent.get(d, [])
+    subdirs = sorted(child for child in concept_dirs if child.parent == d)
+
+    scan_problems_in_dir = []
+    for resolved_p_path, p in problems_resolved:
+        try:
+            resolved_p_path.relative_to(d)
+            scan_problems_in_dir.append(p)
+        except ValueError:
+            pass
+
+    excluded_reserved_files = _reserved_files_in_directory(d, bundle)
+
+    generated = generate_index(
+        d,
+        direct_entries,
+        subdirs,
+        directory_metadata_file=bundle.directory_metadata_file,
+        profile=profile_cfg,
+        project_taxonomy=project_taxonomy,
+    )
+
+    skipped_entries = sum(1 for p in generated.problems if p.concept_id)
+    entries_written = len(direct_entries) - skipped_entries
+
+    index_path = d / "index.md"
+    body = render_index_document(
+        generated.body,
+        okf_version=okf_version_for_index_write(bundle, d, force),
+    )
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    index_path.write_text(body, encoding="utf-8", newline="\n")
+
+    return {
+        "path": str(index_path),
+        "entries": entries_written,
+        "problems": [
+            {"concept_id": p.concept_id, "message": p.message}
+            for p in generated.problems
+        ],
+        "scan_problems": [
+            {"path": str(p.path), "kind": p.kind, "message": p.message}
+            for p in scan_problems_in_dir
+        ],
+        "excluded_reserved_files": excluded_reserved_files,
+    }
 
 
 @click.group()
@@ -907,7 +1008,7 @@ def orient_cmd() -> None:
     is_flag=True,
     help="Recursively generate index.md for the target directory and nested subdirectories, only where concepts exist.",
 )
-def index_cmd(  # noqa: C901 -- see #118
+def index_cmd(
     config_path: str | None,
     bundle_name: str,
     directory: str | None,
@@ -958,21 +1059,9 @@ def index_cmd(  # noqa: C901 -- see #118
     manifest = scan_bundle(bundle)
 
     resolved_bundle_root = bundle.bundle_root.resolve()
-    concept_dirs = {resolved_bundle_root}
-    concepts_by_parent: dict[Path, list[Any]] = {}
-
-    for c in manifest.concepts:
-        try:
-            resolved_path = c.path.resolve()
-            curr = resolved_path.parent
-            concepts_by_parent.setdefault(curr, []).append(c)
-
-            curr.relative_to(resolved_bundle_root)
-            while curr != resolved_bundle_root and curr.parts:
-                concept_dirs.add(curr)
-                curr = curr.parent
-        except ValueError:
-            pass
+    concept_dirs, concepts_by_parent = _concept_directories(
+        manifest, resolved_bundle_root
+    )
 
     resolved_target_dir = target_dir.resolve()
     if recurse:
@@ -1000,55 +1089,22 @@ def index_cmd(  # noqa: C901 -- see #118
     project_taxonomy = config.taxonomy
 
     for d in dirs_to_index:
-        direct_entries = concepts_by_parent.get(d, [])
-        subdirs = sorted(child for child in concept_dirs if child.parent == d)
-
-        scan_problems_in_dir = []
-        for resolved_p_path, p in problems_resolved:
-            try:
-                resolved_p_path.relative_to(d)
-                scan_problems_in_dir.append(p)
-            except ValueError:
-                pass
-
-        excluded_reserved_files = _reserved_files_in_directory(d, bundle)
-
-        generated = generate_index(
+        dir_result = _index_one_directory(
             d,
-            direct_entries,
-            subdirs,
-            directory_metadata_file=bundle.directory_metadata_file,
-            profile=profile_cfg,
+            bundle=bundle,
+            concepts_by_parent=concepts_by_parent,
+            concept_dirs=concept_dirs,
+            problems_resolved=problems_resolved,
+            profile_cfg=profile_cfg,
             project_taxonomy=project_taxonomy,
+            force=force,
         )
+        results.append(dir_result)
 
-        skipped_entries = sum(1 for p in generated.problems if p.concept_id)
-        entries_written = len(direct_entries) - skipped_entries
+        entries_written = dir_result["entries"]
+        excluded_reserved_files = dir_result["excluded_reserved_files"]
 
-        index_path = d / "index.md"
-        body = render_index_document(
-            generated.body,
-            okf_version=okf_version_for_index_write(bundle, d, force),
-        )
-        index_path.parent.mkdir(parents=True, exist_ok=True)
-        index_path.write_text(body, encoding="utf-8", newline="\n")
-
-        result = {
-            "path": str(index_path),
-            "entries": entries_written,
-            "problems": [
-                {"concept_id": p.concept_id, "message": p.message}
-                for p in generated.problems
-            ],
-            "scan_problems": [
-                {"path": str(p.path), "kind": p.kind, "message": p.message}
-                for p in scan_problems_in_dir
-            ],
-            "excluded_reserved_files": excluded_reserved_files,
-        }
-        results.append(result)
-
-        if generated.problems or scan_problems_in_dir:
+        if dir_result["problems"] or dir_result["scan_problems"]:
             has_any_problems = True
 
         if not quiet:
@@ -1057,15 +1113,15 @@ def index_cmd(  # noqa: C901 -- see #118
                 d_str = f" at {rel_path!r}" if rel_path and rel_path != "." else ""
                 click.echo(
                     f"Wrote index.md for bundle {bundle.name!r}{d_str}: "
-                    f"{entries_written} entries, {len(generated.problems)} problems, "
-                    f"{len(scan_problems_in_dir)} scan errors",
+                    f"{entries_written} entries, {len(dir_result['problems'])} problems, "
+                    f"{len(dir_result['scan_problems'])} scan errors",
                     err=True,
                 )
             else:
                 click.echo(
                     f"Wrote index.md for bundle {bundle.name!r}: "
-                    f"{entries_written} entries, {len(generated.problems)} problems, "
-                    f"{len(scan_problems_in_dir)} scan errors",
+                    f"{entries_written} entries, {len(dir_result['problems'])} problems, "
+                    f"{len(dir_result['scan_problems'])} scan errors",
                     err=True,
                 )
             if entries_written == 0 and excluded_reserved_files:
