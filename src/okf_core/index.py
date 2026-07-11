@@ -220,7 +220,7 @@ def parse_index(content: str) -> ParsedIndex:
     return ParsedIndex(sections=tuple(sections), problems=tuple(problems))
 
 
-def generate_index(  # noqa: C901 -- see #122
+def generate_index(
     directory: Path,
     entries: Sequence[ConceptManifestEntry],
     subdirectories: Sequence[Path] = (),
@@ -269,7 +269,6 @@ def generate_index(  # noqa: C901 -- see #122
 
     """
     resolved_dir = directory.resolve()
-    groups: dict[str, list[IndexEntry]] = {}
     problems: list[IndexProblem] = []
 
     # Validate directory_metadata_file is a simple filename
@@ -286,6 +285,52 @@ def generate_index(  # noqa: C901 -- see #122
         effective_meta_file = (
             meta_file_path.name if meta_file_path.name else "_directory.yml"
         )
+
+    groups, entry_problems = _group_entries(entries, resolved_dir)
+    problems.extend(entry_problems)
+
+    lines: list[str] = []
+
+    for group_key in sorted(groups):
+        heading = group_key.title()
+        sorted_entries = sorted(groups[group_key], key=lambda e: e.title.lower())
+        lines.append(f"# {heading}")
+        lines.append("")
+        for e in sorted_entries:
+            lines.append(_render_entry(e))
+        lines.append("")
+
+    if subdirectories:
+        subdir_entries, subdir_problems = _subdirectory_entries(
+            subdirectories,
+            resolved_dir,
+            effective_meta_file,
+            describe_directory,
+            profile,
+            project_taxonomy,
+        )
+        problems.extend(subdir_problems)
+
+        if subdir_entries:
+            lines.append("# Subdirectories")
+            lines.append("")
+            for e in subdir_entries:
+                lines.append(_render_entry(e))
+            lines.append("")
+
+    return GeneratedIndex(body="\n".join(lines), problems=tuple(problems))
+
+
+def _group_entries(
+    entries: Sequence[ConceptManifestEntry], resolved_dir: Path
+) -> tuple[dict[str, list[IndexEntry]], list[IndexProblem]]:
+    """Validate and group manifest entries by ``type``, scoped to ``resolved_dir``.
+
+    Entries with a missing/invalid ``type`` or a path outside ``resolved_dir``
+    are skipped and reported as problems rather than raising.
+    """
+    groups: dict[str, list[IndexEntry]] = {}
+    problems: list[IndexProblem] = []
 
     for entry in entries:
         type_key = entry.frontmatter.get("type")
@@ -327,134 +372,157 @@ def generate_index(  # noqa: C901 -- see #122
             IndexEntry(title=title, link=link, description=description)
         )
 
-    lines: list[str] = []
+    return groups, problems
 
-    for group_key in sorted(groups):
-        heading = group_key.title()
-        sorted_entries = sorted(groups[group_key], key=lambda e: e.title.lower())
-        lines.append(f"# {heading}")
-        lines.append("")
-        for e in sorted_entries:
-            lines.append(_render_entry(e))
-        lines.append("")
 
-    if subdirectories:
-        subdir_entries: list[IndexEntry] = []
-        for subdir in sorted(subdirectories, key=lambda p: str(p.resolve()).lower()):
-            resolved_subdir = subdir.resolve()
-            if resolved_subdir == resolved_dir:
-                problems.append(
-                    IndexProblem(
-                        concept_id="",
-                        path=subdir,
-                        message=f"skipped: subdirectory is the index directory itself {resolved_dir}",
-                    )
+def _load_directory_metadata(
+    meta_path: Path,
+    profile: ProfileConfig | None,
+    project_taxonomy: TaxonomyConfig | None,
+) -> tuple[dict[str, Any], list[IndexProblem]]:
+    """Load and validate a subdirectory's metadata file, if present.
+
+    Returns the parsed metadata mapping (``{}`` if the file is absent, empty,
+    or rejected) alongside any problems encountered. Validation only runs once
+    the loaded YAML has been accepted as a string-keyed mapping.
+    """
+    meta_data: dict[str, Any] = {}
+    problems: list[IndexProblem] = []
+
+    if not meta_path.is_file():
+        return meta_data, problems
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            loaded = yaml.safe_load(f)
+        if loaded is None:
+            meta_data = {}
+        elif not isinstance(loaded, dict):
+            problems.append(
+                IndexProblem(
+                    concept_id="",
+                    path=meta_path,
+                    message=f"invalid metadata file {meta_path.name}: content must be a YAML mapping",
                 )
-                continue
-            try:
-                rel_path = resolved_subdir.relative_to(resolved_dir).as_posix()
-            except ValueError:
-                problems.append(
-                    IndexProblem(
-                        concept_id="",
-                        path=subdir,
-                        message=f"skipped: subdirectory is not under directory {resolved_dir}",
-                    )
-                )
-                continue
-
-            # Locate metadata file
-            meta_path = resolved_subdir / effective_meta_file
-
-            meta_data: dict[str, Any] = {}
-            if meta_path.is_file():
-                try:
-                    with open(meta_path, "r", encoding="utf-8") as f:
-                        loaded = yaml.safe_load(f)
-                    if loaded is None:
-                        meta_data = {}
-                    elif not isinstance(loaded, dict):
-                        problems.append(
-                            IndexProblem(
-                                concept_id="",
-                                path=meta_path,
-                                message=f"invalid metadata file {meta_path.name}: content must be a YAML mapping",
-                            )
-                        )
-                    elif not all(isinstance(k, str) for k in loaded.keys()):
-                        problems.append(
-                            IndexProblem(
-                                concept_id="",
-                                path=meta_path,
-                                message=f"invalid metadata file {meta_path.name}: YAML frontmatter keys must be strings",
-                            )
-                        )
-                    else:
-                        meta_data = loaded
-                        doc = ConceptDocument(frontmatter=meta_data, body="")
-                        if profile is not None:
-                            findings = validate_concept_document_with_profile(
-                                doc,
-                                profile,
-                                project_taxonomy,
-                                is_directory_meta=True,
-                            )
-                        else:
-                            findings = validate_concept_document(doc)
-                        for finding in findings:
-                            problems.append(
-                                IndexProblem(
-                                    concept_id="",
-                                    path=meta_path,
-                                    message=(
-                                        f"validation {finding.severity}: [{finding.field}] {finding.message}"
-                                        if finding.field
-                                        else f"validation {finding.severity}: {finding.message}"
-                                    ),
-                                )
-                            )
-                except (OSError, yaml.YAMLError) as exc:
-                    problems.append(
-                        IndexProblem(
-                            concept_id="",
-                            path=meta_path,
-                            message=f"failed to parse metadata file {meta_path.name}: {exc}",
-                        )
-                    )
-
-            title = rel_path
-            if "title" in meta_data:
-                title_raw = meta_data["title"]
-                if title_raw is not None:
-                    normalized_title = _normalize_inline(str(title_raw))
-                    if normalized_title:
-                        title = normalized_title
-
-            desc: str | None = None
-            if "description" in meta_data:
-                desc_raw = meta_data["description"]
-                if desc_raw is not None:
-                    normalized_desc = _normalize_inline(str(desc_raw))
-                    desc = normalized_desc if normalized_desc else None
-
-            if desc is None and describe_directory is not None:
-                desc_raw = describe_directory(resolved_subdir)
-                if desc_raw is not None:
-                    normalized = _normalize_inline(desc_raw)
-                    desc = normalized if normalized else None
-
-            subdir_entries.append(
-                IndexEntry(title=title, link=rel_path + "/", description=desc)
             )
+        elif not all(isinstance(k, str) for k in loaded.keys()):
+            problems.append(
+                IndexProblem(
+                    concept_id="",
+                    path=meta_path,
+                    message=f"invalid metadata file {meta_path.name}: YAML frontmatter keys must be strings",
+                )
+            )
+        else:
+            meta_data = loaded
+            doc = ConceptDocument(frontmatter=meta_data, body="")
+            if profile is not None:
+                findings = validate_concept_document_with_profile(
+                    doc,
+                    profile,
+                    project_taxonomy,
+                    is_directory_meta=True,
+                )
+            else:
+                findings = validate_concept_document(doc)
+            for finding in findings:
+                problems.append(
+                    IndexProblem(
+                        concept_id="",
+                        path=meta_path,
+                        message=(
+                            f"validation {finding.severity}: [{finding.field}] {finding.message}"
+                            if finding.field
+                            else f"validation {finding.severity}: {finding.message}"
+                        ),
+                    )
+                )
+    except (OSError, yaml.YAMLError) as exc:
+        problems.append(
+            IndexProblem(
+                concept_id="",
+                path=meta_path,
+                message=f"failed to parse metadata file {meta_path.name}: {exc}",
+            )
+        )
 
-        if subdir_entries:
-            lines.append("# Subdirectories")
-            lines.append("")
-            for e in subdir_entries:
-                lines.append(_render_entry(e))
-            lines.append("")
+    return meta_data, problems
 
-    return GeneratedIndex(body="\n".join(lines), problems=tuple(problems))
+
+def _subdirectory_entries(
+    subdirectories: Sequence[Path],
+    resolved_dir: Path,
+    effective_meta_file: str,
+    describe_directory: Callable[[Path], str | None] | None,
+    profile: ProfileConfig | None,
+    project_taxonomy: TaxonomyConfig | None,
+) -> tuple[list[IndexEntry], list[IndexProblem]]:
+    """Build the trailing "Subdirectories" entries, scoped to ``resolved_dir``.
+
+    Subdirectories that are the index directory itself, or fall outside
+    ``resolved_dir``, are skipped and reported as problems. Each remaining
+    subdirectory's title/description are derived from its metadata file (see
+    ``_load_directory_metadata``), falling back to the relative path and the
+    ``describe_directory`` callback respectively.
+    """
+    subdir_entries: list[IndexEntry] = []
+    problems: list[IndexProblem] = []
+
+    for subdir in sorted(subdirectories, key=lambda p: str(p.resolve()).lower()):
+        resolved_subdir = subdir.resolve()
+        if resolved_subdir == resolved_dir:
+            problems.append(
+                IndexProblem(
+                    concept_id="",
+                    path=subdir,
+                    message=f"skipped: subdirectory is the index directory itself {resolved_dir}",
+                )
+            )
+            continue
+        try:
+            rel_path = resolved_subdir.relative_to(resolved_dir).as_posix()
+        except ValueError:
+            problems.append(
+                IndexProblem(
+                    concept_id="",
+                    path=subdir,
+                    message=f"skipped: subdirectory is not under directory {resolved_dir}",
+                )
+            )
+            continue
+
+        meta_path = resolved_subdir / effective_meta_file
+        meta_data, meta_problems = _load_directory_metadata(
+            meta_path, profile, project_taxonomy
+        )
+        problems.extend(meta_problems)
+
+        title = rel_path
+        if "title" in meta_data:
+            title_raw = meta_data["title"]
+            if title_raw is not None:
+                normalized_title = _normalize_inline(str(title_raw))
+                if normalized_title:
+                    title = normalized_title
+
+        desc: str | None = None
+        if "description" in meta_data:
+            desc_raw = meta_data["description"]
+            if desc_raw is not None:
+                normalized_desc = _normalize_inline(str(desc_raw))
+                desc = normalized_desc if normalized_desc else None
+
+        if desc is None and describe_directory is not None:
+            desc_raw = describe_directory(resolved_subdir)
+            if desc_raw is not None:
+                normalized = _normalize_inline(desc_raw)
+                desc = normalized if normalized else None
+
+        subdir_entries.append(
+            IndexEntry(title=title, link=rel_path + "/", description=desc)
+        )
+
+    return subdir_entries, problems
 
 
 def _normalize_inline(s: str) -> str:

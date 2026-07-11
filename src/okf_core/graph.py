@@ -173,7 +173,36 @@ def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
     return tuple(links)
 
 
-def build_bundle_graph(  # noqa: C901 -- see #120
+def _resolve_entry_links(
+    bundle: BundleConfig,
+    entry: ConceptManifestEntry,
+) -> tuple[list[ConceptLink] | None, GraphProblem | None]:
+    """Read, parse, and extract links for one concept entry.
+
+    Returns ``(links, None)`` on success or ``(None, problem)`` if the entry
+    could not be read or parsed.
+    """
+    try:
+        markdown = entry.content
+    except OSError as exc:
+        return None, _graph_problem(entry, "read-error", exc)
+    except UnicodeDecodeError as exc:
+        return None, _graph_problem(entry, "decode-error", exc)
+
+    try:
+        document = parse_concept_document(markdown)
+    except DocumentParseError as exc:
+        return None, _graph_problem(entry, "parse-error", exc)
+
+    resolved_extracted: list[ConceptLink] = []
+    for markdown_link in extract_markdown_links(document.body):
+        link = _resolve_concept_link(bundle, entry, markdown_link)
+        if link is not None:
+            resolved_extracted.append(link)
+    return resolved_extracted, None
+
+
+def build_bundle_graph(
     bundle: BundleConfig,
     manifest: BundleManifest | None = None,
 ) -> BundleGraph:
@@ -207,29 +236,10 @@ def build_bundle_graph(  # noqa: C901 -- see #120
             entry_links = pm.hook.okf_fetch_resolve_links(entry=entry, bundle=bundle)
             problem = None
             if entry_links is None:
-                try:
-                    markdown = entry.content
-                except OSError as exc:
-                    problem = _graph_problem(entry, "read-error", exc)
-                except UnicodeDecodeError as exc:
-                    problem = _graph_problem(entry, "decode-error", exc)
-
-                if problem is None:
-                    try:
-                        document = parse_concept_document(markdown)
-                    except DocumentParseError as exc:
-                        problem = _graph_problem(entry, "parse-error", exc)
-
+                entry_links, problem = _resolve_entry_links(bundle, entry)
                 if problem is not None:
                     problems.append(problem)
                     entry_links = None
-                else:
-                    resolved_extracted: list[ConceptLink] = []
-                    for markdown_link in extract_markdown_links(document.body):
-                        link = _resolve_concept_link(bundle, entry, markdown_link)
-                        if link is not None:
-                            resolved_extracted.append(link)
-                    entry_links = resolved_extracted
 
             if entry_links is not None:
                 for link in entry_links:
@@ -307,7 +317,7 @@ def neighborhood(
     return tuple(sorted(seen))
 
 
-def find_unlinked_mentions(  # noqa: C901 -- see #121
+def find_unlinked_mentions(
     bundle: BundleConfig,
     *,
     refresh: bool = True,
@@ -374,56 +384,10 @@ def find_unlinked_mentions(  # noqa: C901 -- see #121
         for concept_id, rel_path, title in rows
     }
 
-    # Build set of already-linked (source, target) pairs by parsing each concept
-    # body (same scope as build_bundle_graph — frontmatter links do not count).
-    linked_pairs: set[tuple[str, str]] = set()
-    prose_bodies: dict[str, tuple[str, str]] = {}
-    for source_id, (source_path, _) in all_concepts.items():
-        try:
-            content = source_path.read_text(encoding="utf-8")
-            doc = parse_concept_document(content)
-        except OSError as exc:
-            problems.append(
-                GraphProblem(
-                    concept_id=source_id,
-                    path=source_path,
-                    kind="read-error",
-                    message=str(exc),
-                )
-            )
-            continue
-        except UnicodeDecodeError as exc:
-            problems.append(
-                GraphProblem(
-                    concept_id=source_id,
-                    path=source_path,
-                    kind="decode-error",
-                    message=str(exc),
-                )
-            )
-            continue
-        except DocumentParseError as exc:
-            problems.append(
-                GraphProblem(
-                    concept_id=source_id,
-                    path=source_path,
-                    kind="parse-error",
-                    message=str(exc),
-                )
-            )
-            continue
-        prose_bodies[source_id] = (
-            source_path.relative_to(bundle.bundle_root).as_posix(),
-            _extract_markdown_prose(doc.body),
-        )
-        for md_link in extract_markdown_links(doc.body):
-            link = _resolve_concept_link(
-                bundle,
-                _MinimalEntry(source_id, source_path),
-                md_link,
-            )
-            if link is not None and link.target_concept_id is not None:
-                linked_pairs.add((source_id, link.target_concept_id))
+    linked_pairs, prose_bodies, collect_problems = _collect_linked_pairs_and_prose(
+        bundle, all_concepts
+    )
+    problems.extend(collect_problems)
 
     # For each target concept, query FTS body column for its title in other concepts
     seen_pairs: set[tuple[str, str]] = set()
@@ -499,6 +463,70 @@ def find_unlinked_mentions(  # noqa: C901 -- see #121
             sorted(problems, key=lambda p: (str(p.path), p.kind, p.concept_id))
         ),
     )
+
+
+def _collect_linked_pairs_and_prose(
+    bundle: BundleConfig,
+    all_concepts: dict[str, tuple[Path, str]],
+) -> tuple[set[tuple[str, str]], dict[str, tuple[str, str]], list[GraphProblem]]:
+    """Build the set of already-linked (source, target) pairs and per-concept prose.
+
+    Parses each concept body (same scope as build_bundle_graph — frontmatter
+    links do not count) to determine which (source, target) pairs are already
+    linked and to extract the visible prose used for the unlinked-mentions FTS
+    search.
+    """
+    linked_pairs: set[tuple[str, str]] = set()
+    prose_bodies: dict[str, tuple[str, str]] = {}
+    problems: list[GraphProblem] = []
+    for source_id, (source_path, _) in all_concepts.items():
+        try:
+            content = source_path.read_text(encoding="utf-8")
+            doc = parse_concept_document(content)
+        except OSError as exc:
+            problems.append(
+                GraphProblem(
+                    concept_id=source_id,
+                    path=source_path,
+                    kind="read-error",
+                    message=str(exc),
+                )
+            )
+            continue
+        except UnicodeDecodeError as exc:
+            problems.append(
+                GraphProblem(
+                    concept_id=source_id,
+                    path=source_path,
+                    kind="decode-error",
+                    message=str(exc),
+                )
+            )
+            continue
+        except DocumentParseError as exc:
+            problems.append(
+                GraphProblem(
+                    concept_id=source_id,
+                    path=source_path,
+                    kind="parse-error",
+                    message=str(exc),
+                )
+            )
+            continue
+        prose_bodies[source_id] = (
+            source_path.relative_to(bundle.bundle_root).as_posix(),
+            _extract_markdown_prose(doc.body),
+        )
+        for md_link in extract_markdown_links(doc.body):
+            link = _resolve_concept_link(
+                bundle,
+                _MinimalEntry(source_id, source_path),
+                md_link,
+            )
+            if link is not None and link.target_concept_id is not None:
+                linked_pairs.add((source_id, link.target_concept_id))
+
+    return linked_pairs, prose_bodies, problems
 
 
 def _extract_markdown_prose(markdown: str) -> str:
