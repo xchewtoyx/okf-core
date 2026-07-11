@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Markdown round-trip spike (#149)**: recorded the decision in `docs/spikes/149-markdown-round-trip.md` — adopt canonical Markdown via `mdformat` (Strategy A) over a `tree-sitter` CST (Strategy B) for the #148 patching refactor, with reproducible prototypes under `scripts/spikes/`. (#149)
 - **Safe Markdown link target rewriting**: added `plan_markdown_link_rewrite` patch primitive to surgically rewrite inline Markdown link destinations in the concept body. (#127)
 - **`okf move` CLI command and `plan_file_move`/`move_concept` primitives**: relocates a concept file within a bundle while rewriting inbound Markdown links in every referring file, preserving link-graph integrity across the move. `move_concept` also refreshes an existing `index.md` in the source and/or destination directory to reflect the move. (#69)
 - **`entries_for_directory()` / `okf_version_for_index_write()`**: extracted from `okf index`'s internal logic into reusable `index.py` primitives, so other callers (e.g. `move_concept`) can regenerate a single directory's `index.md` without reimplementing its directory/subdirectory bookkeeping. (#69)
