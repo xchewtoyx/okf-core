@@ -82,6 +82,7 @@ def main() -> int:
     print(header)
     print("-" * len(header))
     lossless_failures: list[str] = []
+    invariant_failures: list[str] = []
     for name, raw in CORPUS:
         idempotent = check_idempotence(raw)
         lossless = check_lossless(raw)
@@ -89,6 +90,8 @@ def main() -> int:
         edit_safe = edit_preserves_untouched(canonical)
         if not lossless:
             lossless_failures.append(name)
+        if not idempotent or not edit_safe:
+            invariant_failures.append(name)
         print(
             f"{name:<24} {_mark(idempotent):<12} "
             f"{_mark(lossless):<12} {_mark(edit_safe):<10}"
@@ -105,6 +108,16 @@ def main() -> int:
         f"{len(lossless_failures)}/{len(CORPUS)} "
         f"({', '.join(lossless_failures) or 'none'})."
     )
+    # `lossless` failures are the expected finding (canonicalization changes raw
+    # input) and must not fail the run. `idempotent`/`edit-safe` are the
+    # invariants Strategy A's recommendation depends on, so a regression there
+    # is a real problem worth a non-zero exit.
+    if invariant_failures:
+        print(
+            f"\nFAIL: idempotence/edit-safety broke for: "
+            f"{', '.join(invariant_failures)}."
+        )
+        return 1
     return 0
 
 

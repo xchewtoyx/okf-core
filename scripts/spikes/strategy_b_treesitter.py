@@ -65,12 +65,15 @@ def main() -> int:
     header = f"{'sample':<24} {'spans-source':<14} {'lossless':<12} {'edit-safe':<10}"
     print(header)
     print("-" * len(header))
+    invariant_failures: list[str] = []
     for name, raw in CORPUS:
         spans = spans_full_source(parser, raw)
         # A CST never rewrites its source, so raw input is preserved as-is; this
         # column is PASS by construction and is shown to contrast Strategy A.
         lossless = True
         edit_safe = edit_preserves_untouched(raw)
+        if not spans or not edit_safe:
+            invariant_failures.append(name)
         print(
             f"{name:<24} {_mark(spans):<14} "
             f"{_mark(lossless):<12} {_mark(edit_safe):<10}"
@@ -86,6 +89,14 @@ def main() -> int:
         "\nNo canonicalization step is required: every raw input "
         f"({len(CORPUS)}/{len(CORPUS)}) is preserved as authored."
     )
+    # spans-source/edit-safe are the invariants Strategy B's fidelity claim
+    # depends on; a regression there is a real problem worth a non-zero exit.
+    if invariant_failures:
+        print(
+            f"\nFAIL: CST coverage/edit-safety broke for: "
+            f"{', '.join(invariant_failures)}."
+        )
+        return 1
     return 0
 
 
