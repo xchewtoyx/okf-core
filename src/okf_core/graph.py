@@ -173,7 +173,36 @@ def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
     return tuple(links)
 
 
-def build_bundle_graph(  # noqa: C901 -- see #120
+def _resolve_entry_links(
+    bundle: BundleConfig,
+    entry: ConceptManifestEntry,
+) -> tuple[list[ConceptLink] | None, GraphProblem | None]:
+    """Read, parse, and extract links for one concept entry.
+
+    Returns ``(links, None)`` on success or ``(None, problem)`` if the entry
+    could not be read or parsed.
+    """
+    try:
+        markdown = entry.content
+    except OSError as exc:
+        return None, _graph_problem(entry, "read-error", exc)
+    except UnicodeDecodeError as exc:
+        return None, _graph_problem(entry, "decode-error", exc)
+
+    try:
+        document = parse_concept_document(markdown)
+    except DocumentParseError as exc:
+        return None, _graph_problem(entry, "parse-error", exc)
+
+    resolved_extracted: list[ConceptLink] = []
+    for markdown_link in extract_markdown_links(document.body):
+        link = _resolve_concept_link(bundle, entry, markdown_link)
+        if link is not None:
+            resolved_extracted.append(link)
+    return resolved_extracted, None
+
+
+def build_bundle_graph(
     bundle: BundleConfig,
     manifest: BundleManifest | None = None,
 ) -> BundleGraph:
@@ -207,29 +236,10 @@ def build_bundle_graph(  # noqa: C901 -- see #120
             entry_links = pm.hook.okf_fetch_resolve_links(entry=entry, bundle=bundle)
             problem = None
             if entry_links is None:
-                try:
-                    markdown = entry.content
-                except OSError as exc:
-                    problem = _graph_problem(entry, "read-error", exc)
-                except UnicodeDecodeError as exc:
-                    problem = _graph_problem(entry, "decode-error", exc)
-
-                if problem is None:
-                    try:
-                        document = parse_concept_document(markdown)
-                    except DocumentParseError as exc:
-                        problem = _graph_problem(entry, "parse-error", exc)
-
+                entry_links, problem = _resolve_entry_links(bundle, entry)
                 if problem is not None:
                     problems.append(problem)
                     entry_links = None
-                else:
-                    resolved_extracted: list[ConceptLink] = []
-                    for markdown_link in extract_markdown_links(document.body):
-                        link = _resolve_concept_link(bundle, entry, markdown_link)
-                        if link is not None:
-                            resolved_extracted.append(link)
-                    entry_links = resolved_extracted
 
             if entry_links is not None:
                 for link in entry_links:
