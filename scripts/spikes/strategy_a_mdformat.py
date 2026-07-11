@@ -33,8 +33,7 @@ try:
 except ImportError:  # pragma: no cover - spike scaffolding
     sys.exit(
         "mdformat is not installed. Install the spike deps first:\n"
-        "  .venv/bin/pip install mdformat mdformat-tables "
-        "mdformat-footnote mdformat-frontmatter"
+        "  .venv/bin/pip install mdformat mdformat-tables mdformat-frontmatter"
     )
 
 from corpus import CORPUS
