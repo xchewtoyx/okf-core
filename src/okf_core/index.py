@@ -554,67 +554,75 @@ def _inline_content(child: object) -> str | None:
     return markup if markup else None
 
 
-def _entry_from_inline_token(  # noqa: C901 -- link/desc-link state machine over one
-    token: object,  # token stream; splitting would relocate shared mutable state
-) -> tuple[IndexEntry | None, str | None]:
-    """Extract title, href, and optional description from a list-item inline token."""
-    children = getattr(token, "children", None) or []
-    title_parts: list[str] = []
-    after_link: list[str] = []
-    href: str | None = None
-    in_link = False
-    desc_link_href: str | None = None
-    desc_link_parts: list[str] = []
-    has_desc_link = False
+def _render_span(children: list[Any]) -> str:
+    """Render a run of inline children with no link tokens back to Markdown source."""
+    return "".join(
+        c for c in (_inline_content(child) for child in children) if c is not None
+    )
 
-    for child in children:
+
+def _render_suffix_span(children: list[Any]) -> str:
+    """Reconstitute the Markdown source of the tokens following the title link.
+
+    Inner link pairs become ``[text](href)``; every other token passes through
+    _inline_content. A plain left-to-right loop — the balanced token list carries
+    the structure that the old single pass tracked with `desc_link_*` flags.
+    """
+    parts: list[str] = []
+    i = 0
+    while i < len(children):
+        child = children[i]
         if child.type == "link_open":
-            if in_link:
-                return (
-                    None,
-                    "skipped malformed index entry: nested links are not supported",
-                )
-            if href is None:
-                if any(part.strip() for part in after_link):
-                    return (
-                        None,
-                        "skipped malformed index entry: entry link must be the first content",
-                    )
-                after_link = []
-                href = child.attrGet("href") or ""
-                in_link = True
-            else:
-                has_desc_link = True
-                desc_link_href = child.attrGet("href") or ""
-                desc_link_parts = []
-        elif child.type == "link_close":
-            if in_link:
-                in_link = False
-            elif desc_link_href is not None:
-                after_link.append(f"[{''.join(desc_link_parts)}]({desc_link_href})")
-                desc_link_href = None
+            href = child.attrGet("href") or ""
+            i += 1
+            inner: list[str] = []
+            while i < len(children) and children[i].type != "link_close":
+                content = _inline_content(children[i])
+                if content is not None:
+                    inner.append(content)
+                i += 1
+            parts.append(f"[{''.join(inner)}]({href})")
+            i += 1  # consume the matching link_close
         else:
             content = _inline_content(child)
-            if content is None:
-                continue
-            if in_link:
-                title_parts.append(content)
-            elif desc_link_href is not None:
-                desc_link_parts.append(content)
-            elif href is not None:
-                after_link.append(content)
-            else:
-                after_link.append(content)
+            if content is not None:
+                parts.append(content)
+            i += 1
+    return "".join(parts)
 
-    if not href:
-        return None, "skipped malformed index entry: missing link target"
-    if not title_parts:
-        return None, "skipped malformed index entry: missing link title"
 
-    suffix = "".join(after_link)
+def _title_link_bounds(children: list[Any]) -> tuple[int, int] | str:
+    """Locate the title link's open/close indices, or return an error message.
+
+    Enforces the position rules that the old single pass raised while walking:
+    the entry must contain a link, that link must be the first rendered content,
+    and it must not itself contain a nested link.
+    """
+    open_idx = next(
+        (i for i, child in enumerate(children) if child.type == "link_open"), None
+    )
+    if open_idx is None:
+        return "skipped malformed index entry: missing link target"
+    if _render_span(children[:open_idx]).strip():
+        return "skipped malformed index entry: entry link must be the first content"
+    for i in range(open_idx + 1, len(children)):
+        if children[i].type == "link_open":
+            return "skipped malformed index entry: nested links are not supported"
+        if children[i].type == "link_close":
+            return open_idx, i
+    return open_idx, len(children)
+
+
+def _description_from_suffix(children: list[Any]) -> tuple[str | None, str | None]:
+    """Validate the post-title span and extract the optional description.
+
+    Returns ``(description, error)``. A second link or any trailing text is only
+    valid inside a ``" - description"`` suffix (``_DESC_SEP``).
+    """
+    has_link = any(child.type == "link_open" for child in children)
+    suffix = _render_suffix_span(children)
     m = _DESC_SEP.match(suffix)
-    # A second link outside the title is only valid inside a " - description" suffix
-    if has_desc_link and not m:
+    if has_link and not m:
         return (
             None,
             "skipped malformed index entry: additional links must be in a description",
@@ -624,11 +632,32 @@ def _entry_from_inline_token(  # noqa: C901 -- link/desc-link state machine over
             None,
             "skipped malformed index entry: trailing text must be in a description",
         )
-    description = suffix[m.end() :].rstrip() if m else None
-    return (
-        IndexEntry(title="".join(title_parts), link=href, description=description),
-        None,
-    )
+    return (suffix[m.end() :].rstrip() if m else None), None
+
+
+def _entry_from_inline_token(
+    token: object,
+) -> tuple[IndexEntry | None, str | None]:
+    """Extract title, href, and optional description from a list-item inline token."""
+    children = getattr(token, "children", None) or []
+
+    bounds = _title_link_bounds(children)
+    if isinstance(bounds, str):
+        return None, bounds
+    open_idx, close_idx = bounds
+
+    href = children[open_idx].attrGet("href") or ""
+    if not href:
+        return None, "skipped malformed index entry: missing link target"
+
+    title = _render_span(children[open_idx + 1 : close_idx])
+    if not title:
+        return None, "skipped malformed index entry: missing link title"
+
+    description, error = _description_from_suffix(children[close_idx + 1 :])
+    if error is not None:
+        return None, error
+    return IndexEntry(title=title, link=href, description=description), None
 
 
 def _token_line(token: object) -> int | None:
