@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 
 from okf_core.config import BundleConfig
-from okf_core.cache import _add_ctime_ns_column_if_missing
+from okf_core.cache import SqliteCachePlugin, _add_ctime_ns_column_if_missing
 from okf_core.graph import build_bundle_graph
-from okf_core.manifest import scan_bundle
+from okf_core.manifest import BundleManifest, scan_bundle
 
 
 def test_no_cache_created_when_disabled(tmp_path: Path) -> None:
@@ -889,3 +889,85 @@ def test_warm_access_does_not_require_write_lock(tmp_path: Path) -> None:
 
     assert not still_running, "warm scan/graph blocked on the write lock"
     assert result.get("ok") is True, f"warm pass failed: {result.get('error')}"
+
+
+def test_end_scan_closes_connection_when_flush_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed flush must still close the phase connection and clear state.
+
+    The flush runs in a short BEGIN IMMEDIATE transaction; if applying a
+    buffered write raises, okf_end_scan rolls back and re-raises. The cleanup
+    lives in a finally block, so the read connection cannot linger and pin the
+    WAL until the next phase or garbage collection.
+    """
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n")
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=tmp_path / "cache",
+    )
+
+    plugin = SqliteCachePlugin(bundle)
+    plugin.okf_start_scan(bundle)
+    assert plugin._active is True
+    assert plugin._conn is not None
+
+    # Buffer a write and make applying it raise inside the flush transaction.
+    plugin._concept_ops["a"] = ("insert", ())
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("flush failed")
+
+    monkeypatch.setattr(plugin, "_apply_concept_op", _boom)
+
+    with pytest.raises(RuntimeError, match="flush failed"):
+        plugin.okf_end_scan(bundle, BundleManifest(bundle_name="docs"))
+
+    assert plugin._conn is None
+    assert plugin._active is False
+    assert plugin._concept_ops == {}
+
+
+def test_missing_performance_index_is_recreated_on_open(tmp_path: Path) -> None:
+    """Opening a cache that lost a performance index repairs it.
+
+    _schema_ready probes for the indexes, so _init_db no longer early-returns on
+    a cache that predates them (or was hand-edited) and leaves scans unindexed.
+    """
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n")
+    cache_dir = tmp_path / "cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=cache_dir,
+    )
+
+    # Create and populate the cache (and its indexes), then drop one.
+    scan_bundle(bundle)
+    db_path = cache_dir / "okf-cache.db"
+    conn = sqlite3.connect(db_path)
+    conn.execute("DROP INDEX idx_concepts_path;")
+    conn.commit()
+    conn.close()
+
+    # Constructing a plugin runs _init_db, which must notice and recreate it.
+    SqliteCachePlugin(bundle)
+
+    conn = sqlite3.connect(db_path)
+    indexes = {
+        row[0]
+        for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index';")
+    }
+    conn.close()
+    assert "idx_concepts_path" in indexes

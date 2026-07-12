@@ -26,7 +26,7 @@ _BUSY_TIMEOUT_MS = 30000
 
 
 def _configure_connection(conn: sqlite3.Connection) -> None:
-    """Apply the shared PRAGMA configuration used by every OKF SQLite handle.
+    """Apply the PRAGMA configuration used by the cache plugin's connections.
 
     WAL lets readers proceed while a writer is active; ``synchronous=NORMAL`` is
     the WAL-safe setting that trims fsyncs so a write transaction releases its
@@ -94,13 +94,23 @@ class SqliteCachePlugin:
         Constructing a plugin happens on every bundle access; probing the
         schema with reads and only issuing DDL when something is missing keeps
         the common (already-initialised) path from taking a write lock and
-        contending with a concurrent scan.
+        contending with a concurrent scan. The probe covers the performance
+        indexes too, so a cache that predates them (or was hand-edited) is still
+        repaired by _init_db rather than silently running unindexed scans.
         """
         columns = {row[1] for row in conn.execute("PRAGMA table_info(concepts);")}
         if not {"concept_id", "ctime_ns"} <= columns:
             return False
         link_columns = {row[1] for row in conn.execute("PRAGMA table_info(links);")}
-        return "source_concept_id" in link_columns
+        if "source_concept_id" not in link_columns:
+            return False
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index';"
+            )
+        }
+        return {"idx_links_source", "idx_concepts_path"} <= indexes
 
     def _init_db(self) -> None:
         """Create tables if they do not exist."""
@@ -237,31 +247,35 @@ class SqliteCachePlugin:
         if self._conn is None:
             return
 
-        active_ids = {entry.concept_id for entry in manifest.concepts}
-        cached_ids = {
-            row[0] for row in self._conn.execute("SELECT concept_id FROM concepts")
-        }
-        obsolete_ids = cached_ids - active_ids
+        try:
+            active_ids = {entry.concept_id for entry in manifest.concepts}
+            cached_ids = {
+                row[0] for row in self._conn.execute("SELECT concept_id FROM concepts")
+            }
+            obsolete_ids = cached_ids - active_ids
 
-        # Flush every buffered write plus the obsolete-row pruning in one short
-        # transaction. Nothing to flush (warm cache) skips the write lock.
-        if self._concept_ops or obsolete_ids:
-            conn = self._conn
-            conn.execute("BEGIN IMMEDIATE TRANSACTION;")
-            try:
-                for kind, params in self._concept_ops.values():
-                    self._apply_concept_op(conn, kind, params)
-                if obsolete_ids:
-                    conn.executemany(
-                        "DELETE FROM concepts WHERE concept_id = ?",
-                        [(obs_id,) for obs_id in obsolete_ids],
-                    )
-                conn.execute("COMMIT;")
-            except Exception:
-                conn.execute("ROLLBACK;")
-                raise
-
-        self._end_batch()
+            # Flush every buffered write plus the obsolete-row pruning in one
+            # short transaction. Nothing to flush (warm cache) skips the lock.
+            if self._concept_ops or obsolete_ids:
+                conn = self._conn
+                conn.execute("BEGIN IMMEDIATE TRANSACTION;")
+                try:
+                    for kind, params in self._concept_ops.values():
+                        self._apply_concept_op(conn, kind, params)
+                    if obsolete_ids:
+                        conn.executemany(
+                            "DELETE FROM concepts WHERE concept_id = ?",
+                            [(obs_id,) for obs_id in obsolete_ids],
+                        )
+                    conn.execute("COMMIT;")
+                except Exception:
+                    conn.execute("ROLLBACK;")
+                    raise
+        finally:
+            # Always drop buffers and close the phase connection, even if the
+            # flush raised: otherwise the read connection lingers and pins the
+            # WAL until the next phase or GC.
+            self._end_batch()
 
     @hookimpl
     def okf_abort_scan(
@@ -288,46 +302,51 @@ class SqliteCachePlugin:
         if self._conn is None:
             return
 
-        # Recompute PageRank
-        nodes = {entry.concept_id for entry in graph.concepts}
-        edges = []
-        for link in graph.links:
-            if link.target_concept_id:
-                edges.append((link.source_concept_id, link.target_concept_id))
+        try:
+            # Recompute PageRank
+            nodes = {entry.concept_id for entry in graph.concepts}
+            edges = []
+            for link in graph.links:
+                if link.target_concept_id:
+                    edges.append((link.source_concept_id, link.target_concept_id))
 
-        pageranks = compute_pagerank(nodes, edges)
+            pageranks = compute_pagerank(nodes, edges)
 
-        # Only write PageRank rows whose value actually moved. compute_pagerank
-        # is deterministic, so a warm graph reproduces the stored values exactly
-        # and this leaves nothing to flush — keeping repeat graph builds off the
-        # write lock entirely.
-        stored = {
-            row[0]: row[1]
-            for row in self._conn.execute("SELECT concept_id, pagerank FROM concepts")
-        }
-        pagerank_updates = [
-            (concept_id, pr_value)
-            for concept_id, pr_value in pageranks.items()
-            if abs(stored.get(concept_id, -1.0) - pr_value) > 1e-12
-        ]
+            # Only write PageRank rows whose value actually moved.
+            # compute_pagerank is deterministic, so a warm graph reproduces the
+            # stored values exactly and this leaves nothing to flush — keeping
+            # repeat graph builds off the write lock entirely.
+            stored = {
+                row[0]: row[1]
+                for row in self._conn.execute(
+                    "SELECT concept_id, pagerank FROM concepts"
+                )
+            }
+            pagerank_updates = [
+                (concept_id, pr_value)
+                for concept_id, pr_value in pageranks.items()
+                if abs(stored.get(concept_id, -1.0) - pr_value) > 1e-12
+            ]
 
-        if self._link_ops or pagerank_updates:
-            conn = self._conn
-            conn.execute("BEGIN IMMEDIATE TRANSACTION;")
-            try:
-                for source_concept_id, links in self._link_ops.items():
-                    self._apply_link_op(conn, source_concept_id, links)
-                for concept_id, pr_value in pagerank_updates:
-                    conn.execute(
-                        "UPDATE concepts SET pagerank = ? WHERE concept_id = ?",
-                        (pr_value, concept_id),
-                    )
-                conn.execute("COMMIT;")
-            except Exception:
-                conn.execute("ROLLBACK;")
-                raise
-
-        self._end_batch()
+            if self._link_ops or pagerank_updates:
+                conn = self._conn
+                conn.execute("BEGIN IMMEDIATE TRANSACTION;")
+                try:
+                    for source_concept_id, links in self._link_ops.items():
+                        self._apply_link_op(conn, source_concept_id, links)
+                    for concept_id, pr_value in pagerank_updates:
+                        conn.execute(
+                            "UPDATE concepts SET pagerank = ? WHERE concept_id = ?",
+                            (pr_value, concept_id),
+                        )
+                    conn.execute("COMMIT;")
+                except Exception:
+                    conn.execute("ROLLBACK;")
+                    raise
+        finally:
+            # Always drop buffers and close the phase connection, even if the
+            # flush raised (see okf_end_scan).
+            self._end_batch()
 
     @hookimpl
     def okf_abort_graph(
