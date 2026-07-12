@@ -18,11 +18,11 @@ from okf_core.documents import (
     parse_concept_document,
     serialize_concept_document,
 )
-from okf_core.manifest import ConceptManifestEntry
+from okf_core.manifest import BundleManifest, ConceptManifestEntry
 from okf_core.versions import normalize_okf_version_declaration
 
 if TYPE_CHECKING:
-    from okf_core.config import ProfileConfig, TaxonomyConfig
+    from okf_core.config import BundleConfig, ProfileConfig, TaxonomyConfig
 
 _MARKDOWN = MarkdownIt("commonmark")
 
@@ -102,6 +102,57 @@ def declared_okf_version(content: str) -> str | None:
     if "okf_version" not in document.frontmatter:
         return None
     return normalize_okf_version_declaration(document.frontmatter["okf_version"])
+
+
+def okf_version_for_index_write(
+    bundle: BundleConfig, target_dir: Path, force: bool = False
+) -> str | None:
+    """Return the ``okf_version`` to declare when (re)writing ``target_dir``'s index.md.
+
+    Only the bundle root's index.md carries an ``okf_version`` declaration;
+    every other directory's index.md gets ``None`` (no declaration). For the
+    root, an explicitly configured ``bundle.okf_version`` wins; otherwise an
+    existing supported declaration in the current root index.md is preserved
+    unless ``force`` is set, in which case it is dropped.
+    """
+
+    if target_dir.resolve() != bundle.bundle_root.resolve():
+        return None
+    if bundle.okf_version is not None:
+        return bundle.okf_version
+    if force:
+        return None
+
+    index_path = bundle.bundle_root / "index.md"
+    if not index_path.is_file():
+        return None
+    return declared_okf_version(index_path.read_text(encoding="utf-8"))
+
+
+def entries_for_directory(
+    directory: Path, manifest: BundleManifest
+) -> tuple[list[ConceptManifestEntry], list[Path]]:
+    """Return (direct_entries, subdirectories) for generate_index(directory, ...).
+
+    ``direct_entries`` are concepts whose immediate parent is ``directory``.
+    ``subdirectories`` are ``directory``'s immediate child directories that
+    contain a concept, directly or at any depth beneath them -- exactly what
+    generate_index expects for its own ``subdirectories`` argument.
+    """
+
+    resolved_dir = directory.resolve()
+    direct_entries: list[ConceptManifestEntry] = []
+    subdirs: set[Path] = set()
+    for entry in manifest.concepts:
+        try:
+            rel = entry.path.resolve().relative_to(resolved_dir)
+        except ValueError:
+            continue
+        if len(rel.parts) == 1:
+            direct_entries.append(entry)
+        else:
+            subdirs.add(resolved_dir / rel.parts[0])
+    return direct_entries, sorted(subdirs)
 
 
 def parse_index(content: str) -> ParsedIndex:
@@ -218,7 +269,6 @@ def generate_index(
 
     """
     resolved_dir = directory.resolve()
-    groups: dict[str, list[IndexEntry]] = {}
     problems: list[IndexProblem] = []
 
     # Validate directory_metadata_file is a simple filename
@@ -235,6 +285,52 @@ def generate_index(
         effective_meta_file = (
             meta_file_path.name if meta_file_path.name else "_directory.yml"
         )
+
+    groups, entry_problems = _group_entries(entries, resolved_dir)
+    problems.extend(entry_problems)
+
+    lines: list[str] = []
+
+    for group_key in sorted(groups):
+        heading = group_key.title()
+        sorted_entries = sorted(groups[group_key], key=lambda e: e.title.lower())
+        lines.append(f"# {heading}")
+        lines.append("")
+        for e in sorted_entries:
+            lines.append(_render_entry(e))
+        lines.append("")
+
+    if subdirectories:
+        subdir_entries, subdir_problems = _subdirectory_entries(
+            subdirectories,
+            resolved_dir,
+            effective_meta_file,
+            describe_directory,
+            profile,
+            project_taxonomy,
+        )
+        problems.extend(subdir_problems)
+
+        if subdir_entries:
+            lines.append("# Subdirectories")
+            lines.append("")
+            for e in subdir_entries:
+                lines.append(_render_entry(e))
+            lines.append("")
+
+    return GeneratedIndex(body="\n".join(lines), problems=tuple(problems))
+
+
+def _group_entries(
+    entries: Sequence[ConceptManifestEntry], resolved_dir: Path
+) -> tuple[dict[str, list[IndexEntry]], list[IndexProblem]]:
+    """Validate and group manifest entries by ``type``, scoped to ``resolved_dir``.
+
+    Entries with a missing/invalid ``type`` or a path outside ``resolved_dir``
+    are skipped and reported as problems rather than raising.
+    """
+    groups: dict[str, list[IndexEntry]] = {}
+    problems: list[IndexProblem] = []
 
     for entry in entries:
         type_key = entry.frontmatter.get("type")
@@ -276,134 +372,157 @@ def generate_index(
             IndexEntry(title=title, link=link, description=description)
         )
 
-    lines: list[str] = []
+    return groups, problems
 
-    for group_key in sorted(groups):
-        heading = group_key.title()
-        sorted_entries = sorted(groups[group_key], key=lambda e: e.title.lower())
-        lines.append(f"# {heading}")
-        lines.append("")
-        for e in sorted_entries:
-            lines.append(_render_entry(e))
-        lines.append("")
 
-    if subdirectories:
-        subdir_entries: list[IndexEntry] = []
-        for subdir in sorted(subdirectories, key=lambda p: str(p.resolve()).lower()):
-            resolved_subdir = subdir.resolve()
-            if resolved_subdir == resolved_dir:
-                problems.append(
-                    IndexProblem(
-                        concept_id="",
-                        path=subdir,
-                        message=f"skipped: subdirectory is the index directory itself {resolved_dir}",
-                    )
+def _load_directory_metadata(
+    meta_path: Path,
+    profile: ProfileConfig | None,
+    project_taxonomy: TaxonomyConfig | None,
+) -> tuple[dict[str, Any], list[IndexProblem]]:
+    """Load and validate a subdirectory's metadata file, if present.
+
+    Returns the parsed metadata mapping (``{}`` if the file is absent, empty,
+    or rejected) alongside any problems encountered. Validation only runs once
+    the loaded YAML has been accepted as a string-keyed mapping.
+    """
+    meta_data: dict[str, Any] = {}
+    problems: list[IndexProblem] = []
+
+    if not meta_path.is_file():
+        return meta_data, problems
+
+    try:
+        with open(meta_path, "r", encoding="utf-8") as f:
+            loaded = yaml.safe_load(f)
+        if loaded is None:
+            meta_data = {}
+        elif not isinstance(loaded, dict):
+            problems.append(
+                IndexProblem(
+                    concept_id="",
+                    path=meta_path,
+                    message=f"invalid metadata file {meta_path.name}: content must be a YAML mapping",
                 )
-                continue
-            try:
-                rel_path = resolved_subdir.relative_to(resolved_dir).as_posix()
-            except ValueError:
-                problems.append(
-                    IndexProblem(
-                        concept_id="",
-                        path=subdir,
-                        message=f"skipped: subdirectory is not under directory {resolved_dir}",
-                    )
-                )
-                continue
-
-            # Locate metadata file
-            meta_path = resolved_subdir / effective_meta_file
-
-            meta_data: dict[str, Any] = {}
-            if meta_path.is_file():
-                try:
-                    with open(meta_path, "r", encoding="utf-8") as f:
-                        loaded = yaml.safe_load(f)
-                    if loaded is None:
-                        meta_data = {}
-                    elif not isinstance(loaded, dict):
-                        problems.append(
-                            IndexProblem(
-                                concept_id="",
-                                path=meta_path,
-                                message=f"invalid metadata file {meta_path.name}: content must be a YAML mapping",
-                            )
-                        )
-                    elif not all(isinstance(k, str) for k in loaded.keys()):
-                        problems.append(
-                            IndexProblem(
-                                concept_id="",
-                                path=meta_path,
-                                message=f"invalid metadata file {meta_path.name}: YAML frontmatter keys must be strings",
-                            )
-                        )
-                    else:
-                        meta_data = loaded
-                        doc = ConceptDocument(frontmatter=meta_data, body="")
-                        if profile is not None:
-                            findings = validate_concept_document_with_profile(
-                                doc,
-                                profile,
-                                project_taxonomy,
-                                is_directory_meta=True,
-                            )
-                        else:
-                            findings = validate_concept_document(doc)
-                        for finding in findings:
-                            problems.append(
-                                IndexProblem(
-                                    concept_id="",
-                                    path=meta_path,
-                                    message=(
-                                        f"validation {finding.severity}: [{finding.field}] {finding.message}"
-                                        if finding.field
-                                        else f"validation {finding.severity}: {finding.message}"
-                                    ),
-                                )
-                            )
-                except (OSError, yaml.YAMLError) as exc:
-                    problems.append(
-                        IndexProblem(
-                            concept_id="",
-                            path=meta_path,
-                            message=f"failed to parse metadata file {meta_path.name}: {exc}",
-                        )
-                    )
-
-            title = rel_path
-            if "title" in meta_data:
-                title_raw = meta_data["title"]
-                if title_raw is not None:
-                    normalized_title = _normalize_inline(str(title_raw))
-                    if normalized_title:
-                        title = normalized_title
-
-            desc: str | None = None
-            if "description" in meta_data:
-                desc_raw = meta_data["description"]
-                if desc_raw is not None:
-                    normalized_desc = _normalize_inline(str(desc_raw))
-                    desc = normalized_desc if normalized_desc else None
-
-            if desc is None and describe_directory is not None:
-                desc_raw = describe_directory(resolved_subdir)
-                if desc_raw is not None:
-                    normalized = _normalize_inline(desc_raw)
-                    desc = normalized if normalized else None
-
-            subdir_entries.append(
-                IndexEntry(title=title, link=rel_path + "/", description=desc)
             )
+        elif not all(isinstance(k, str) for k in loaded.keys()):
+            problems.append(
+                IndexProblem(
+                    concept_id="",
+                    path=meta_path,
+                    message=f"invalid metadata file {meta_path.name}: YAML frontmatter keys must be strings",
+                )
+            )
+        else:
+            meta_data = loaded
+            doc = ConceptDocument(frontmatter=meta_data, body="")
+            if profile is not None:
+                findings = validate_concept_document_with_profile(
+                    doc,
+                    profile,
+                    project_taxonomy,
+                    is_directory_meta=True,
+                )
+            else:
+                findings = validate_concept_document(doc)
+            for finding in findings:
+                problems.append(
+                    IndexProblem(
+                        concept_id="",
+                        path=meta_path,
+                        message=(
+                            f"validation {finding.severity}: [{finding.field}] {finding.message}"
+                            if finding.field
+                            else f"validation {finding.severity}: {finding.message}"
+                        ),
+                    )
+                )
+    except (OSError, yaml.YAMLError) as exc:
+        problems.append(
+            IndexProblem(
+                concept_id="",
+                path=meta_path,
+                message=f"failed to parse metadata file {meta_path.name}: {exc}",
+            )
+        )
 
-        if subdir_entries:
-            lines.append("# Subdirectories")
-            lines.append("")
-            for e in subdir_entries:
-                lines.append(_render_entry(e))
-            lines.append("")
+    return meta_data, problems
 
-    return GeneratedIndex(body="\n".join(lines), problems=tuple(problems))
+
+def _subdirectory_entries(
+    subdirectories: Sequence[Path],
+    resolved_dir: Path,
+    effective_meta_file: str,
+    describe_directory: Callable[[Path], str | None] | None,
+    profile: ProfileConfig | None,
+    project_taxonomy: TaxonomyConfig | None,
+) -> tuple[list[IndexEntry], list[IndexProblem]]:
+    """Build the trailing "Subdirectories" entries, scoped to ``resolved_dir``.
+
+    Subdirectories that are the index directory itself, or fall outside
+    ``resolved_dir``, are skipped and reported as problems. Each remaining
+    subdirectory's title/description are derived from its metadata file (see
+    ``_load_directory_metadata``), falling back to the relative path and the
+    ``describe_directory`` callback respectively.
+    """
+    subdir_entries: list[IndexEntry] = []
+    problems: list[IndexProblem] = []
+
+    for subdir in sorted(subdirectories, key=lambda p: str(p.resolve()).lower()):
+        resolved_subdir = subdir.resolve()
+        if resolved_subdir == resolved_dir:
+            problems.append(
+                IndexProblem(
+                    concept_id="",
+                    path=subdir,
+                    message=f"skipped: subdirectory is the index directory itself {resolved_dir}",
+                )
+            )
+            continue
+        try:
+            rel_path = resolved_subdir.relative_to(resolved_dir).as_posix()
+        except ValueError:
+            problems.append(
+                IndexProblem(
+                    concept_id="",
+                    path=subdir,
+                    message=f"skipped: subdirectory is not under directory {resolved_dir}",
+                )
+            )
+            continue
+
+        meta_path = resolved_subdir / effective_meta_file
+        meta_data, meta_problems = _load_directory_metadata(
+            meta_path, profile, project_taxonomy
+        )
+        problems.extend(meta_problems)
+
+        title = rel_path
+        if "title" in meta_data:
+            title_raw = meta_data["title"]
+            if title_raw is not None:
+                normalized_title = _normalize_inline(str(title_raw))
+                if normalized_title:
+                    title = normalized_title
+
+        desc: str | None = None
+        if "description" in meta_data:
+            desc_raw = meta_data["description"]
+            if desc_raw is not None:
+                normalized_desc = _normalize_inline(str(desc_raw))
+                desc = normalized_desc if normalized_desc else None
+
+        if desc is None and describe_directory is not None:
+            desc_raw = describe_directory(resolved_subdir)
+            if desc_raw is not None:
+                normalized = _normalize_inline(desc_raw)
+                desc = normalized if normalized else None
+
+        subdir_entries.append(
+            IndexEntry(title=title, link=rel_path + "/", description=desc)
+        )
+
+    return subdir_entries, problems
 
 
 def _normalize_inline(s: str) -> str:
@@ -435,65 +554,75 @@ def _inline_content(child: object) -> str | None:
     return markup if markup else None
 
 
-def _entry_from_inline_token(token: object) -> tuple[IndexEntry | None, str | None]:
-    """Extract title, href, and optional description from a list-item inline token."""
-    children = getattr(token, "children", None) or []
-    title_parts: list[str] = []
-    after_link: list[str] = []
-    href: str | None = None
-    in_link = False
-    desc_link_href: str | None = None
-    desc_link_parts: list[str] = []
-    has_desc_link = False
+def _render_span(children: list[Any]) -> str:
+    """Render a run of inline children with no link tokens back to Markdown source."""
+    return "".join(
+        c for c in (_inline_content(child) for child in children) if c is not None
+    )
 
-    for child in children:
+
+def _render_suffix_span(children: list[Any]) -> str:
+    """Reconstitute the Markdown source of the tokens following the title link.
+
+    Inner link pairs become ``[text](href)``; every other token passes through
+    _inline_content. A plain left-to-right loop — the balanced token list carries
+    the structure that the old single pass tracked with `desc_link_*` flags.
+    """
+    parts: list[str] = []
+    i = 0
+    while i < len(children):
+        child = children[i]
         if child.type == "link_open":
-            if in_link:
-                return (
-                    None,
-                    "skipped malformed index entry: nested links are not supported",
-                )
-            if href is None:
-                if any(part.strip() for part in after_link):
-                    return (
-                        None,
-                        "skipped malformed index entry: entry link must be the first content",
-                    )
-                after_link = []
-                href = child.attrGet("href") or ""
-                in_link = True
-            else:
-                has_desc_link = True
-                desc_link_href = child.attrGet("href") or ""
-                desc_link_parts = []
-        elif child.type == "link_close":
-            if in_link:
-                in_link = False
-            elif desc_link_href is not None:
-                after_link.append(f"[{''.join(desc_link_parts)}]({desc_link_href})")
-                desc_link_href = None
+            href = child.attrGet("href") or ""
+            i += 1
+            inner: list[str] = []
+            while i < len(children) and children[i].type != "link_close":
+                content = _inline_content(children[i])
+                if content is not None:
+                    inner.append(content)
+                i += 1
+            parts.append(f"[{''.join(inner)}]({href})")
+            i += 1  # consume the matching link_close
         else:
             content = _inline_content(child)
-            if content is None:
-                continue
-            if in_link:
-                title_parts.append(content)
-            elif desc_link_href is not None:
-                desc_link_parts.append(content)
-            elif href is not None:
-                after_link.append(content)
-            else:
-                after_link.append(content)
+            if content is not None:
+                parts.append(content)
+            i += 1
+    return "".join(parts)
 
-    if not href:
-        return None, "skipped malformed index entry: missing link target"
-    if not title_parts:
-        return None, "skipped malformed index entry: missing link title"
 
-    suffix = "".join(after_link)
+def _title_link_bounds(children: list[Any]) -> tuple[int, int] | str:
+    """Locate the title link's open/close indices, or return an error message.
+
+    Enforces the position rules that the old single pass raised while walking:
+    the entry must contain a link, that link must be the first rendered content,
+    and it must not itself contain a nested link.
+    """
+    open_idx = next(
+        (i for i, child in enumerate(children) if child.type == "link_open"), None
+    )
+    if open_idx is None:
+        return "skipped malformed index entry: missing link target"
+    if _render_span(children[:open_idx]).strip():
+        return "skipped malformed index entry: entry link must be the first content"
+    for i in range(open_idx + 1, len(children)):
+        if children[i].type == "link_open":
+            return "skipped malformed index entry: nested links are not supported"
+        if children[i].type == "link_close":
+            return open_idx, i
+    return open_idx, len(children)
+
+
+def _description_from_suffix(children: list[Any]) -> tuple[str | None, str | None]:
+    """Validate the post-title span and extract the optional description.
+
+    Returns ``(description, error)``. A second link or any trailing text is only
+    valid inside a ``" - description"`` suffix (``_DESC_SEP``).
+    """
+    has_link = any(child.type == "link_open" for child in children)
+    suffix = _render_suffix_span(children)
     m = _DESC_SEP.match(suffix)
-    # A second link outside the title is only valid inside a " - description" suffix
-    if has_desc_link and not m:
+    if has_link and not m:
         return (
             None,
             "skipped malformed index entry: additional links must be in a description",
@@ -503,11 +632,32 @@ def _entry_from_inline_token(token: object) -> tuple[IndexEntry | None, str | No
             None,
             "skipped malformed index entry: trailing text must be in a description",
         )
-    description = suffix[m.end() :].rstrip() if m else None
-    return (
-        IndexEntry(title="".join(title_parts), link=href, description=description),
-        None,
-    )
+    return (suffix[m.end() :].rstrip() if m else None), None
+
+
+def _entry_from_inline_token(
+    token: object,
+) -> tuple[IndexEntry | None, str | None]:
+    """Extract title, href, and optional description from a list-item inline token."""
+    children = getattr(token, "children", None) or []
+
+    bounds = _title_link_bounds(children)
+    if isinstance(bounds, str):
+        return None, bounds
+    open_idx, close_idx = bounds
+
+    href = children[open_idx].attrGet("href") or ""
+    if not href:
+        return None, "skipped malformed index entry: missing link target"
+
+    title = _render_span(children[open_idx + 1 : close_idx])
+    if not title:
+        return None, "skipped malformed index entry: missing link title"
+
+    description, error = _description_from_suffix(children[close_idx + 1 :])
+    if error is not None:
+        return None, error
+    return IndexEntry(title=title, link=href, description=description), None
 
 
 def _token_line(token: object) -> int | None:

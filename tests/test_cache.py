@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from okf_core.config import BundleConfig
+from okf_core.cache import _add_ctime_ns_column_if_missing
 from okf_core.graph import build_bundle_graph
 from okf_core.manifest import scan_bundle
 
@@ -98,6 +99,23 @@ def test_cache_initialization_does_not_create_search_schema(tmp_path: Path) -> N
         cursor = conn.cursor()
         cursor.execute("SELECT count(*) FROM sqlite_master WHERE name = 'concept_fts'")
         assert cursor.fetchone()[0] == 0
+
+
+def test_ctime_ns_migration_tolerates_duplicate_column_race() -> None:
+    class RacingConnection:
+        def execute(self, _sql: str) -> None:
+            raise sqlite3.OperationalError("duplicate column name: ctime_ns")
+
+    _add_ctime_ns_column_if_missing(RacingConnection(), set())  # type: ignore[arg-type]
+
+
+def test_ctime_ns_migration_does_not_mask_other_operational_errors() -> None:
+    class BrokenConnection:
+        def execute(self, _sql: str) -> None:
+            raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    with pytest.raises(sqlite3.OperationalError, match="readonly database"):
+        _add_ctime_ns_column_if_missing(BrokenConnection(), set())  # type: ignore[arg-type]
 
 
 def test_cache_hits_skip_file_reads(
@@ -264,6 +282,67 @@ def test_links_caching_and_inbound_outbound(tmp_path: Path) -> None:
     assert graph2.links[0].source_concept_id == "a"
     assert graph2.links[0].target_concept_id == "b"
     assert graph2.links[0].text == "B"
+
+
+def test_cached_link_target_path_is_percent_decoded(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n", body="See [old](old%20file.md).\n")
+    _write_concept(root / "old file.md", "type: concept\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=cache_dir,
+    )
+
+    manifest = scan_bundle(bundle)
+    graph = build_bundle_graph(bundle, manifest=manifest)
+    assert graph.links[0].target_path == root / "old file.md"
+
+    # Second run hits the link cache (okf_fetch_resolve_links), which
+    # reconstructs target_path from the stored raw href -- must decode it
+    # the same way the fresh scan above did, or a later rebase (e.g. by
+    # okf move) would compute paths relative to the wrong (still-encoded)
+    # location.
+    graph2 = build_bundle_graph(bundle, manifest=manifest)
+    assert graph2.links[0].target_path == root / "old file.md"
+
+
+def test_cached_link_target_path_does_not_conflate_encoded_slash(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\n", body="See [x](foo%2Fbar.md).\n")
+    _write_concept(root / "foo%2Fbar.md", "type: concept\n")
+    _write_concept(root / "foo" / "bar.md", "type: concept\n")
+
+    cache_dir = tmp_path / "custom-cache"
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=cache_dir,
+    )
+
+    manifest = scan_bundle(bundle)
+    graph = build_bundle_graph(bundle, manifest=manifest)
+    assert graph.links == ()
+    assert graph.broken_links == ()
+
+    # Second run hits the link cache -- must agree with the fresh scan that
+    # this href is unresolvable, not silently resolve it via a decoded "/"
+    # to the nested "foo/bar.md" file.
+    graph2 = build_bundle_graph(bundle, manifest=manifest)
+    assert graph2.links == ()
+    assert graph2.broken_links == ()
 
 
 def test_pagerank_calculation_and_storage(tmp_path: Path) -> None:
@@ -758,7 +837,11 @@ def test_warm_access_does_not_require_write_lock(tmp_path: Path) -> None:
     PageRank), so any reader that also warmed its cache serialized behind a
     single writer. With writes buffered and PageRank writes elided when
     unchanged, warming a cache is read-only and must proceed even while another
+<<<<<<< HEAD
     connection holds an exclusive write lock.
+=======
+    connection holds a RESERVED write lock.
+>>>>>>> origin/main
     """
     import threading
 
@@ -781,7 +864,11 @@ def test_warm_access_does_not_require_write_lock(tmp_path: Path) -> None:
     manifest = scan_bundle(bundle)
     build_bundle_graph(bundle, manifest=manifest)
 
+<<<<<<< HEAD
     # Hold an exclusive write lock on the database from another connection.
+=======
+    # Hold a RESERVED write lock on the database from another connection.
+>>>>>>> origin/main
     blocker = sqlite3.connect(cache_dir / "okf-cache.db", isolation_level=None)
     blocker.execute("PRAGMA busy_timeout = 0;")
     blocker.execute("BEGIN IMMEDIATE;")

@@ -269,6 +269,30 @@ This command interacts with the bundle's `stable_id_field` (which must be config
   - If the stable ID is missing (or if `--force` is specified), it generates a new UUID4 and prints it to `stdout`.
   - If `--write` is specified, it writes the new stable ID back to the concept file on disk, printing a confirmation message to `stderr`.
 
+### `okf move`
+
+Relocates a concept file within a bundle, rewriting every other file's inbound Markdown links so the bundle's link graph stays intact:
+
+```sh
+okf move SOURCE DEST [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+SOURCE and DEST are concept file paths, not concept IDs: relative to the bundle root, or absolute paths that resolve inside it. DEST must be a full path ending in a valid concept path; there is no shell-`mv`-style "move into a directory" shorthand. The concept file is relocated last, after every referring file's link has been rewritten, so a failure partway through always leaves the concept file at a well-defined location and the command is safe to re-run to completion. Moving a file to its own current path is a no-op. Exits `2` for an invalid SOURCE/DEST (wrong extension, reserved filename, escapes the bundle root); exits `1` for a missing source, an existing destination, a symlinked SOURCE/DEST argument, a write-safety refusal, or a stale-content conflict.
+
+If SOURCE's old directory and/or DEST's new directory already has an `index.md`, it is regenerated from a fresh scan to reflect the move (an index that doesn't already exist is never created as a side effect). `--dry-run` does not preview which indexes would be regenerated, since this refresh only runs after a real move.
+
+### `okf graph-repair`
+
+Repairs broken concept links whose target moved, by asking a pluggable hook whether it knows the target's new location:
+
+```sh
+okf graph-repair [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+Every broken link in the bundle (a link whose target concept doesn't exist at the path it points to) is checked against any plugin implementing the `okf_fetch_moved_concept_path(dead_concept_id, bundle) -> Path | None` hook. If a plugin resolves a dead concept ID to a path, that link's href is rewritten to point there; if no plugin resolves it -- including the out-of-the-box default, since no plugin ships with `okf-core` today -- the link is reported as unresolved rather than causing a failure. A link whose target escapes the bundle root entirely (no concept-id-shaped target to look up) is also reported unresolved. Exits `1` only for an operational failure: a scan/parse problem elsewhere in the bundle (which could be hiding broken links, so the run aborts rather than risk an incomplete repair) or an unrelated write-safety refusal. Unresolved links never affect the exit code -- that's an expected steady state, not an error; check the `unresolved_links` field in the JSON output if you need to know whether anything is still broken.
+
+If a broken link's containing file also has an unrelated reference-style link definition anywhere in it, planning that file's rewrite fails -- but only that file's link(s) are downgraded to unresolved; every other file's resolvable links are still repaired.
+
 ### `okf orient`
 
 Shows onboarding and orientation guidance for OKF bundles:
@@ -301,9 +325,93 @@ graph = build_bundle_graph(config.bundles["default"], manifest)
 
 ### Concept Documents
 
-`parse_concept_document()` parses a Markdown string into YAML frontmatter and body content. Documents without frontmatter are accepted and return empty frontmatter with the original Markdown as the body. Invalid YAML, unterminated frontmatter, non-mapping frontmatter, and non-string frontmatter keys raise `DocumentParseError`.
+`parse_concept_document()` parses a Markdown string into YAML frontmatter and body content. Documents without frontmatter are accepted and return empty frontmatter with the original Markdown as the body. Invalid YAML, unterminated frontmatter, non-mapping frontmatter, duplicate mapping keys at any depth, and non-string top-level frontmatter keys raise `DocumentParseError`.
 
 `serialize_concept_document()` writes a parsed concept document back to Markdown. Unknown frontmatter keys are preserved when callers keep them in the parsed frontmatter dictionary. Documents with empty frontmatter serialize as body-only Markdown.
+
+### Safe Document Changes
+
+`plan_document_change(bundle, path, proposed_content)` prepares an inspectable
+full-content change for one existing UTF-8 file under a configured bundle root.
+The returned `DocumentChangePlan` contains the original and proposed content,
+their exact byte-level SHA-256 hashes, the resolved path and bundle root, and a
+`changed` property. Planning reads the file but never modifies it. Relative
+paths are interpreted from the bundle root.
+
+`apply_document_change(bundle, plan)` rechecks the bundle's OKF version write
+safety and verifies that the target still has the planned original hash. A
+stale, deleted, or replaced target raises `DocumentChangeConflictError` with
+machine-readable `path`, `expected_sha256`, and `actual_sha256` attributes.
+Other planning, safety, and application failures use the corresponding
+`DocumentChangeError` subclasses. A `DocumentChangeSafetyError` identifies the
+bundle metadata file that made the write unsafe through its `path` attribute.
+
+No-op plans are verified but do not rewrite the target. Changed content is
+prepared in the target directory, flushed, assigned the original permission
+bits, and installed with an atomic file replacement. This is a single-file
+optimistic-concurrency primitive, not a filesystem lock, multi-file
+transaction, or power-loss durability guarantee. It supports existing regular
+files only; symbolic links, missing files, directories, paths outside the
+bundle root, and non-UTF-8 input are rejected. Other focused patch operations
+are planned separately.
+
+`plan_markdown_section_patch(bundle, path, heading, body, *, level=1)` builds
+the same inspectable `DocumentChangePlan` for one named Markdown section.
+Sections are matched case-sensitively by exact parsed Markdown heading content
+and level. Existing ATX (`# Heading`) and Setext headings are supported and
+their original heading syntax is preserved. A section body extends through
+nested lower-level headings and stops before the next heading of equal or
+higher level. Multiple matching headings are rejected as ambiguous. Heading
+input that would parse differently when generated as ATX Markdown is rejected
+rather than producing a section that cannot be matched idempotently.
+
+When no matching heading exists, the section is appended at the end using ATX
+syntax. Existing bytes are retained and only the minimum separating line
+endings are inserted. Replacement body bytes are used as supplied; when a body
+does not end in a line ending, the document's first detected line-ending style
+is appended to keep subsequent Markdown structurally separate. Equivalent
+content produces a no-op plan. Applying the plan uses
+`apply_document_change()` and retains its stale-content protection.
+
+`plan_frontmatter_merge(bundle, path, updates)` builds a safe plan for a
+shallow merge of selected top-level YAML frontmatter fields. Existing fields
+are replaced and missing fields are appended in update order. Unselected
+frontmatter—including unknown fields, comments, quoting, whitespace, and
+ordering—and the Markdown body remain byte-identical. Equivalent values and
+empty updates produce a no-op; `None` is written as YAML `null`.
+
+Requested values may use plain `str`, `bool`, `int`, finite `float`, `None`,
+`datetime.date`, and `datetime.datetime` values, plus recursively nested plain
+lists and string-keyed dictionaries. Other Python objects, non-finite floats,
+and shared or cyclic containers raise `DocumentChangePlanningError`. Exact
+scalar types remain significant: for example, a quoted date string differs
+from a YAML date, and a boolean differs from an integer.
+
+These restrictions apply only to values supplied for mutation; they do not
+narrow OKF conformance or general frontmatter consumption. Richer untargeted
+values and YAML aliases are preserved byte-for-byte. A targeted field that
+participates in an alias relationship is rejected because changing a shared
+node cannot preserve its semantics locally. Malformed or non-mapping
+frontmatter, duplicate mapping keys, and invalid update keys are also reported
+through `DocumentChangePlanningError`. The merge does not delete fields or
+recursively merge nested mappings. Applying its plan uses
+`apply_document_change()` and retains the same stale-content protection.
+
+`plan_markdown_link_rewrite(bundle, path, rewrites)` builds a safe plan to rewrite the target/href destinations of one or more inline Markdown links in the document body. `rewrites` must be a sequence of `LinkRewrite(old_target, new_target)` instances. The primitive operates strictly on the Markdown body, leaving the frontmatter completely untouched. Duplicate `old_target` inputs (after normalization) are rejected. The implementation uses a single-pass replacement to prevent offset drift and avoid double-replacement issues if multiple rewrites form chains.
+
+Matching is driven entirely by parsing the document with `markdown-it-py`: each link's resolved href is compared against a caller-supplied target normalized the same way, and only real inline links found by the parser are ever rewritten. Text that merely looks like a link — inside code spans, fenced code blocks, or reference-style syntax — is never touched, without needing a separate raw-text scan or safety cross-check. Reference-style links are not supported and cause planning to raise `DocumentChangePlanningError`. Applying the plan uses `apply_document_change()` and retains the same stale-content protection.
+
+`plan_file_move(bundle, source, dest)` prepares an inspectable relocation of one existing bundle file, returning a `FileMovePlan` with the resolved source/dest paths and the source's SHA-256 hash. Planning reads and hashes the source but never moves it; source and dest resolving to the same path produces an idempotent no-op plan (`.noop`). `apply_file_move(bundle, plan)` rechecks bundle write safety and the source's current hash, then relocates the file with a create-hard-link-then-unlink sequence rather than an atomic replace: this means a destination that appears concurrently after planning is never silently overwritten (`FileMoveConflictError` is raised instead), at the cost of requiring source and dest to reside on the same filesystem. If the link succeeds but removing the source fails, both copies are left in place rather than losing the document.
+
+### Concept Relocation
+
+`plan_move_concept(bundle, source, dest)` and `move_concept(bundle, source, dest)` compose the primitives above into a concept-aware move: every other file that currently links to the concept at `source` has its link rewritten to point at `dest` (preserving each link's original `#fragment`/`?query` suffix and its relative-vs-bundle-root-anchored style), and only then is the concept file itself relocated. The moved file's own body can also change: a self-referential link is rewritten to point at its new location, and any relative outbound link to another concept is rebased if the move changes directory (an absolute, bundle-root-anchored link is left untouched either way). `plan_move_concept` is read-only (safe for a `--dry-run` preview); `move_concept` applies every referring file's rewrite before moving the concept file last, so a failure partway through always leaves the concept file at a well-defined location, and re-running `move_concept` with the same arguments resumes and completes the operation. After a successful move, `MoveResult.regenerated_indexes` lists any `index.md` (in SOURCE's old directory and/or DEST's new directory) that was refreshed via `generate_index` to reflect the new state; an index that didn't already exist is never created. See `okf move` above for the CLI entry point.
+
+### Graph Repair
+
+`plan_graph_repair(bundle)` and `repair_graph(bundle)` compose the graph and patching primitives into a self-healing pass over every broken link in the bundle: for each one, a plugin implementing the `okf_fetch_moved_concept_path(dead_concept_id, bundle) -> Path | None` hook is asked whether the dead concept's ID has a new on-disk location; the first plugin to answer wins (`firstresult=True`). A plugin's returned path is treated as untrusted input: a relative `Path` is resolved against `bundle_root` (not the process's current working directory), and the result is validated the same way `graph.py` validates any on-disk link target -- if it escapes `bundle_root`, isn't a `.md` path, or the file doesn't actually exist (e.g. a stale cache entry), the answer is rejected rather than used. If a plugin returns a usable path, the link's href is rewritten there (preserving fragment/query and relative-vs-absolute style, exactly like concept relocation above). Otherwise the link is recorded as an `UnresolvedBrokenLink` with a reason that distinguishes *why*: `"not-concept-shaped"` (the link's target escapes the bundle root entirely, so there's no concept-id-shaped target to look up), `"no-plugin-registered"` (no plugin implements the hook at all -- the out-of-the-box default, since no plugin ships with `okf-core` today), `"unresolved"` (a plugin is registered but returned `None` for this particular dead concept ID), or `"invalid-resolved-path: ..."` (a plugin's resolved path escaped `bundle_root`, wasn't a `.md` path, didn't exist on disk, or -- for a bundle-root-anchored link specifically -- couldn't be expressed in that style). The hook is called at most once per distinct `dead_concept_id` per run, and rewrites (not reported occurrences) are deduped by `(file, href)`: multiple broken links sharing an identical href in one file produce a single rewrite but each still appears separately in `resolved_links`/`unresolved_links`.
+
+`plan_graph_repair` is read-only (safe for a `--dry-run` preview) and returns a `RepairPreparation`; `repair_graph` applies every plan and returns a `RepairResult` with the files actually changed. If a broken link's containing file cannot be planned -- e.g. it also has an unrelated reference-style link definition, which makes `plan_markdown_link_rewrite` reject the whole file -- only that file's link(s) are downgraded to unresolved (reason `"planning-failed: ..."`); the run continues and every other file's resolvable links are still repaired. Only an upfront scan/parse failure elsewhere in the bundle aborts the whole run, since it means the broken-links view can't be trusted as complete. See `okf graph-repair` above for the CLI entry point.
 
 ### Validation
 

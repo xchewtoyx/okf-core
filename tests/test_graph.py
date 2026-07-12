@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,51 @@ from okf_core import (
     neighborhood,
     scan_bundle,
 )
+from okf_core.graph import find_unlinked_mentions
+
+
+def test_unlinked_mentions_connects_with_long_timeout_immediately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class RecordingConnection:
+        def __enter__(self) -> "RecordingConnection":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, sql: str, *args: object) -> "RecordingConnection":
+            if "SELECT concept_id, path, title FROM concept_fts" in sql:
+                return self
+            return self
+
+        def fetchall(self) -> list[tuple[str, str, str]]:
+            return []
+
+        def executemany(self, _sql: str, _params: object) -> None:
+            return None
+
+    def connect(*args: object, **kwargs: object) -> RecordingConnection:
+        calls.append({"args": args, "kwargs": kwargs})
+        return RecordingConnection()
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=(tmp_path / "docs").resolve(strict=False),
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=tmp_path / "cache",
+    )
+
+    result = find_unlinked_mentions(bundle, refresh=False)
+
+    assert result.suggestions == ()
+    assert [call["kwargs"] for call in calls] == [{"timeout": 30.0}, {"timeout": 30.0}]
 
 
 def test_extract_markdown_links_ignores_code_and_images() -> None:
@@ -113,6 +159,47 @@ def test_graph_resolves_nested_relative_and_bundle_absolute_links(
         ("/root.md#intro", "root"),
         ("./b.md", "topics/b"),
     ]
+
+
+def test_graph_resolves_percent_encoded_links(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [old](old%20file.md).")
+    _write_concept(root / "old file.md")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert [link.target_concept_id for link in links_from(graph, "a")] == ["old file"]
+    assert [link.source_concept_id for link in backlinks_to(graph, "old file")] == ["a"]
+
+
+def test_graph_ignores_percent_encoded_links_with_invalid_path_characters(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [bad](bad%00name.md).")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert graph.links == ()
+    assert graph.broken_links == ()
+    assert graph.problems == ()
+
+
+def test_graph_does_not_conflate_encoded_slash_with_a_real_path_separator(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [x](foo%2Fbar.md).")
+    # Both a literal "foo%2Fbar.md" file and a nested "foo/bar.md" exist --
+    # decoding "%2F" into a real "/" would wrongly resolve the href to the
+    # nested file instead of correctly treating it as unresolvable.
+    _write_concept(root / "foo%2Fbar.md")
+    _write_concept(root / "foo" / "bar.md")
+
+    graph = build_bundle_graph(_bundle(root))
+
+    assert graph.links == ()
+    assert graph.broken_links == ()
 
 
 def test_graph_reports_broken_internal_links(tmp_path: Path) -> None:

@@ -61,6 +61,10 @@ consume `okf-core`.
   `examples/agent-instructions/`.
 - Preserve unknown OKF frontmatter fields unless a change explicitly targets
   them.
+- Keep OKF consumption and conformance permissive even when a focused mutation
+  API supports only a documented subset of replacement values. Preserve
+  untargeted valid frontmatter, and report unsupported requested mutations as
+  operation errors rather than document or bundle conformance failures.
 - Prefer deterministic parsing, validation, indexing, graph, and patch logic
   over agent interpretation.
 - Keep agent runtimes and workflow orchestrators optional. For example,
@@ -73,7 +77,8 @@ consume `okf-core`.
   Use `start`/`end`/`abort` as the verb for whole-phase lifecycle hooks (called once at the
   beginning/end/failure of a scan or graph build transaction, e.g. `okf_start_scan`,
   `okf_end_graph`). Use `fetch` as the verb for substitution/caching hooks (which return
-  a value or `None` to bypass core computation, e.g. `okf_fetch_scan_concept`). Use `enter`/`exit`
+  a value or `None` to bypass core computation, e.g. `okf_fetch_scan_concept`,
+  `okf_fetch_moved_concept_path`). Use `enter`/`exit`
   as the verb for per-item observation hooks (called symmetrically for observation/metrics,
   always firing, e.g. `okf_enter_scan_concept`, `okf_exit_resolve_links`).
 - **Surface problems explicitly; never fail silently.** When a function
@@ -95,6 +100,42 @@ consume `okf-core`.
   Do not use `logging.warning()`, `warnings.warn()`, or `print()` as the
   primary problem channel — they are invisible to library callers and
   untestable without patching.
+
+## Code Structure
+
+These rules exist to stop cyclomatic complexity from accumulating in the first
+place, rather than being refactored out later (as the v0.5.1 sweep — #118,
+#120–#122, #124 — had to do). They interact with the complexity budget in
+Testing Guidelines: code written this way stays under the C901 threshold
+naturally.
+
+- **Collector loops delegate per-item work.** A loop that walks a collection
+  accumulating results and problems should call a per-item helper returning
+  `(result | None, problem | None)` (or a small result/problems tuple); the
+  loop body itself only dispatches hooks and appends. The "surface problems
+  explicitly" rule above means per-item processing legitimately carries several
+  `except`/validation arms — put those branches in the helper, not the loop.
+  Exemplars: `_resolve_entry_links` and `_collect_linked_pairs_and_prose` in
+  `graph.py`, `_find_stable_id_conflicts` in `manifest.py`.
+- **A comment introducing a block is a function name in disguise.** If a block
+  under a stage comment (e.g. `# Check for duplicate stable IDs`) has its own
+  local state and reports into a shared `problems` list, write it as a named
+  helper returning its results and let the enclosing function orchestrate.
+  Structure multi-stage pipelines as orchestrator + stage helpers from the
+  first draft — not as a refactor after the function is already over budget.
+  Exemplars: `_group_entries` / `_load_directory_metadata` /
+  `_subdirectory_entries` under `generate_index` in `index.py`.
+- **CLI commands are thin adapters**: option parsing and validation, one or two
+  library calls, then output formatting and exit codes. Any traversal,
+  matching, or content-generation loop growing inside a `cli.py` command body
+  belongs in a library module or a module-level helper with explicit
+  parameters — history shows CLI-embedded logic ends up needed by the library
+  anyway (`entries_for_directory` had to be extracted from `index_cmd` when
+  `move_concept` needed it, #69).
+- **Check complexity at draft time.** Run
+  `python -m ruff check --select C901 <touched files>` as soon as a first
+  draft compiles, while restructuring is cheap — do not discover it at
+  `just ci` time and bolt on a `noqa`.
 
 ## Changelog
 
@@ -170,7 +211,8 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   python -m mypy src tests .github/scripts/ --ignore-missing-imports
   .venv/bin/actionlint .github/workflows/*.yml
   ```
-  `ruff` checks Python style and common bugs in the codebase and scripts; `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. `actionlint` is in the `.[actionlint]` optional dep group (installed automatically by `just install` unless a system `actionlint` is found on PATH). Note: `just lint` does not include the Black formatting check — use `just ci` before pushing.
+  `ruff` checks Python style and common bugs in the codebase and scripts, including cyclomatic complexity (`C901`, `max-complexity = 14`); `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. `actionlint` is in the `.[actionlint]` optional dep group (installed automatically by `just install` unless a system `actionlint` is found on PATH). Note: `just lint` does not include the Black formatting check — use `just ci` before pushing.
+- **Complexity budget**: New or modified functions must stay at or under cyclomatic complexity 14 (enforced by `ruff`'s `C901`). Do not add `# noqa: C901` to new code — refactor instead, following the Code Structure section above (which is designed to keep new code under this budget from the first draft). If a function's complexity is genuinely essential (e.g. a hand-rolled parser/state machine where splitting would only relocate shared mutable state, not reduce it), a `# noqa: C901` is acceptable but must carry an inline comment naming the specific constraint — a bare `# noqa: C901` is not. The one remaining suppression (`_entry_from_inline_token` in `index.py`, with its justifying comment) is tracked debt (#153), not a precedent for suppressing the check without justification on new code.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
 - **Before pushing**, always run `just ci` — it is the definitive local equivalent of the full CI pipeline:
   ```sh
@@ -185,4 +227,3 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   python .github/scripts/run_local_matrix.py
   ```
   This parses the workflow matrix from `.github/workflows/test.yml` and spins up containerized pytest checks to detect version incompatibilities before raising a pull request.
-

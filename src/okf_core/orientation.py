@@ -58,7 +58,7 @@ To discover more advanced capabilities, commands, and options:
   ```sh
   okf <command> --help
   ```
-- **Detailed Reference**: Check the bundle's `README.md` for full command specifications and Python library APIs.
+- **Detailed Reference**: Check the bundle's `README.md` for full command specifications and Python library APIs (e.g. `plan_markdown_link_rewrite`, `plan_markdown_section_patch`, `move_concept`, `plan_graph_repair`).
 - **Link Maintenance**: Run `okf unlinked-mentions --help` to discover options for finding concept-title mentions that are not yet linked.
 - **Orientation Guide**: Run `okf orient` to print this onboarding guide.
 """

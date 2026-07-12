@@ -6,6 +6,27 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+<<<<<<< HEAD
+=======
+### Added
+
+- **Markdown round-trip spike**: chose a canonical `mdformat`-based approach for the upcoming #148 patching refactor; see `docs/spikes/149-markdown-round-trip.md`. (#149)
+- **Safe Markdown link target rewriting**: added `plan_markdown_link_rewrite` patch primitive to surgically rewrite inline Markdown link destinations in the concept body. (#127)
+- **`okf move` CLI command and `plan_file_move`/`move_concept` primitives**: relocates a concept file within a bundle while rewriting inbound Markdown links in every referring file, preserving link-graph integrity across the move. `move_concept` also refreshes an existing `index.md` in the source and/or destination directory to reflect the move. (#69)
+- **`entries_for_directory()` / `okf_version_for_index_write()`**: extracted from `okf index`'s internal logic into reusable `index.py` primitives, so other callers (e.g. `move_concept`) can regenerate a single directory's `index.md` without reimplementing its directory/subdirectory bookkeeping. (#69)
+- **Cyclomatic complexity linting**: `ruff`'s `C901` (mccabe) rule enabled with `max-complexity = 14` as part of `just lint` / CI. (#125)
+- **`okf graph-repair` CLI command and `plan_graph_repair`/`repair_graph` primitives**: repairs broken concept links whose target moved, via a new pluggable `okf_fetch_moved_concept_path` hook; links left unresolved (no plugin registered, a registered plugin returned `None` for that concept ID, its resolved path can't be expressed in the link's original style, or a `DocumentChangePlanningError` in one referring file) are reported with a distinguishing reason rather than aborting the run. (#63)
+
+### Changed
+
+- Reduced cyclomatic complexity of `validate_concept_document_with_profile` and `build_context_pack` below the lint threshold via helper extraction; no behavior change. (#119, #123)
+- Reduced cyclomatic complexity of `scan_bundle`, `build_bundle_graph`, `find_unlinked_mentions`, `generate_index`, and the `okf index` CLI command below the lint threshold by extracting staged helpers, retiring their grandfathered `noqa: C901` suppressions; no behavior change. `AGENTS.md` gains a Code Structure section codifying the extraction patterns so new code stays under the budget. (#118, #120, #121, #122, #124)
+
+### Fixed
+
+- `build_bundle_graph()` now percent-decodes Markdown link hrefs before resolving them against on-disk concept paths, so a link to a path containing a space or other percent-encoded character (e.g. `[old](old%20file.md)`) is no longer treated as broken. (#69)
+
+>>>>>>> origin/main
 ## [0.4.2] - 2026-07-11
 
 ### Fixed

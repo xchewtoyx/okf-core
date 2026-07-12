@@ -9,7 +9,7 @@ import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from markdown_it import MarkdownIt
 
@@ -105,6 +105,16 @@ class GraphProblem:
     message: str
 
 
+# GraphProblem.kind values that mean a file's links could not be extracted at
+# all -- as opposed to e.g. "stable-id-missing", a validation annotation on
+# an entry whose body (and links) were still fully parsed. Callers that need
+# a complete view of the link graph (e.g. concept moves, graph repair) treat
+# any of these as a reason the graph can't be trusted as complete.
+SCAN_FAILURE_KINDS = frozenset(
+    {"path-error", "read-error", "decode-error", "parse-error"}
+)
+
+
 @dataclass(frozen=True)
 class LinkSuggestion:
     """A candidate link: concept title mentioned in body without a Markdown link."""
@@ -163,6 +173,35 @@ def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
     return tuple(links)
 
 
+def _resolve_entry_links(
+    bundle: BundleConfig,
+    entry: ConceptManifestEntry,
+) -> tuple[list[ConceptLink] | None, GraphProblem | None]:
+    """Read, parse, and extract links for one concept entry.
+
+    Returns ``(links, None)`` on success or ``(None, problem)`` if the entry
+    could not be read or parsed.
+    """
+    try:
+        markdown = entry.content
+    except OSError as exc:
+        return None, _graph_problem(entry, "read-error", exc)
+    except UnicodeDecodeError as exc:
+        return None, _graph_problem(entry, "decode-error", exc)
+
+    try:
+        document = parse_concept_document(markdown)
+    except DocumentParseError as exc:
+        return None, _graph_problem(entry, "parse-error", exc)
+
+    resolved_extracted: list[ConceptLink] = []
+    for markdown_link in extract_markdown_links(document.body):
+        link = _resolve_concept_link(bundle, entry, markdown_link)
+        if link is not None:
+            resolved_extracted.append(link)
+    return resolved_extracted, None
+
+
 def build_bundle_graph(
     bundle: BundleConfig,
     manifest: BundleManifest | None = None,
@@ -197,29 +236,10 @@ def build_bundle_graph(
             entry_links = pm.hook.okf_fetch_resolve_links(entry=entry, bundle=bundle)
             problem = None
             if entry_links is None:
-                try:
-                    markdown = entry.content
-                except OSError as exc:
-                    problem = _graph_problem(entry, "read-error", exc)
-                except UnicodeDecodeError as exc:
-                    problem = _graph_problem(entry, "decode-error", exc)
-
-                if problem is None:
-                    try:
-                        document = parse_concept_document(markdown)
-                    except DocumentParseError as exc:
-                        problem = _graph_problem(entry, "parse-error", exc)
-
+                entry_links, problem = _resolve_entry_links(bundle, entry)
                 if problem is not None:
                     problems.append(problem)
                     entry_links = None
-                else:
-                    resolved_extracted: list[ConceptLink] = []
-                    for markdown_link in extract_markdown_links(document.body):
-                        link = _resolve_concept_link(bundle, entry, markdown_link)
-                        if link is not None:
-                            resolved_extracted.append(link)
-                    entry_links = resolved_extracted
 
             if entry_links is not None:
                 for link in entry_links:
@@ -334,7 +354,11 @@ def find_unlinked_mentions(
 
     problems: list[GraphProblem] = []
 
+<<<<<<< HEAD
     with sqlite3.connect(db_path) as conn:
+=======
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+>>>>>>> origin/main
         conn.execute("PRAGMA busy_timeout = 30000;")
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")
@@ -365,62 +389,20 @@ def find_unlinked_mentions(
         for concept_id, rel_path, title in rows
     }
 
-    # Build set of already-linked (source, target) pairs by parsing each concept
-    # body (same scope as build_bundle_graph — frontmatter links do not count).
-    linked_pairs: set[tuple[str, str]] = set()
-    prose_bodies: dict[str, tuple[str, str]] = {}
-    for source_id, (source_path, _) in all_concepts.items():
-        try:
-            content = source_path.read_text(encoding="utf-8")
-            doc = parse_concept_document(content)
-        except OSError as exc:
-            problems.append(
-                GraphProblem(
-                    concept_id=source_id,
-                    path=source_path,
-                    kind="read-error",
-                    message=str(exc),
-                )
-            )
-            continue
-        except UnicodeDecodeError as exc:
-            problems.append(
-                GraphProblem(
-                    concept_id=source_id,
-                    path=source_path,
-                    kind="decode-error",
-                    message=str(exc),
-                )
-            )
-            continue
-        except DocumentParseError as exc:
-            problems.append(
-                GraphProblem(
-                    concept_id=source_id,
-                    path=source_path,
-                    kind="parse-error",
-                    message=str(exc),
-                )
-            )
-            continue
-        prose_bodies[source_id] = (
-            source_path.relative_to(bundle.bundle_root).as_posix(),
-            _extract_markdown_prose(doc.body),
-        )
-        for md_link in extract_markdown_links(doc.body):
-            link = _resolve_concept_link(
-                bundle,
-                _MinimalEntry(source_id, source_path),
-                md_link,
-            )
-            if link is not None and link.target_concept_id is not None:
-                linked_pairs.add((source_id, link.target_concept_id))
+    linked_pairs, prose_bodies, collect_problems = _collect_linked_pairs_and_prose(
+        bundle, all_concepts
+    )
+    problems.extend(collect_problems)
 
     # For each target concept, query FTS body column for its title in other concepts
     seen_pairs: set[tuple[str, str]] = set()
     suggestions: list[LinkSuggestion] = []
 
+<<<<<<< HEAD
     with sqlite3.connect(db_path) as conn:
+=======
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+>>>>>>> origin/main
         conn.execute("PRAGMA busy_timeout = 30000;")
         conn.execute("PRAGMA journal_mode = WAL;")
         conn.execute("PRAGMA synchronous = NORMAL;")
@@ -493,6 +475,70 @@ def find_unlinked_mentions(
     )
 
 
+def _collect_linked_pairs_and_prose(
+    bundle: BundleConfig,
+    all_concepts: dict[str, tuple[Path, str]],
+) -> tuple[set[tuple[str, str]], dict[str, tuple[str, str]], list[GraphProblem]]:
+    """Build the set of already-linked (source, target) pairs and per-concept prose.
+
+    Parses each concept body (same scope as build_bundle_graph — frontmatter
+    links do not count) to determine which (source, target) pairs are already
+    linked and to extract the visible prose used for the unlinked-mentions FTS
+    search.
+    """
+    linked_pairs: set[tuple[str, str]] = set()
+    prose_bodies: dict[str, tuple[str, str]] = {}
+    problems: list[GraphProblem] = []
+    for source_id, (source_path, _) in all_concepts.items():
+        try:
+            content = source_path.read_text(encoding="utf-8")
+            doc = parse_concept_document(content)
+        except OSError as exc:
+            problems.append(
+                GraphProblem(
+                    concept_id=source_id,
+                    path=source_path,
+                    kind="read-error",
+                    message=str(exc),
+                )
+            )
+            continue
+        except UnicodeDecodeError as exc:
+            problems.append(
+                GraphProblem(
+                    concept_id=source_id,
+                    path=source_path,
+                    kind="decode-error",
+                    message=str(exc),
+                )
+            )
+            continue
+        except DocumentParseError as exc:
+            problems.append(
+                GraphProblem(
+                    concept_id=source_id,
+                    path=source_path,
+                    kind="parse-error",
+                    message=str(exc),
+                )
+            )
+            continue
+        prose_bodies[source_id] = (
+            source_path.relative_to(bundle.bundle_root).as_posix(),
+            _extract_markdown_prose(doc.body),
+        )
+        for md_link in extract_markdown_links(doc.body):
+            link = _resolve_concept_link(
+                bundle,
+                _MinimalEntry(source_id, source_path),
+                md_link,
+            )
+            if link is not None and link.target_concept_id is not None:
+                linked_pairs.add((source_id, link.target_concept_id))
+
+    return linked_pairs, prose_bodies, problems
+
+
 def _extract_markdown_prose(markdown: str) -> str:
     """Return visible Markdown prose without code or destination metadata."""
     parts: list[str] = []
@@ -552,15 +598,31 @@ def _resolve_concept_link(
     parsed = urlsplit(target)
     if parsed.scheme or parsed.netloc or not parsed.path:
         return None
-    if not parsed.path.endswith(".md"):
+    # Markdown-it emits percent-encoded hrefs for paths with spaces/special
+    # characters (e.g. "old%20file.md"); decode before matching against the
+    # literal on-disk path, or such links are wrongly treated as broken.
+    # Decoded per-segment (not as one string) so an encoded separator like
+    # "%2F" can't be conflated with a real "/" path boundary: if decoding a
+    # single segment produces its own "/", that segment can't correspond to
+    # an actual filesystem path component, so the link is unresolvable.
+    segments = [unquote(segment) for segment in parsed.path.split("/")]
+    if any("/" in segment for segment in segments):
+        return None
+    path = "/".join(segments)
+    if not path.endswith(".md"):
         return None
 
-    if parsed.path.startswith("/"):
-        target_path = (bundle.bundle_root / parsed.path.lstrip("/")).resolve(
-            strict=False
-        )
-    else:
-        target_path = (source.path.parent / parsed.path).resolve(strict=False)
+    try:
+        if path.startswith("/"):
+            target_path = (bundle.bundle_root / path.lstrip("/")).resolve(strict=False)
+        else:
+            target_path = (source.path.parent / path).resolve(strict=False)
+    except ValueError:
+        # A decoded href can contain characters invalid in a filesystem path
+        # (e.g. "%00" decodes to an embedded NUL), which raises ValueError
+        # from Path construction/resolve rather than yielding a normal
+        # broken link -- treat it the same as any other unresolvable link.
+        return None
 
     try:
         target_concept_id = path_to_concept_id(target_path, bundle)
