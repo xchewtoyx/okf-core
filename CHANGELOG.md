@@ -6,8 +6,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-<<<<<<< HEAD
-=======
 ### Added
 
 - **Markdown round-trip spike**: chose a canonical `mdformat`-based approach for the upcoming #148 patching refactor; see `docs/spikes/149-markdown-round-trip.md`. (#149)
@@ -26,7 +24,6 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - `build_bundle_graph()` now percent-decodes Markdown link hrefs before resolving them against on-disk concept paths, so a link to a path containing a space or other percent-encoded character (e.g. `[old](old%20file.md)`) is no longer treated as broken. (#69)
 
->>>>>>> origin/main
 ## [0.4.2] - 2026-07-11
 
 ### Fixed

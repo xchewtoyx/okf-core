@@ -38,8 +38,6 @@ def _configure_connection(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA synchronous = NORMAL;")
     conn.execute("PRAGMA foreign_keys = ON;")
 
-<<<<<<< HEAD
-=======
 
 def _add_ctime_ns_column_if_missing(
     conn: sqlite3.Connection, columns: set[str]
@@ -57,7 +55,6 @@ def _add_ctime_ns_column_if_missing(
         ):
             raise
 
->>>>>>> origin/main
 
 class SqliteCachePlugin:
     """SQLite caching plugin for OKF operations."""
@@ -143,14 +140,7 @@ class SqliteCachePlugin:
             )
             # Migrate old schemas that predate ctime_ns.
             columns = {row[1] for row in conn.execute("PRAGMA table_info(concepts);")}
-<<<<<<< HEAD
-            if "ctime_ns" not in columns:
-                conn.execute(
-                    "ALTER TABLE concepts ADD COLUMN ctime_ns INTEGER DEFAULT 0 NOT NULL;"
-                )
-=======
             _add_ctime_ns_column_if_missing(conn, columns)
->>>>>>> origin/main
 
     def __del__(self) -> None:
         """Defensive fallback to close connection on garbage collection."""

@@ -837,11 +837,7 @@ def test_warm_access_does_not_require_write_lock(tmp_path: Path) -> None:
     PageRank), so any reader that also warmed its cache serialized behind a
     single writer. With writes buffered and PageRank writes elided when
     unchanged, warming a cache is read-only and must proceed even while another
-<<<<<<< HEAD
-    connection holds an exclusive write lock.
-=======
     connection holds a RESERVED write lock.
->>>>>>> origin/main
     """
     import threading
 
@@ -864,11 +860,7 @@ def test_warm_access_does_not_require_write_lock(tmp_path: Path) -> None:
     manifest = scan_bundle(bundle)
     build_bundle_graph(bundle, manifest=manifest)
 
-<<<<<<< HEAD
-    # Hold an exclusive write lock on the database from another connection.
-=======
     # Hold a RESERVED write lock on the database from another connection.
->>>>>>> origin/main
     blocker = sqlite3.connect(cache_dir / "okf-cache.db", isolation_level=None)
     blocker.execute("PRAGMA busy_timeout = 0;")
     blocker.execute("BEGIN IMMEDIATE;")

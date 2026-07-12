@@ -68,11 +68,7 @@ def search_concepts(
         listing = list_concepts(bundle, manifest=resolved_manifest, with_content=True)
         problems = listing.problems
 
-<<<<<<< HEAD
-    with sqlite3.connect(db_path) as conn:
-=======
     with sqlite3.connect(db_path, timeout=30.0) as conn:
->>>>>>> origin/main
         conn.execute("PRAGMA busy_timeout = 30000;")
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute("PRAGMA journal_mode = WAL;")
