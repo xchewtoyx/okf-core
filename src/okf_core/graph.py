@@ -354,9 +354,10 @@ def find_unlinked_mentions(
 
     problems: list[GraphProblem] = []
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("PRAGMA busy_timeout = 5000;")
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
         _ensure_search_schema(conn)
 
         if refresh:
@@ -393,9 +394,10 @@ def find_unlinked_mentions(
     seen_pairs: set[tuple[str, str]] = set()
     suggestions: list[LinkSuggestion] = []
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("PRAGMA busy_timeout = 5000;")
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
         conn.execute("""
             CREATE VIRTUAL TABLE temp.unlinked_mentions_fts USING fts5(
                 concept_id UNINDEXED,

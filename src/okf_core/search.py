@@ -68,10 +68,11 @@ def search_concepts(
         listing = list_concepts(bundle, manifest=resolved_manifest, with_content=True)
         problems = listing.problems
 
-    with sqlite3.connect(db_path) as conn:
-        conn.execute("PRAGMA busy_timeout = 5000;")
+    with sqlite3.connect(db_path, timeout=30.0) as conn:
+        conn.execute("PRAGMA busy_timeout = 30000;")
         conn.execute("PRAGMA foreign_keys = ON;")
         conn.execute("PRAGMA journal_mode = WAL;")
+        conn.execute("PRAGMA synchronous = NORMAL;")
         _ensure_search_schema(conn)
         if listing is not None:
             _refresh_search_index(conn, bundle, listing)
