@@ -9,6 +9,34 @@ from okf_core import BundleConfig, SearchConfigError, scan_bundle, search_concep
 from okf_core.search import _ensure_search_schema, _flatten_field_value
 
 
+def test_search_connect_applies_long_timeout_immediately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class RecordingConnection:
+        def __enter__(self) -> "RecordingConnection":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, _sql: str, *args: object) -> "RecordingConnection":
+            raise RuntimeError("stop after connect")
+
+    def connect(*args: object, **kwargs: object) -> RecordingConnection:
+        calls.append({"args": args, "kwargs": kwargs})
+        return RecordingConnection()
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    bundle = _bundle(tmp_path / "docs", okf_cache_dir=tmp_path / "cache")
+
+    with pytest.raises(RuntimeError, match="stop after connect"):
+        search_concepts(bundle, "Alpha", refresh=False)
+
+    assert calls[0]["kwargs"] == {"timeout": 30.0}
+
+
 def test_search_creates_fts_schema_in_existing_cache_db(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "alpha.md", title="Alpha")
