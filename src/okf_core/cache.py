@@ -42,7 +42,7 @@ def _configure_connection(conn: sqlite3.Connection) -> None:
 def _add_ctime_ns_column_if_missing(
     conn: sqlite3.Connection, columns: set[str]
 ) -> None:
-    """Add the legacy ctime column, tolerating a concurrent migration winner."""
+    """Add the legacy ctime_ns column, tolerating a concurrent migration winner."""
     if "ctime_ns" in columns:
         return
     try:
