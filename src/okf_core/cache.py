@@ -39,6 +39,23 @@ def _configure_connection(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA foreign_keys = ON;")
 
 
+def _add_ctime_ns_column_if_missing(
+    conn: sqlite3.Connection, columns: set[str]
+) -> None:
+    """Add the legacy ctime column, tolerating a concurrent migration winner."""
+    if "ctime_ns" in columns:
+        return
+    try:
+        conn.execute(
+            "ALTER TABLE concepts ADD COLUMN ctime_ns INTEGER DEFAULT 0 NOT NULL;"
+        )
+    except sqlite3.OperationalError as exc:
+        if "duplicate column name" not in str(exc).lower() or "ctime_ns" not in str(
+            exc
+        ):
+            raise
+
+
 class SqliteCachePlugin:
     """SQLite caching plugin for OKF operations."""
 
@@ -123,10 +140,7 @@ class SqliteCachePlugin:
             )
             # Migrate old schemas that predate ctime_ns.
             columns = {row[1] for row in conn.execute("PRAGMA table_info(concepts);")}
-            if "ctime_ns" not in columns:
-                conn.execute(
-                    "ALTER TABLE concepts ADD COLUMN ctime_ns INTEGER DEFAULT 0 NOT NULL;"
-                )
+            _add_ctime_ns_column_if_missing(conn, columns)
 
     def __del__(self) -> None:
         """Defensive fallback to close connection on garbage collection."""

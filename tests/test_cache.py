@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from okf_core.config import BundleConfig
+from okf_core.cache import _add_ctime_ns_column_if_missing
 from okf_core.graph import build_bundle_graph
 from okf_core.manifest import scan_bundle
 
@@ -98,6 +99,23 @@ def test_cache_initialization_does_not_create_search_schema(tmp_path: Path) -> N
         cursor = conn.cursor()
         cursor.execute("SELECT count(*) FROM sqlite_master WHERE name = 'concept_fts'")
         assert cursor.fetchone()[0] == 0
+
+
+def test_ctime_ns_migration_tolerates_duplicate_column_race() -> None:
+    class RacingConnection:
+        def execute(self, _sql: str) -> None:
+            raise sqlite3.OperationalError("duplicate column name: ctime_ns")
+
+    _add_ctime_ns_column_if_missing(RacingConnection(), set())  # type: ignore[arg-type]
+
+
+def test_ctime_ns_migration_does_not_mask_other_operational_errors() -> None:
+    class BrokenConnection:
+        def execute(self, _sql: str) -> None:
+            raise sqlite3.OperationalError("attempt to write a readonly database")
+
+    with pytest.raises(sqlite3.OperationalError, match="readonly database"):
+        _add_ctime_ns_column_if_missing(BrokenConnection(), set())  # type: ignore[arg-type]
 
 
 def test_cache_hits_skip_file_reads(

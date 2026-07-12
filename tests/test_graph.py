@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,51 @@ from okf_core import (
     neighborhood,
     scan_bundle,
 )
+from okf_core.graph import find_unlinked_mentions
+
+
+def test_unlinked_mentions_connects_with_long_timeout_immediately(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class RecordingConnection:
+        def __enter__(self) -> "RecordingConnection":
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def execute(self, sql: str, *args: object) -> "RecordingConnection":
+            if "SELECT concept_id, path, title FROM concept_fts" in sql:
+                return self
+            return self
+
+        def fetchall(self) -> list[tuple[str, str, str]]:
+            return []
+
+        def executemany(self, _sql: str, _params: object) -> None:
+            return None
+
+    def connect(*args: object, **kwargs: object) -> RecordingConnection:
+        calls.append({"args": args, "kwargs": kwargs})
+        return RecordingConnection()
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    bundle = BundleConfig(
+        name="docs",
+        bundle_root=(tmp_path / "docs").resolve(strict=False),
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=tmp_path / "cache",
+    )
+
+    result = find_unlinked_mentions(bundle, refresh=False)
+
+    assert result.suggestions == ()
+    assert [call["kwargs"] for call in calls] == [{"timeout": 30.0}, {"timeout": 30.0}]
 
 
 def test_extract_markdown_links_ignores_code_and_images() -> None:
