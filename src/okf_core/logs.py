@@ -489,7 +489,6 @@ def _consume_bullet_list(
     """
     list_level = tokens[start].level
     item_level = list_level + 1
-    child_level = list_level + 2
     i = start + 1
     while i < len(tokens):
         token = tokens[i]
@@ -502,7 +501,6 @@ def _consume_bullet_list(
                 tokens,
                 i,
                 item_end,
-                child_level,
                 current_date,
                 current_entries,
                 problems,
@@ -517,7 +515,6 @@ def _consume_list_item(
     tokens: Sequence[Any],
     item_start: int,
     item_end: int,
-    child_level: int,
     current_date: str | None,
     current_entries: list[LogEntry],
     problems: list[LogParseProblem],
@@ -526,8 +523,7 @@ def _consume_list_item(
 
     ``item_start``/``item_end`` bound the item's own already-resolved span
     (its ``list_item_open`` up to, exclusive, past its matching
-    ``list_item_close``); ``child_level`` is the level those direct
-    children sit at. The children are partitioned by
+    ``list_item_close``). The children are partitioned by
     ``_partition_item_blocks`` -- the same shape-only classification
     ``_partition_top_level_blocks``/``_classify_block`` use one nesting
     level up -- and walked in order via an exhaustive ``match`` over
@@ -549,7 +545,7 @@ def _consume_list_item(
     item_open_line = _token_line(tokens[item_start])
     captured = False
     item_entry_index: int | None = None
-    blocks = _partition_item_blocks(tokens, item_start + 1, item_end - 1, child_level)
+    blocks = _partition_item_blocks(tokens, item_start + 1, item_end - 1)
     for block in blocks:
         match block.kind:
             case _ItemBlockKind.PARAGRAPH:
@@ -582,14 +578,13 @@ def _consume_list_item(
 
 
 def _partition_item_blocks(
-    tokens: Sequence[Any], start: int, end: int, level: int
+    tokens: Sequence[Any], start: int, end: int
 ) -> list[_ItemBlock]:
     """Partition one list item's direct block-level children.
 
     ``start``/``end`` bound the item's own content span (just past its
     ``list_item_open`` up to, but not including, its matching
-    ``list_item_close``); ``level`` is the level those direct children sit
-    at. Structurally identical to ``_partition_top_level_blocks`` one
+    ``list_item_close``). Structurally identical to ``_partition_top_level_blocks`` one
     nesting level down: a container-opening token (``nesting == 1``) claims
     tokens up to its matching close via ``_skip_matching_block``; a
     self-contained token (``nesting == 0``, e.g.
