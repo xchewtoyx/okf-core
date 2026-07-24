@@ -74,25 +74,28 @@ issue's branch/PR before the current one is merged.
 5. **Raise PR** — open a PR from the branch to `main`. Use the repo's PR
    template if one exists; otherwise lead with the one thing the reviewer
    most needs to understand that isn't obvious from the diff — not a
-   restatement of what the code shows. Include `Closes #<issue>`. Subscribe
-   to PR activity so review comments and CI failures arrive as events instead
-   of requiring you to poll.
+   restatement of what the code shows. Include `Closes #<issue>`. If your
+   environment provides PR-activity subscription tooling (e.g. a
+   `subscribe_pr_activity`-style tool that delivers review comments and CI
+   results as events), use it. If it doesn't, fall back to periodically
+   re-checking the PR's check-run and review state yourself instead — either
+   way, the gate in step 6 is the same.
 
 6. **Wait for merge — hard gate.** Per `AGENTS.md`, automated agents never
    merge their own PRs, and an issue isn't done until a human approves and
    merges. While waiting:
-   - Handle CI failures and review comments as they arrive, using the same
-     implementor/reviewer loop as steps 2–3, and reply to comment threads
-     with your reasoning per the PR-comment etiquette rather than pushing
-     silently.
+   - Handle CI failures and review comments as they arrive (via subscription
+     events or your own re-checks), using the same implementor/reviewer loop
+     as steps 2–3, and reply to comment threads explaining your reasoning for
+     the fix — or for not making one — rather than pushing silently.
    - Do not plan, implement, or open a PR for any other milestone issue while
      this one is open.
    - Do not advance until GitHub actually reports this PR merged — never
      assume or infer merge status from silence.
 
-7. Once merged: unsubscribe from that PR's activity, drop this issue's
-   working detail entirely, rerun scope discovery, and move to the next
-   eligible issue.
+7. Once merged: if you subscribed to this PR's activity, unsubscribe from it;
+   drop this issue's working detail entirely, rerun scope discovery, and move
+   to the next eligible issue.
 
 ## Release step
 

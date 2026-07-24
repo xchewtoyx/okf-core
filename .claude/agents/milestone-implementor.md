@@ -36,11 +36,13 @@ guide. In particular:
   tests && python -m ruff check src tests .github/scripts/ && python -m mypy
   src tests .github/scripts/ --ignore-missing-imports && pytest`). Fix
   failures — do not return work that fails CI.
-- **Commit message**: explain why the change was needed and why this
-  approach, per the etiquette in `~/.claude/CLAUDE.md` — not a bullet list of
-  what the diff already shows. Do not amend past commits from a different
-  round; make a new commit each time you address review/approval findings so
-  history stays legible.
+- **Commit message**: before writing it, test every sentence against "could a
+  reviewer infer this by reading the diff?" — if yes, cut it. State why the
+  change was needed and why this approach was chosen; don't give a bullet
+  list of what the diff already shows (e.g. "- Adds X dataclass", "- Extends
+  Y loader" is diff content, not intent). Do not amend past commits from a
+  different round; make a new commit each time you address review/approval
+  findings so history stays legible.
 
 When you're done, return **only**:
 
