@@ -335,6 +335,7 @@ def test_parse_nested_sub_bullet_does_not_affect_sibling_entries() -> None:
         ("html_block", "<div>raw</div>\n\n", "raw HTML block"),
         ("h3_heading", "### sub heading\n", "sub-heading"),
         ("blockquote", "> quoted stuff\n", "blockquote"),
+        ("ordered_list", "1. foo\n", "ordered_list_open"),
     ],
 )
 def test_parse_stray_block_under_date_heading_reported_and_skipped(
@@ -357,6 +358,7 @@ def test_parse_stray_block_under_date_heading_reported_and_skipped(
         ("html_block", "<div>raw</div>\n\n"),
         ("h3_heading", "### sub heading\n"),
         ("blockquote", "> quoted stuff\n"),
+        ("ordered_list", "1. foo\n"),
     ],
 )
 def test_parse_stray_block_does_not_affect_preceding_valid_entries(
@@ -366,6 +368,66 @@ def test_parse_stray_block_does_not_affect_preceding_valid_entries(
     parsed = parse_log(content)
     assert parsed.sections[0].entries == (LogEntry(text="A preceding entry."),), label
     assert len(parsed.problems) == 1, label
+
+
+# ---------------------------------------------------------------------------
+# parse_log: an out-of-place h1 (ATX or setext) directly under a date
+# heading -- must be classified as a stray block like any other errant
+# heading, never silently dropped and never mistaken for the document
+# title, regardless of whether a real title was already captured.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "stray_h1"),
+    [
+        ("atx", "# Stray Heading\n"),
+        ("setext", "Stray Heading\n=============\n"),
+    ],
+)
+def test_parse_stray_h1_under_date_heading_with_title_already_set(
+    label: str, stray_h1: str
+) -> None:
+    content = f"# Real Title\n\n## 2026-05-15\n{stray_h1}* A real entry.\n"
+    parsed = parse_log(content)
+    assert parsed.title == "Real Title", label
+    assert parsed.sections[0].entries == (LogEntry(text="A real entry."),), label
+    assert len(parsed.problems) == 1, label
+    assert "skipped stray block" in parsed.problems[0].message, label
+    assert parsed.problems[0].date == "2026-05-15", label
+
+
+@pytest.mark.parametrize(
+    ("label", "stray_h1"),
+    [
+        ("atx", "# Stray Heading\n"),
+        ("setext", "Stray Heading\n=============\n"),
+    ],
+)
+def test_parse_stray_h1_under_date_heading_with_no_title_yet(
+    label: str, stray_h1: str
+) -> None:
+    # With no earlier `# Title`, a naive unconditional title-capture branch
+    # would misattribute this date-section h1's text as the document
+    # title -- active data corruption, not just a missed diagnostic. It
+    # must instead be reported as a stray block and leave .title as None.
+    content = f"## 2026-05-15\n{stray_h1}* A real entry.\n"
+    parsed = parse_log(content)
+    assert parsed.title is None, label
+    assert parsed.sections[0].entries == (LogEntry(text="A real entry."),), label
+    assert len(parsed.problems) == 1, label
+    assert "skipped stray block" in parsed.problems[0].message, label
+    assert parsed.problems[0].date == "2026-05-15", label
+
+
+def test_parse_h1_before_date_heading_still_captured_as_title() -> None:
+    # Regression check: the happy path -- a legitimate `# Title` appearing
+    # before any date heading -- must be unaffected by gating the h1
+    # branch on `current_date is None`.
+    content = "# Directory Update Log\n\n## 2026-05-15\n* An entry.\n"
+    parsed = parse_log(content)
+    assert parsed.title == "Directory Update Log"
+    assert parsed.problems == ()
 
 
 def test_parse_html_block_without_blank_line_absorbs_following_bullet() -> None:

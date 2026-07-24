@@ -74,12 +74,18 @@ def parse_log(content: str) -> ParsedLog:
     ``.text``, otherwise ``.label`` is ``None`` and ``.text`` is the full
     rendered prose. A "loose" item's second and later paragraphs are folded
     into that same entry's ``.text`` (space-joined) rather than dropped. Any
-    block-level construct other than the expected ``## YYYY-MM-DD``/title
-    headings and the entry bullet list -- a bare paragraph, fenced or
-    indented code block, thematic break, sub-heading, raw HTML block,
+    block-level construct other than the expected ``## YYYY-MM-DD`` date
+    heading and the entry bullet list -- a bare paragraph, fenced or
+    indented code block, thematic break, any heading (including an
+    out-of-place ``# Title``-shaped ``h1``, ATX or setext), raw HTML block,
     blockquote, or a nested sub-list within an entry -- placed directly
     under a date heading is reported as a ``LogParseProblem`` and skipped,
     since none of them has a representation in the flat ``LogEntry`` model.
+    Note that ``# Title`` is only ever captured as ``.title`` when it
+    appears before the first date heading; once a date section has opened,
+    a later ``h1`` is uniformly classified as a stray block like any other
+    out-of-place heading, not silently merged into or mistaken for the
+    document title.
     Note that an HTML block with no blank line before a following bullet can
     still be absorbed into that block by CommonMark's own HTML-block rule
     before this parser ever sees it as a separate list; that case is still
@@ -95,7 +101,7 @@ def parse_log(content: str) -> ParsedLog:
     i = 0
     while i < len(tokens):
         token = tokens[i]
-        if token.type == "heading_open" and token.tag == "h1":
+        if token.type == "heading_open" and token.tag == "h1" and current_date is None:
             i += 1
             if i < len(tokens) and tokens[i].type == "inline" and title is None:
                 title = tokens[i].content
@@ -286,18 +292,23 @@ def _skip_matching_block(tokens: Sequence[Any], start: int) -> int:
     return i
 
 
-_TOP_LEVEL_HEADING_TAGS = frozenset({"h1", "h2"})
+_TOP_LEVEL_HEADING_TAGS = frozenset({"h2"})
 
 
 def _is_stray_top_level_block(token: Any) -> bool:
     """Whether ``token`` opens a block that has no place directly under a
-    date heading: anything other than the ``# Title``/``## YYYY-MM-DD``
-    headings (already handled by their own branches) or the entry bullet
-    list. Matches on markdown-it's ``nesting`` convention (``>= 0`` covers
-    both a container's opening token and a self-contained block like
-    ``fence``/``hr``/``html_block``) so new block types need no additional
-    case here -- only a closing token (``nesting == -1``, e.g. a heading's
-    own close falling through one token at a time) is excluded.
+    date heading: anything other than the ``## YYYY-MM-DD`` date heading
+    (already handled by its own branch) or the entry bullet list. This
+    function is only ever consulted once a date section is already open
+    (``current_date is not None``), so an ``h1`` reaching here is by
+    construction an out-of-place heading, not a document title -- the title
+    branch in ``parse_log`` only claims an ``h1`` while ``current_date`` is
+    still ``None``, and falls through to this classifier otherwise. Matches
+    on markdown-it's ``nesting`` convention (``>= 0`` covers both a
+    container's opening token and a self-contained block like ``fence``/
+    ``hr``/``html_block``) so new block types need no additional case here
+    -- only a closing token (``nesting == -1``, e.g. a heading's own close
+    falling through one token at a time) is excluded.
     """
     if token.type == "heading_open":
         return token.tag not in _TOP_LEVEL_HEADING_TAGS
