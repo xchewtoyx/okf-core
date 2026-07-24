@@ -430,6 +430,72 @@ def test_parse_h1_before_date_heading_still_captured_as_title() -> None:
     assert parsed.problems == ()
 
 
+# ---------------------------------------------------------------------------
+# parse_log: round 5 regression -- a stray h1 landing after a *malformed*
+# date heading, not just after a valid one. `current_date` resets to None
+# both in the preamble and after a malformed heading, so a naive
+# `current_date is None` gate can't tell the two positions apart; the fix
+# tracks them as distinct phases so an h1 in either non-preamble position is
+# reported as a stray block, never silently dropped or captured as title.
+# ---------------------------------------------------------------------------
+
+
+def test_parse_stray_h1_after_malformed_date_heading_with_title_already_set() -> None:
+    content = (
+        "# Real Title\n\n"
+        "## 2026-05-15\n"
+        "* A kept entry.\n\n"
+        "## also-garbage\n"
+        "# Stray Heading\n"
+        "* An entry that belongs to no valid section.\n"
+    )
+    parsed = parse_log(content)
+    assert parsed.title == "Real Title"
+    assert parsed.sections == (
+        LogDateSection(date="2026-05-15", entries=(LogEntry(text="A kept entry."),)),
+    )
+    assert len(parsed.problems) == 2
+    stray_problems = [p for p in parsed.problems if "skipped stray block" in p.message]
+    assert len(stray_problems) == 1
+    assert stray_problems[0].date is None
+
+
+def test_parse_stray_h1_after_malformed_date_heading_with_no_title_yet() -> None:
+    # No earlier `# Title` at all: a naive `current_date is None` gate would
+    # misattribute this h1's text as the document title, treating it as if
+    # it were legitimate preamble content instead of a stray block under an
+    # already-abandoned (malformed) date section.
+    content = (
+        "## 2026-05-15\n" "* A kept entry.\n\n" "## also-garbage\n" "# Stray Heading\n"
+    )
+    parsed = parse_log(content)
+    assert parsed.title is None
+    assert parsed.sections == (
+        LogDateSection(date="2026-05-15", entries=(LogEntry(text="A kept entry."),)),
+    )
+    assert len(parsed.problems) == 2
+    stray_problems = [p for p in parsed.problems if "skipped stray block" in p.message]
+    assert len(stray_problems) == 1
+    assert stray_problems[0].date is None
+
+
+def test_parse_valid_section_recovers_after_stray_h1_in_skipped_section() -> None:
+    # The full round-5 sequence: valid section -> entry -> malformed
+    # section -> stray h1 -> a further valid section. The state machine
+    # must still recognize the later `## 2026-05-01` as a fresh, valid
+    # section boundary rather than getting stuck by the intervening stray
+    # h1.
+    content = (
+        "## 2026-05-15\n* First kept.\n\n"
+        "## also-garbage\n"
+        "# Stray Heading\n"
+        "## 2026-05-01\n* Second kept.\n"
+    )
+    parsed = parse_log(content)
+    assert [s.date for s in parsed.sections] == ["2026-05-15", "2026-05-01"]
+    assert parsed.title is None
+
+
 def test_parse_html_block_without_blank_line_absorbs_following_bullet() -> None:
     # CommonMark's HTML-block rule keeps consuming lines until a blank line,
     # so an HTML block with no blank line before the next bullet swallows it

@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import datetime
+import enum
 import re
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -60,81 +61,293 @@ class ParsedLog:
     problems: tuple[LogParseProblem, ...] = ()
 
 
+class _SectionState(enum.Enum):
+    """Which of three phases of a log.md document ``parse_log`` is in.
+
+    Distinguishes "no date heading seen yet" (``PREAMBLE``) from "inside an
+    open, valid date section" (``IN_SECTION``, where ``current_date`` on the
+    parse state carries the date) from "inside a section whose heading was
+    malformed and therefore never opened" (``IN_SKIPPED_SECTION``). The bug
+    this replaces used ``current_date is None`` to mean both ``PREAMBLE`` and
+    ``IN_SKIPPED_SECTION`` -- so an ``h1`` landing after a malformed date
+    heading was indistinguishable from one landing in the preamble, and
+    could be silently dropped or misread as the document title. Making the
+    three states explicit removes that ambiguity: every (phase, block kind)
+    pair is handled by its own case in ``_dispatch_block``.
+    """
+
+    PREAMBLE = "preamble"
+    IN_SECTION = "in_section"
+    IN_SKIPPED_SECTION = "in_skipped_section"
+
+
+class BlockKind(enum.Enum):
+    """The structural shape of a ``_partition_top_level_blocks`` block.
+
+    Purely about markdown-it token shape, not log.md semantics: an ``h1``
+    heading, an ``h2`` heading, a bullet list, or anything else.
+    """
+
+    HEADING_H1 = "heading_h1"
+    HEADING_H2 = "heading_h2"
+    BULLET_LIST = "bullet_list"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class TopLevelBlock:
+    """One top-level block produced by ``_partition_top_level_blocks``.
+
+    ``start``/``end`` are token indices (``end`` exclusive) spanning the
+    block, already resolved past any nested content via
+    ``_skip_matching_block``'s level/nesting walk. ``inline_text`` is the
+    heading's rendered text for ``HEADING_H1``/``HEADING_H2`` blocks, and
+    ``None`` for every other kind. ``token`` is the block's own opening (or
+    self-contained) token, kept only so a stray-block report can describe
+    it (``_stray_block_descriptor`` needs its type/tag).
+    """
+
+    kind: BlockKind
+    start: int
+    end: int
+    line: int | None
+    inline_text: str | None
+    token: Any
+
+
+@dataclass
+class _ParseState:
+    """Mutable accumulator threaded through ``_dispatch_block`` calls.
+
+    ``phase``/``current_date`` are the explicit state ``_SectionState``
+    replaces ``current_date is None`` overloading with; ``current_date`` is
+    only meaningful while ``phase is _SectionState.IN_SECTION``.
+    ``current_entries`` accumulates the presently-open section's entries and
+    is reset by ``_close_open_section`` at every section boundary.
+    """
+
+    title: str | None = None
+    phase: _SectionState = _SectionState.PREAMBLE
+    current_date: str | None = None
+    sections: list[LogDateSection] = field(default_factory=list)
+    current_entries: list[LogEntry] = field(default_factory=list)
+    problems: list[LogParseProblem] = field(default_factory=list)
+
+
 def parse_log(content: str) -> ParsedLog:
     """Parse a log.md body into a title, date sections, and entries.
 
-    ``# Title`` is captured as ``.title`` when present, else ``None``. Each
-    ``## YYYY-MM-DD`` heading starts a date section; headings that are not
-    valid ISO 8601 ``YYYY-MM-DD`` calendar dates are reported as
-    ``LogParseProblem`` objects and that section's entries are skipped rather
-    than raising. Entries that appear before the first date heading, or under
-    a malformed date heading, are silently ignored -- they belong to no valid
-    section. Each bullet-list item becomes a ``LogEntry``; a leading
-    ``**Word**: `` bold prefix is captured as ``.label`` and stripped from
-    ``.text``, otherwise ``.label`` is ``None`` and ``.text`` is the full
-    rendered prose. A "loose" item's second and later paragraphs are folded
-    into that same entry's ``.text`` (space-joined) rather than dropped. Any
-    block-level construct other than the expected ``## YYYY-MM-DD`` date
-    heading and the entry bullet list -- a bare paragraph, fenced or
-    indented code block, thematic break, any heading (including an
-    out-of-place ``# Title``-shaped ``h1``, ATX or setext), raw HTML block,
-    blockquote, or a nested sub-list within an entry -- placed directly
-    under a date heading is reported as a ``LogParseProblem`` and skipped,
-    since none of them has a representation in the flat ``LogEntry`` model.
-    Note that ``# Title`` is only ever captured as ``.title`` when it
-    appears before the first date heading; once a date section has opened,
-    a later ``h1`` is uniformly classified as a stray block like any other
-    out-of-place heading, not silently merged into or mistaken for the
-    document title.
+    Parsing runs in two phases. First, ``_partition_top_level_blocks`` walks
+    the raw markdown-it token stream once and groups it into a flat list of
+    top-level ``TopLevelBlock`` objects, each classified by shape alone (an
+    ``h1`` heading, an ``h2`` heading, a bullet list, or anything else) --
+    this pass knows nothing about log.md semantics. Second, that block list
+    is walked once with explicit state: which of three phases
+    (``_SectionState``) the parse is currently in -- before any date heading
+    (preamble), inside a valid open date section, or inside a section whose
+    heading was malformed -- rather than overloading ``current_date is
+    None`` to mean two different things. Every (phase, block kind)
+    combination is handled by its own case in ``_dispatch_block``, so no
+    block type/position combination is reachable only by falling through an
+    unrelated guard.
+
+    ``# Title`` is captured as ``.title`` only when it is the first ``h1``
+    seen while still in the preamble (before any ``## YYYY-MM-DD`` heading);
+    a second preamble ``h1`` is preamble content like any other and does not
+    replace it. Once the document has moved past the preamble -- whether
+    into a valid date section or a malformed one -- any further ``h1`` is
+    uniformly reported as a stray block (see below) and never captured as or
+    merged into ``.title``, however many date headings, valid or malformed,
+    intervene.
+
+    Each ``## YYYY-MM-DD`` heading starts a date section; headings that are
+    not valid ISO 8601 ``YYYY-MM-DD`` calendar dates are reported as
+    ``LogParseProblem`` objects and that section's entries are skipped
+    rather than raising. Entries, and any other non-heading content, that
+    appear before the first date heading or under a malformed date heading
+    are silently ignored -- they belong to no valid section, and there is no
+    date to attribute a problem to. Each bullet-list item under a valid,
+    open date section becomes a ``LogEntry``; a leading ``**Word**: `` bold
+    prefix is captured as ``.label`` and stripped from ``.text``, otherwise
+    ``.label`` is ``None`` and ``.text`` is the full rendered prose. A
+    "loose" item's second and later paragraphs are folded into that same
+    entry's ``.text`` (space-joined) rather than dropped. Any block-level
+    construct other than the expected ``## YYYY-MM-DD`` date heading and the
+    entry bullet list -- a bare paragraph, fenced or indented code block,
+    thematic break, any heading (including an out-of-place ``# Title``-
+    shaped ``h1``, ATX or setext), raw HTML block, blockquote, or a nested
+    sub-list within an entry -- placed directly under an *open, valid* date
+    heading is reported as a ``LogParseProblem`` and skipped, since none of
+    them has a representation in the flat ``LogEntry`` model.
     Note that an HTML block with no blank line before a following bullet can
     still be absorbed into that block by CommonMark's own HTML-block rule
     before this parser ever sees it as a separate list; that case is still
     reported as a problem, but the swallowed entry cannot be recovered.
     """
     tokens = _MARKDOWN.parse(content)
-    title: str | None = None
-    sections: list[LogDateSection] = []
-    problems: list[LogParseProblem] = []
-    current_date: str | None = None
-    current_entries: list[LogEntry] = []
+    blocks = _partition_top_level_blocks(tokens)
+    state = _ParseState()
 
+    for block in blocks:
+        _dispatch_block(block, tokens, state)
+    _close_open_section(state)
+
+    return ParsedLog(
+        title=state.title,
+        sections=tuple(state.sections),
+        problems=tuple(state.problems),
+    )
+
+
+def _partition_top_level_blocks(tokens: Sequence[Any]) -> list[TopLevelBlock]:
+    """Partition markdown-it's flat token stream into top-level blocks.
+
+    Every token belongs to exactly one block: a container's opening token
+    (``nesting == 1``) claims tokens up to its matching close via
+    ``_skip_matching_block``'s level/nesting walk; a self-contained token
+    (``nesting == 0``, e.g. ``hr``/``fence``/``html_block``) is a one-token
+    block. Closing tokens are never block starts -- they're consumed as
+    part of the block they close. This pass is purely structural and knows
+    nothing about log.md semantics (dates, titles, entries); it only groups
+    markdown-it structure so ``_dispatch_block`` can interpret it.
+    """
+    blocks: list[TopLevelBlock] = []
     i = 0
     while i < len(tokens):
         token = tokens[i]
-        if token.type == "heading_open" and token.tag == "h1" and current_date is None:
-            i += 1
-            if i < len(tokens) and tokens[i].type == "inline" and title is None:
-                title = tokens[i].content
-        elif token.type == "heading_open" and token.tag == "h2":
-            if current_date is not None:
-                sections.append(
-                    LogDateSection(date=current_date, entries=tuple(current_entries))
-                )
-            line = _token_line(token)
-            i += 1
-            heading_text = (
-                tokens[i].content
-                if i < len(tokens) and tokens[i].type == "inline"
-                else None
-            )
-            current_date, problem = _date_section_from_heading(heading_text, line)
-            if problem is not None:
-                problems.append(problem)
-            current_entries = []
-        elif token.type == "bullet_list_open":
-            i = _consume_bullet_list(tokens, i, current_date, current_entries, problems)
-            continue
-        elif current_date is not None and _is_stray_top_level_block(token):
-            i = _skip_stray_block(tokens, i, current_date, problems)
-            continue
-        i += 1
+        end = i + 1 if token.nesting == 0 else _skip_matching_block(tokens, i)
+        blocks.append(_classify_block(tokens, i, end, token))
+        i = end
+    return blocks
 
-    if current_date is not None:
-        sections.append(
-            LogDateSection(date=current_date, entries=tuple(current_entries))
+
+def _classify_block(
+    tokens: Sequence[Any], start: int, end: int, token: Any
+) -> TopLevelBlock:
+    """Classify one already-spanned block by markdown-it token shape alone."""
+    if token.type == "heading_open":
+        inline_text = (
+            tokens[start + 1].content
+            if start + 1 < end and tokens[start + 1].type == "inline"
+            else None
         )
+        if token.tag == "h1":
+            kind = BlockKind.HEADING_H1
+        elif token.tag == "h2":
+            kind = BlockKind.HEADING_H2
+        else:
+            kind = BlockKind.OTHER
+    elif token.type == "bullet_list_open":
+        kind, inline_text = BlockKind.BULLET_LIST, None
+    else:
+        kind, inline_text = BlockKind.OTHER, None
+    return TopLevelBlock(
+        kind=kind,
+        start=start,
+        end=end,
+        line=_token_line(token),
+        inline_text=inline_text,
+        token=token,
+    )
 
-    return ParsedLog(title=title, sections=tuple(sections), problems=tuple(problems))
+
+def _dispatch_block(
+    block: TopLevelBlock, tokens: Sequence[Any], state: _ParseState
+) -> None:
+    """Handle one partitioned top-level block against the current phase.
+
+    Every (``state.phase``, ``block.kind``) combination is an explicit
+    ``match`` case, so no case is reachable only by falling through an
+    unrelated guard -- the ordering-dependent hazard that let round 5's
+    stray ``h1`` slip through the old if/elif chain can't recur here,
+    because there is no implicit "falls through to the next elif" path
+    left to exploit. A block kind that is a deliberate no-op in a given
+    phase (e.g. a bullet list found in the preamble, or under a malformed
+    date heading) still has its own case -- it is silence by design, not by
+    omission.
+    """
+    match state.phase, block.kind:
+        case _SectionState.PREAMBLE, BlockKind.HEADING_H1:
+            _capture_title(block, state)
+        case _SectionState.PREAMBLE, BlockKind.HEADING_H2:
+            _open_or_skip_section(block, state)
+        case _SectionState.PREAMBLE, BlockKind.BULLET_LIST:
+            pass  # no date section is open yet; entries belong to no valid section
+        case _SectionState.PREAMBLE, BlockKind.OTHER:
+            pass  # preamble prose other than the title has no place in the model
+
+        case _SectionState.IN_SECTION, BlockKind.HEADING_H1:
+            _skip_stray_block(block, state.current_date, state.problems)
+        case _SectionState.IN_SECTION, BlockKind.HEADING_H2:
+            _open_or_skip_section(block, state)
+        case _SectionState.IN_SECTION, BlockKind.BULLET_LIST:
+            _consume_bullet_list(
+                tokens,
+                block.start,
+                state.current_date,
+                state.current_entries,
+                state.problems,
+            )
+        case _SectionState.IN_SECTION, BlockKind.OTHER:
+            _skip_stray_block(block, state.current_date, state.problems)
+
+        case _SectionState.IN_SKIPPED_SECTION, BlockKind.HEADING_H1:
+            _skip_stray_block(block, None, state.problems)
+        case _SectionState.IN_SKIPPED_SECTION, BlockKind.HEADING_H2:
+            _open_or_skip_section(block, state)
+        case _SectionState.IN_SKIPPED_SECTION, BlockKind.BULLET_LIST:
+            pass  # no valid section is open; entries belong to no valid section
+        case _SectionState.IN_SKIPPED_SECTION, BlockKind.OTHER:
+            pass  # no valid section is open; non-entry content is not attributable
+
+
+def _capture_title(block: TopLevelBlock, state: _ParseState) -> None:
+    """Capture a preamble ``h1``'s inline text as the document title.
+
+    Only the first such heading wins -- a second ``h1`` seen while still in
+    the preamble is preamble content like any other and is left alone,
+    matching how other non-title preamble content is treated.
+    """
+    if state.title is None and block.inline_text is not None:
+        state.title = block.inline_text
+
+
+def _open_or_skip_section(block: TopLevelBlock, state: _ParseState) -> None:
+    """Close the previously open section (if any) and open the next one.
+
+    Called for every ``## heading`` block regardless of whether the section
+    it's closing was a valid, open date section or a skipped malformed one
+    -- either way a new heading starts a fresh section boundary. The new
+    heading's own validity determines the next phase: ``IN_SECTION`` with
+    its date on success, or ``IN_SKIPPED_SECTION`` on failure, in which case
+    ``_date_section_from_heading``'s ``LogParseProblem`` is appended here.
+    """
+    _close_open_section(state)
+    date, problem = _date_section_from_heading(block.inline_text, block.line)
+    if problem is not None:
+        state.problems.append(problem)
+        state.phase = _SectionState.IN_SKIPPED_SECTION
+        state.current_date = None
+        return
+    state.phase = _SectionState.IN_SECTION
+    state.current_date = date
+
+
+def _close_open_section(state: _ParseState) -> None:
+    """Append the just-finished section to ``state.sections``, if one was open.
+
+    A no-op in ``PREAMBLE`` or ``IN_SKIPPED_SECTION`` (there is no valid
+    section to close); resets ``current_entries`` for the next section
+    either way, and is also called once after the block loop ends to flush
+    a still-open final section.
+    """
+    if state.phase == _SectionState.IN_SECTION and state.current_date is not None:
+        state.sections.append(
+            LogDateSection(
+                date=state.current_date, entries=tuple(state.current_entries)
+            )
+        )
+    state.current_entries = []
 
 
 def render_log(parsed: ParsedLog) -> str:
@@ -292,62 +505,36 @@ def _skip_matching_block(tokens: Sequence[Any], start: int) -> int:
     return i
 
 
-_TOP_LEVEL_HEADING_TAGS = frozenset({"h2"})
-
-
-def _is_stray_top_level_block(token: Any) -> bool:
-    """Whether ``token`` opens a block that has no place directly under a
-    date heading: anything other than the ``## YYYY-MM-DD`` date heading
-    (already handled by its own branch) or the entry bullet list. This
-    function is only ever consulted once a date section is already open
-    (``current_date is not None``), so an ``h1`` reaching here is by
-    construction an out-of-place heading, not a document title -- the title
-    branch in ``parse_log`` only claims an ``h1`` while ``current_date`` is
-    still ``None``, and falls through to this classifier otherwise. Matches
-    on markdown-it's ``nesting`` convention (``>= 0`` covers both a
-    container's opening token and a self-contained block like ``fence``/
-    ``hr``/``html_block``) so new block types need no additional case here
-    -- only a closing token (``nesting == -1``, e.g. a heading's own close
-    falling through one token at a time) is excluded.
-    """
-    if token.type == "heading_open":
-        return token.tag not in _TOP_LEVEL_HEADING_TAGS
-    return bool(token.nesting >= 0)
-
-
 def _skip_stray_block(
-    tokens: Sequence[Any],
-    start: int,
-    current_date: str,
+    block: TopLevelBlock,
+    date_for_problem: str | None,
     problems: list[LogParseProblem],
-) -> int:
-    """Report and skip one stray top-level block placed under a date heading.
+) -> None:
+    """Report one stray top-level block placed under a date heading.
 
     Covers any block-level construct other than the expected date/title
     headings and the entry bullet list -- a bare paragraph, fenced or
-    indented code block, thematic break, sub-heading, raw HTML block,
-    blockquote, and so on -- as a single ``LogParseProblem`` category, since
-    none of them has a representation in the flat ``LogEntry`` model. A
-    self-contained block (``token.nesting == 0``, e.g. ``fence``/``hr``/
-    ``html_block``) is a single token and needs no further skip; a
-    container (``token.nesting == 1``, e.g. ``blockquote_open`` or an
-    errant sub-``heading_open``) is skipped to its matching close via
-    ``_skip_matching_block`` so sibling content after it is unaffected.
+    indented code block, thematic break, sub-heading, an out-of-place
+    ``h1``, raw HTML block, blockquote, and so on -- as a single
+    ``LogParseProblem`` category, since none of them has a representation
+    in the flat ``LogEntry`` model. ``date_for_problem`` is the open
+    section's date when called from ``IN_SECTION``, or ``None`` when called
+    from ``IN_SKIPPED_SECTION`` -- there is no valid date to attribute it
+    to there, only the malformed heading that preceded it. The block's
+    span was already resolved by ``_partition_top_level_blocks``, so no
+    further token walk is needed here; skipping it is just moving on to
+    the next block in the caller's loop.
     """
-    token = tokens[start]
     problems.append(
         LogParseProblem(
-            date=current_date,
-            line=_token_line(token),
+            date=date_for_problem,
+            line=block.line,
             message=(
                 "skipped stray block under date heading: log entries must "
-                f"be bullet-list items, not {_stray_block_descriptor(token)}"
+                f"be bullet-list items, not {_stray_block_descriptor(block.token)}"
             ),
         )
     )
-    if token.nesting == 0:
-        return start + 1
-    return _skip_matching_block(tokens, start)
 
 
 def _stray_block_descriptor(token: Any) -> str:
