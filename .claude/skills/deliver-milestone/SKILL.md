@@ -56,18 +56,19 @@ issue's branch/PR before the current one is merged.
 2. **Implement** — dispatch `milestone-implementor` with that task list. It
    returns a branch name, commit SHA(s), and a short summary — not a diff.
 
-3. **Review** — dispatch `milestone-reviewer` against that branch. It returns
-   `approve` or `request_changes` with concrete findings.
+3. **Review** — dispatch `milestone-reviewer` with the issue number and the
+   branch name — it reviews the branch against that specific issue. It
+   returns `approve` or `request_changes` with concrete findings.
    - On `request_changes`: dispatch `milestone-implementor` again with
      exactly those findings and the branch name, then re-review. Repeat until
      `approve`, capped at 5 rounds — if still not approved after 5, stop and
      escalate to the user with the reviewer's last findings instead of
      looping forever.
 
-4. **Approve** — once Review approves, dispatch `milestone-approver` against
-   the same branch. It independently re-checks the issue's acceptance
-   criteria and returns pass/fail per criterion — this is not a rubber stamp
-   of step 3. Any failing criterion goes back to step 2 (`milestone-
+4. **Approve** — once Review approves, dispatch `milestone-approver` with the
+   same issue number and branch name. It independently re-checks the issue's
+   acceptance criteria and returns pass/fail per criterion — this is not a
+   rubber stamp of step 3. Any failing criterion goes back to step 2 (`milestone-
    implementor`) with exactly that gap, then re-approve. Only proceed once
    every criterion passes.
 
