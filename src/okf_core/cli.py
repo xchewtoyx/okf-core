@@ -15,36 +15,36 @@ from okf_core import (
     BundleConfig,
     BundleManifest,
     ConceptManifestEntry,
+    ConceptPathError,
     ConfigError,
+    DocumentChangeError,
     ManifestProblem,
     ProfileConfig,
+    SearchConfigError,
     TaxonomyConfig,
     __version__,
     backlinks_to,
-    build_context_pack,
     build_bundle_graph,
-    DocumentChangeError,
+    build_context_pack,
+    concept_id_to_path,
     find_unlinked_mentions,
     generate_index,
-    list_concepts,
     links_from,
+    list_concepts,
     load_config,
     neighborhood,
     okf_version_for_index_write,
+    parse_concept_document,
     render_index_document,
     scan_bundle,
     search_concepts,
-    SearchConfigError,
-    validate_bundle,
-    concept_id_to_path,
-    ConceptPathError,
-    parse_concept_document,
     serialize_concept_document,
+    validate_bundle,
 )
 from okf_core.moves import move_concept, plan_move_concept
+from okf_core.orientation import ORIENTATION_GUIDE
 from okf_core.repair import plan_graph_repair, repair_graph
 from okf_core.write_safety import check_bundle_write_safety
-from okf_core.orientation import ORIENTATION_GUIDE
 
 
 class _Encoder(json.JSONEncoder):
@@ -716,7 +716,7 @@ def stable_id_cmd(
     try:
         content = path.read_bytes().decode("utf-8")
         document = parse_concept_document(content)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI error boundary, report and exit
         click.echo(f"Error reading/parsing concept document: {exc}", err=True)
         sys.exit(1)
 
@@ -741,7 +741,7 @@ def stable_id_cmd(
         try:
             serialized = serialize_concept_document(document)
             path.write_text(serialized, encoding="utf-8", newline="\n")
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - CLI error boundary, report and exit
             click.echo(f"Error writing concept document: {exc}", err=True)
             sys.exit(1)
         click.echo(new_id)
@@ -1077,7 +1077,7 @@ def index_cmd(
     for p in manifest.problems:
         try:
             problems_resolved.append((p.path.resolve(), p))
-        except Exception:
+        except Exception:  # noqa: BLE001 - resolve() fallback, keep original path
             problems_resolved.append((p.path, p))
 
     results = []

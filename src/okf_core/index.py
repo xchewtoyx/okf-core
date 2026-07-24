@@ -13,10 +13,10 @@ from markdown_it import MarkdownIt
 
 from okf_core.documents import (
     ConceptDocument,
-    validate_concept_document,
-    validate_concept_document_with_profile,
     parse_concept_document,
     serialize_concept_document,
+    validate_concept_document,
+    validate_concept_document_with_profile,
 )
 from okf_core.manifest import BundleManifest, ConceptManifestEntry
 from okf_core.versions import normalize_okf_version_declaration
@@ -405,7 +405,7 @@ def _load_directory_metadata(
                     message=f"invalid metadata file {meta_path.name}: content must be a YAML mapping",
                 )
             )
-        elif not all(isinstance(k, str) for k in loaded.keys()):
+        elif not all(isinstance(k, str) for k in loaded):
             problems.append(
                 IndexProblem(
                     concept_id="",

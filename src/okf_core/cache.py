@@ -5,20 +5,20 @@ from __future__ import annotations
 import contextlib
 import json
 import sqlite3
-from collections.abc import Sequence
+from collections.abc import Generator, Sequence
 from pathlib import Path
-from typing import Any, Generator
+from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from okf_core.config import BundleConfig
+from okf_core.graph import BundleGraph, ConceptLink, GraphProblem, compute_pagerank
+from okf_core.hooks import hookimpl
 from okf_core.manifest import (
     BundleManifest,
     ConceptManifestEntry,
     ManifestProblem,
     _freeze_value,
 )
-from okf_core.graph import ConceptLink, BundleGraph, GraphProblem, compute_pagerank
-from okf_core.hooks import hookimpl
 
 # Held long enough to ride out a concurrent writer's flush (which is now a
 # short burst rather than a whole scan) without surfacing "database is locked".

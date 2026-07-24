@@ -1,9 +1,9 @@
 from __future__ import annotations
-from typing import Any
 
 from hashlib import sha256
 from pathlib import Path
 from types import MappingProxyType
+from typing import Any
 
 import pytest
 

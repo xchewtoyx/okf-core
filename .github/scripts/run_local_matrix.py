@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import sys
 import subprocess
+import sys
 from pathlib import Path
+
 import yaml
 
 
@@ -71,7 +72,7 @@ def main() -> None:
     try:
         yaml_content = workflow_path.read_text(encoding="utf-8")
         versions = parse_workflow_matrix(yaml_content)
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001 - CLI error boundary, report and exit
         print(f"Error parsing workflow file: {exc}", file=sys.stderr)
         sys.exit(1)
 

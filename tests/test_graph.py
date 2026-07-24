@@ -23,13 +23,13 @@ def test_unlinked_mentions_connects_with_long_timeout_immediately(
     calls: list[dict[str, object]] = []
 
     class RecordingConnection:
-        def __enter__(self) -> "RecordingConnection":
+        def __enter__(self) -> RecordingConnection:
             return self
 
         def __exit__(self, *args: object) -> None:
             return None
 
-        def execute(self, sql: str, *args: object) -> "RecordingConnection":
+        def execute(self, sql: str, *args: object) -> RecordingConnection:
             if "SELECT concept_id, path, title FROM concept_fts" in sql:
                 return self
             return self
@@ -63,17 +63,13 @@ def test_unlinked_mentions_connects_with_long_timeout_immediately(
 
 def test_extract_markdown_links_ignores_code_and_images() -> None:
     links = extract_markdown_links(
-        "\n".join(
-            [
-                "See [real](target.md) and ![image](image.md).",
-                "",
-                "`[inline](ignored.md)`",
-                "",
-                "```",
-                "[fenced](ignored.md)",
-                "```",
-            ]
-        )
+        "See [real](target.md) and ![image](image.md).\n"
+        "\n"
+        "`[inline](ignored.md)`\n"
+        "\n"
+        "```\n"
+        "[fenced](ignored.md)\n"
+        "```"
     )
 
     assert [(link.text, link.target) for link in links] == [("real", "target.md")]

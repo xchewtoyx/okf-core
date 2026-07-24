@@ -71,5 +71,13 @@ extend-select = ["C90"]
 [tool.ruff.lint.mccabe]
 max-complexity = 14
 
+[tool.ruff.lint.per-file-ignores]
+# Local fake classes in tests mirror sqlite3 connection objects; adding a
+# typing_extensions dependency just for `Self` return types isn't worth it.
+"tests/test_search.py" = ["PYI034"]
+"tests/test_graph.py" = ["PYI034"]
+# Test data intentionally includes a naive datetime to exercise tz-less parsing.
+"tests/test_frontmatter_patching.py" = ["DTZ001"]
+
 [tool.mypy]
 python_version = "3.10"
