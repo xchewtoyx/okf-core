@@ -8,6 +8,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`log.md` parsing, rendering, and loading**: added `parse_log`/`render_log`/`load_log` and the `LogEntry`/`LogDateSection`/`LogParseProblem`/`ParsedLog` dataclasses, giving callers a structured, spec-conformant view of a bundle's change-history log without hand-rolling Markdown parsing. Malformed date headings or entries are reported as `LogParseProblem`s and skipped rather than aborting the whole parse, so #136's upcoming merge/insert logic can build on a tolerant read path. (#145)
 - **Markdown round-trip spike**: chose a canonical `mdformat`-based approach for the upcoming #148 patching refactor; see `docs/spikes/149-markdown-round-trip.md`. (#149)
 - **Safe Markdown link target rewriting**: added `plan_markdown_link_rewrite` patch primitive to surgically rewrite inline Markdown link destinations in the concept body. (#127)
 - **`okf move` CLI command and `plan_file_move`/`move_concept` primitives**: relocates a concept file within a bundle while rewriting inbound Markdown links in every referring file, preserving link-graph integrity across the move. `move_concept` also refreshes an existing `index.md` in the source and/or destination directory to reflect the move. (#69)

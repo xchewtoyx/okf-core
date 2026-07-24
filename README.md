@@ -500,6 +500,30 @@ result = generate_index(bundle.bundle_root, manifest.concepts)
 
 The `describe_directory` keyword argument to `generate_index()` is a hook point for callers that want to supply directory-level descriptions — for example, a workflow agent using its own model access. It receives the absolute subdirectory path and should return a description string or `None`. `okf-core` itself never makes model API calls.
 
+### Log Files
+
+`parse_log(content)` parses a `log.md` body per OKF's Log Files section into a `ParsedLog`: an optional `title` (the `# Heading` if present, else `None`), a tuple of `LogDateSection` objects (one per `## YYYY-MM-DD` heading, each carrying its date string and a tuple of `LogEntry` objects), and a `.problems` tuple of `LogParseProblem` objects for malformed input. Date headings that are not valid ISO 8601 `YYYY-MM-DD` calendar dates are reported as problems and that section's entries are skipped rather than raising; entries that appear before the first date heading, or under a malformed one, are silently ignored. Each bullet-list item becomes a `LogEntry`: a leading `**Word**: ` bold prefix (the spec's `**Update**`/`**Creation**`/`**Deprecation**` convention) is captured as `.label` and stripped from `.text`, otherwise `.label` is `None` and `.text` is the entry's full rendered prose. Embedded Markdown (links, code spans, emphasis) is preserved verbatim in `.text`, not resolved or altered. An entry with no renderable text at all is skipped and reported as a `LogParseProblem`, matching the same skip-and-report behaviour as malformed date headings.
+
+`render_log(parsed)` performs the inverse, pure structural serialization: a title heading (if present), then each date section's `## YYYY-MM-DD` heading and bullet entries, in order. It does no merging, inserting, or deduplication against an existing log — that composition is left to callers.
+
+`load_log(path)` reads and parses a `log.md` file, mirroring `scan_bundle()`'s missing-root tolerance: a `path` that does not exist returns an empty `ParsedLog(title=None, sections=(), problems=())` instead of raising.
+
+```python
+from pathlib import Path
+from okf_core import load_log, render_log
+
+parsed = load_log(Path("docs/log.md"))
+# parsed.title     — the log's "# Heading", or None
+# parsed.sections  — LogDateSection objects, newest first if the file follows the spec convention
+# parsed.problems  — tuple of LogParseProblem for malformed date headings or entries
+
+for section in parsed.sections:
+    for entry in section.entries:
+        print(section.date, entry.label, entry.text)
+
+render_log(parsed)  # renders parsed back to spec-shape log.md Markdown
+```
+
 ### Context Packs
 
 `build_context_pack(bundle, seed_concept_ids, *, graph=None, depth=1, direction="both", budget_chars=None)` assembles a deterministic context pack from explicit seed concept IDs. Seeds appear first in the returned entries (in the order provided), followed by graph-expanded concepts ordered by distance then concept ID. `depth` controls how many hops of graph expansion are performed (default `1`); `direction` controls whether outbound links, backlinks, or both are followed (default `"both"`). `budget_chars` sets an approximate character-count budget; entries are added in stable order until the budget is exhausted and any remaining discovered concepts are reported in `omitted_concept_ids`. Pass `budget_chars=None` (the default) to include all discovered concepts.
