@@ -395,6 +395,72 @@ def test_parse_unexpected_nested_fence_as_loose_items_second_block() -> None:
     assert "fenced or indented code block" in parsed.problems[0].message
 
 
+def test_parse_list_item_with_only_unexpected_content_yields_no_entry() -> None:
+    # A bullet whose sole content is itself unexpected (no leading paragraph
+    # at all) never sets `_consume_list_item`'s `captured` flag, so it falls
+    # through to the empty-entry tail check *in addition to* the per-block
+    # report -- two problems, zero entries, from a single malformed item.
+    content = "## 2026-05-15\n* \n  ### only a heading\n"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == ()
+    assert len(parsed.problems) == 2
+    assert any(
+        "skipped unexpected nested block" in p.message and "sub-heading" in p.message
+        for p in parsed.problems
+    )
+    assert any(
+        "skipped malformed log entry: empty entry text" in p.message
+        for p in parsed.problems
+    )
+
+
+def test_parse_multiple_unexpected_blocks_in_same_item_reported_separately() -> None:
+    # Two distinct unexpected blocks in one item (an hr, then a blockquote)
+    # are walked and reported independently by `_consume_list_item`'s loop,
+    # not collapsed into a single problem.
+    content = (
+        "## 2026-05-15\n"
+        "* A preceding entry.\n"
+        "\n"
+        "  ---\n"
+        "\n"
+        "  > quoted stuff\n"
+        "* A following entry.\n"
+    )
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (
+        LogEntry(text="A preceding entry."),
+        LogEntry(text="A following entry."),
+    )
+    assert len(parsed.problems) == 2
+    assert "thematic break" in parsed.problems[0].message
+    assert "blockquote" in parsed.problems[1].message
+
+
+def test_parse_unexpected_content_nested_two_levels_deep_reported_once() -> None:
+    # An unexpected nested bullet list that itself contains further
+    # unexpected content (a heading) is reported once, for the outer nested
+    # list's whole span -- `_skip_matching_block`'s level/nesting walk
+    # resolves that span (and everything inside it) before
+    # `_skip_unexpected_item_block` ever runs, so the inner heading is never
+    # independently walked or reported.
+    content = (
+        "## 2026-05-15\n"
+        "* Top entry.\n"
+        "  * nested item\n"
+        "    ### nested heading\n"
+        "* Another entry.\n"
+    )
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (
+        LogEntry(text="Top entry."),
+        LogEntry(text="Another entry."),
+    )
+    assert len(parsed.problems) == 1
+    assert "skipped unexpected nested block" in parsed.problems[0].message
+    assert "nested bullet list" in parsed.problems[0].message
+
+
 # ---------------------------------------------------------------------------
 # parse_log: any other stray block under a date heading (fence, hr,
 # html_block, sub-heading, blockquote) -- generalizes the stray-paragraph
