@@ -23,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `parse_log()` now reports a `LogParseProblem` for a labelled bullet with no prose after the colon (e.g. `* **Update**:`), matching the same skip-and-report behaviour already documented for label-less empty entries. The empty-text check previously only fired when no `**Word**:` label was present, so a labelled bullet with nothing after the colon silently produced a `LogEntry` with empty `.text` instead of being surfaced as malformed input. (#145)
 - `build_bundle_graph()` now percent-decodes Markdown link hrefs before resolving them against on-disk concept paths, so a link to a path containing a space or other percent-encoded character (e.g. `[old](old%20file.md)`) is no longer treated as broken. (#69)
 
 ## [0.4.2] - 2026-07-11

@@ -214,6 +214,22 @@ def test_parse_empty_entry_reported_and_skipped() -> None:
     assert parsed.problems[0].date == "2026-05-15"
 
 
+@pytest.mark.parametrize(
+    "bullet",
+    ["* **Update**:\n", "* **Update**:   \n"],
+    ids=["no-trailing-space", "trailing-whitespace-only"],
+)
+def test_parse_empty_entry_with_label_reported_and_skipped(bullet: str) -> None:
+    # A label with no prose after the colon must still be treated as empty --
+    # the presence of `label` must not suppress the empty-entry check.
+    content = f"## 2026-05-15\n{bullet}* A real entry.\n"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (LogEntry(text="A real entry."),)
+    assert len(parsed.problems) == 1
+    assert "empty entry text" in parsed.problems[0].message
+    assert parsed.problems[0].date == "2026-05-15"
+
+
 def test_parse_entry_with_only_unrenderable_content_reported_and_skipped() -> None:
     # An image has no Markdown-source rendering in log entry prose, so this
     # entry renders to empty text even though the source line isn't blank.

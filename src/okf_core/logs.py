@@ -11,6 +11,8 @@ from typing import Any
 
 from markdown_it import MarkdownIt
 
+from okf_core._markdown_inline import render_linked_span, token_line
+
 _MARKDOWN = MarkdownIt("commonmark")
 
 _DATE_FORM = re.compile(r"\d{4}-\d{2}-\d{2}")
@@ -286,7 +288,7 @@ def _entry_from_list_item(
         remainder_prefix = colon_text[1:].removeprefix(" ")
         text = (remainder_prefix + _render_prose(children[colon_idx + 1 :])).strip()
 
-    if label is None and not text:
+    if not text:
         return None, LogParseProblem(
             date=date,
             line=line,
@@ -295,49 +297,16 @@ def _entry_from_list_item(
     return LogEntry(text=text, label=label), None
 
 
-def _inline_source(child: Any) -> str | None:
-    """Return the Markdown source for a single inline child token, or None to skip."""
-    t = getattr(child, "type", "")
-    if t == "text":
-        return getattr(child, "content", "")
-    if t == "code_inline":
-        return f"`{getattr(child, 'content', '')}`"
-    if t in ("softbreak", "hardbreak"):
-        return " "
-    markup = getattr(child, "markup", "")
-    return markup if markup else None
+_render_prose = render_linked_span
+"""Render a run of inline child tokens back to Markdown source.
 
-
-def _render_prose(children: Sequence[Any]) -> str:
-    """Render a run of inline child tokens back to Markdown source.
-
-    Links are reconstituted verbatim as ``[text](href)``; every other token
-    passes through ``_inline_source``. Unlike index.py's entry-title
-    renderer, log entry prose has no positional restriction on links -- any
-    number may appear anywhere in the entry.
-    """
-    parts: list[str] = []
-    i = 0
-    n = len(children)
-    while i < n:
-        child = children[i]
-        if child.type == "link_open":
-            href = child.attrGet("href") or ""
-            i += 1
-            inner: list[str] = []
-            while i < n and children[i].type != "link_close":
-                content = _inline_source(children[i])
-                if content is not None:
-                    inner.append(content)
-                i += 1
-            parts.append(f"[{''.join(inner)}]({href})")
-            i += 1  # consume the matching link_close
-        else:
-            content = _inline_source(child)
-            if content is not None:
-                parts.append(content)
-            i += 1
-    return "".join(parts)
+Links are reconstituted verbatim as ``[text](href)``; every other token
+passes through ``inline_token_source``. Unlike index.py's entry-title
+renderer, log entry prose has no positional restriction on links -- any
+number may appear anywhere in the entry. Shared with index.py's
+suffix-span renderer via ``_markdown_inline.render_linked_span`` -- see
+that module for the implementation.
+"""
 
 
 def _render_log_entry(entry: LogEntry) -> str:
@@ -346,8 +315,4 @@ def _render_log_entry(entry: LogEntry) -> str:
     return f"* {entry.text}"
 
 
-def _token_line(token: object) -> int | None:
-    token_map = getattr(token, "map", None)
-    if not token_map:
-        return None
-    return int(token_map[0]) + 1
+_token_line = token_line
