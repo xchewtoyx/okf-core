@@ -175,9 +175,11 @@ def test_get_all_releases_paginates() -> None:
 
 
 def test_get_all_releases_raises_on_non_list() -> None:
-    with patch.object(gen_index, "_api", return_value={"error": "bad token"}):
-        with pytest.raises(RuntimeError, match="expected list"):
-            gen_index._get_all_releases("owner/repo", "tok")
+    with (
+        patch.object(gen_index, "_api", return_value={"error": "bad token"}),
+        pytest.raises(RuntimeError, match="expected list"),
+    ):
+        gen_index._get_all_releases("owner/repo", "tok")
 
 
 # ---------------------------------------------------------------------------
@@ -203,18 +205,19 @@ def test_load_stored_hashes_returns_empty_on_404() -> None:
 
 def test_load_stored_hashes_raises_on_non_dict() -> None:
     encoded = base64.b64encode(json.dumps([1, 2, 3]).encode()).decode()
-    with patch.object(gen_index, "_api", return_value={"content": encoded}):
-        with pytest.raises(RuntimeError, match="not a JSON object"):
-            gen_index._load_stored_hashes("owner/repo", "tok")
+    with (
+        patch.object(gen_index, "_api", return_value={"content": encoded}),
+        pytest.raises(RuntimeError, match="not a JSON object"),
+    ):
+        gen_index._load_stored_hashes("owner/repo", "tok")
 
 
 def test_load_stored_hashes_reraises_non_404_http_error() -> None:
     def raise_500(path: str, token: str) -> Any:
         raise HTTPError(url="", code=500, msg="Server Error", hdrs=None, fp=None)  # type: ignore[arg-type]
 
-    with patch.object(gen_index, "_api", raise_500):
-        with pytest.raises(HTTPError):
-            gen_index._load_stored_hashes("owner/repo", "tok")
+    with patch.object(gen_index, "_api", raise_500), pytest.raises(HTTPError):
+        gen_index._load_stored_hashes("owner/repo", "tok")
 
 
 # ---------------------------------------------------------------------------
@@ -262,16 +265,14 @@ def test_main_writes_index_files(tmp_path: Path) -> None:
 
 def test_main_exits_when_token_missing(tmp_path: Path) -> None:
     env = {"GH_REPO": "owner/repo"}
-    with patch.dict(os.environ, env, clear=True):
-        with pytest.raises(SystemExit):
-            gen_index.main(str(tmp_path), str(tmp_path / "out"))
+    with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit):
+        gen_index.main(str(tmp_path), str(tmp_path / "out"))
 
 
 def test_main_exits_when_repo_missing(tmp_path: Path) -> None:
     env = {"GH_TOKEN": "fake"}
-    with patch.dict(os.environ, env, clear=True):
-        with pytest.raises(SystemExit):
-            gen_index.main(str(tmp_path), str(tmp_path / "out"))
+    with patch.dict(os.environ, env, clear=True), pytest.raises(SystemExit):
+        gen_index.main(str(tmp_path), str(tmp_path / "out"))
 
 
 def test_main_skips_prerelease_and_draft(tmp_path: Path) -> None:
@@ -307,9 +308,11 @@ def test_main_skips_prerelease_and_draft(tmp_path: Path) -> None:
             },
         ]
 
-    with patch.object(gen_index, "_api", fake_api):
-        with patch.dict(os.environ, {"GH_TOKEN": "fake", "GH_REPO": "owner/repo"}):
-            gen_index.main(str(dist), str(out))
+    with (
+        patch.object(gen_index, "_api", fake_api),
+        patch.dict(os.environ, {"GH_TOKEN": "fake", "GH_REPO": "owner/repo"}),
+    ):
+        gen_index.main(str(dist), str(out))
 
     pkg_index = (out / "simple" / "okf-core" / "index.html").read_text()
     assert "<a " not in pkg_index

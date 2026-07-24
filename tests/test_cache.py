@@ -7,8 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from okf_core.config import BundleConfig
 from okf_core.cache import SqliteCachePlugin, _add_ctime_ns_column_if_missing
+from okf_core.config import BundleConfig
 from okf_core.graph import build_bundle_graph
 from okf_core.manifest import BundleManifest, scan_bundle
 
@@ -571,10 +571,11 @@ def _write_concept(path: Path, frontmatter: str, *, body: str = "Body\n") -> Non
 
 
 def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
-    from typing import Any
     from collections.abc import Sequence
-    from okf_core.manifest import ConceptManifestEntry, ManifestProblem
+    from typing import Any
+
     from okf_core.graph import ConceptLink, GraphProblem
+    from okf_core.manifest import ConceptManifestEntry, ManifestProblem
 
     root = tmp_path / "docs"
     _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n", body="[B](b.md)\n")
@@ -815,7 +816,7 @@ def test_cache_concurrency(tmp_path: Path) -> None:
         try:
             m = scan_bundle(bundle)
             build_bundle_graph(bundle, manifest=m)
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - collect thread failures
             with errors_lock:
                 errors.append(e)
 
@@ -872,7 +873,7 @@ def test_warm_access_does_not_require_write_lock(tmp_path: Path) -> None:
             m = scan_bundle(bundle)
             build_bundle_graph(bundle, manifest=m)
             result["ok"] = True
-        except Exception as exc:  # pragma: no cover - failure path
+        except Exception as exc:  # noqa: BLE001 # pragma: no cover - failure path
             result["error"] = exc
 
     worker = threading.Thread(target=warm_pass)

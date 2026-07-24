@@ -41,14 +41,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import TYPE_CHECKING
+
 import pluggy
 
 from okf_core.config import BundleConfig
-from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from okf_core.graph import BundleGraph, ConceptLink, GraphProblem
     from okf_core.manifest import BundleManifest, ConceptManifestEntry, ManifestProblem
-    from okf_core.graph import ConceptLink, BundleGraph, GraphProblem
 
 hookspec = pluggy.HookspecMarker("okf")
 hookimpl = pluggy.HookimplMarker("okf")

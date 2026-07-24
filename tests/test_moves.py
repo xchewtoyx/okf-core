@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import okf_core.moves as moves_module
 from okf_core import (
     BundleConfig,
     ConceptPathError,
@@ -15,7 +16,6 @@ from okf_core import (
     move_concept,
     plan_move_concept,
 )
-import okf_core.moves as moves_module
 
 
 def _bundle(root: Path) -> BundleConfig:
