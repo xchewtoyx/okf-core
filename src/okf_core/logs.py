@@ -254,33 +254,65 @@ def _classify_block(
 def _dispatch_block(
     block: TopLevelBlock, tokens: Sequence[Any], state: _ParseState
 ) -> None:
-    """Handle one partitioned top-level block against the current phase.
+    """Route one partitioned top-level block to its phase's own dispatcher.
 
-    Every (``state.phase``, ``block.kind``) combination is an explicit
-    ``match`` case, so no case is reachable only by falling through an
-    unrelated guard -- the ordering-dependent hazard that let round 5's
-    stray ``h1`` slip through the old if/elif chain can't recur here,
-    because there is no implicit "falls through to the next elif" path
-    left to exploit. A block kind that is a deliberate no-op in a given
-    phase (e.g. a bullet list found in the preamble, or under a malformed
-    date heading) still has its own case -- it is silence by design, not by
-    omission.
+    An outer ``match state.phase:`` with one case per ``_SectionState``
+    member, each delegating to a per-phase helper (``_dispatch_preamble_block``,
+    ``_dispatch_in_section_block``, ``_dispatch_skipped_section_block``) that
+    itself runs an inner ``match block.kind:`` with one case per
+    ``BlockKind`` member -- so every (phase, block kind) combination is
+    still an explicit case, and no case is reachable only by falling
+    through an unrelated guard. Splitting the per-phase inner match into its
+    own helper (rather than nesting it directly here) is what keeps this
+    function's own branching low enough for the C901 complexity budget; the
+    nesting itself, not any one function's size, is what lets mypy verify
+    completeness. This is nested single-value matching rather than a flat
+    match on the ``(phase, kind)`` tuple specifically so mypy's
+    exhaustiveness checker (``--enable-error-code exhaustive-match``) can
+    actually verify completeness: it can reason about exhaustiveness over a
+    single enum-typed match subject, but not over a tuple of two enums, so a
+    flat tuple match reports "unhandled case" even when every combination is
+    present. None of these matches has a ``case _:`` wildcard, so a future
+    ``_SectionState`` or ``BlockKind`` member with no corresponding case is
+    a real mypy error, not silently swallowed.
     """
-    match state.phase, block.kind:
-        case _SectionState.PREAMBLE, BlockKind.HEADING_H1:
+    match state.phase:
+        case _SectionState.PREAMBLE:
+            _dispatch_preamble_block(block, state)
+        case _SectionState.IN_SECTION:
+            _dispatch_in_section_block(block, tokens, state)
+        case _SectionState.IN_SKIPPED_SECTION:
+            _dispatch_skipped_section_block(block, state)
+
+
+def _dispatch_preamble_block(block: TopLevelBlock, state: _ParseState) -> None:
+    """Handle one top-level block while still in ``_SectionState.PREAMBLE``.
+
+    A block kind that is a deliberate no-op here (a bullet list or other
+    prose before any date heading) still has its own case -- it is silence
+    by design, not by omission.
+    """
+    match block.kind:
+        case BlockKind.HEADING_H1:
             _capture_title(block, state)
-        case _SectionState.PREAMBLE, BlockKind.HEADING_H2:
+        case BlockKind.HEADING_H2:
             _open_or_skip_section(block, state)
-        case _SectionState.PREAMBLE, BlockKind.BULLET_LIST:
+        case BlockKind.BULLET_LIST:
             pass  # no date section is open yet; entries belong to no valid section
-        case _SectionState.PREAMBLE, BlockKind.OTHER:
+        case BlockKind.OTHER:
             pass  # preamble prose other than the title has no place in the model
 
-        case _SectionState.IN_SECTION, BlockKind.HEADING_H1:
+
+def _dispatch_in_section_block(
+    block: TopLevelBlock, tokens: Sequence[Any], state: _ParseState
+) -> None:
+    """Handle one top-level block while in ``_SectionState.IN_SECTION``."""
+    match block.kind:
+        case BlockKind.HEADING_H1:
             _skip_stray_block(block, state.current_date, state.problems)
-        case _SectionState.IN_SECTION, BlockKind.HEADING_H2:
+        case BlockKind.HEADING_H2:
             _open_or_skip_section(block, state)
-        case _SectionState.IN_SECTION, BlockKind.BULLET_LIST:
+        case BlockKind.BULLET_LIST:
             _consume_bullet_list(
                 tokens,
                 block.start,
@@ -288,16 +320,25 @@ def _dispatch_block(
                 state.current_entries,
                 state.problems,
             )
-        case _SectionState.IN_SECTION, BlockKind.OTHER:
+        case BlockKind.OTHER:
             _skip_stray_block(block, state.current_date, state.problems)
 
-        case _SectionState.IN_SKIPPED_SECTION, BlockKind.HEADING_H1:
+
+def _dispatch_skipped_section_block(block: TopLevelBlock, state: _ParseState) -> None:
+    """Handle one top-level block while in ``_SectionState.IN_SKIPPED_SECTION``.
+
+    A block kind that is a deliberate no-op here (a bullet list or other
+    content under a malformed date heading) still has its own case -- it is
+    silence by design, not by omission.
+    """
+    match block.kind:
+        case BlockKind.HEADING_H1:
             _skip_stray_block(block, None, state.problems)
-        case _SectionState.IN_SKIPPED_SECTION, BlockKind.HEADING_H2:
+        case BlockKind.HEADING_H2:
             _open_or_skip_section(block, state)
-        case _SectionState.IN_SKIPPED_SECTION, BlockKind.BULLET_LIST:
+        case BlockKind.BULLET_LIST:
             pass  # no valid section is open; entries belong to no valid section
-        case _SectionState.IN_SKIPPED_SECTION, BlockKind.OTHER:
+        case BlockKind.OTHER:
             pass  # no valid section is open; non-entry content is not attributable
 
 
