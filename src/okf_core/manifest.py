@@ -105,15 +105,13 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
                 entry, problem = _scan_concept_path(path, root, bundle)
                 if problem is not None:
                     problems.append(problem)
-            else:
-                if bundle.stable_id_field is not None:
-                    if entry.stable_id is None:
-                        problem = ManifestProblem(
-                            path=path,
-                            kind="stable-id-missing",
-                            message=f"Missing required stable ID field '{bundle.stable_id_field}'",
-                        )
-                        problems.append(problem)
+            elif bundle.stable_id_field is not None and entry.stable_id is None:
+                problem = ManifestProblem(
+                    path=path,
+                    kind="stable-id-missing",
+                    message=f"Missing required stable ID field '{bundle.stable_id_field}'",
+                )
+                problems.append(problem)
 
             if entry is not None:
                 entries.append(entry)

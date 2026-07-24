@@ -66,7 +66,9 @@ def _get_all_releases(repo: str, token: str) -> list[dict]:
     while True:
         batch = _api(f"/repos/{repo}/releases?per_page=100&page={page}", token)
         if not isinstance(batch, list):
-            raise RuntimeError(f"Unexpected API response (expected list): {batch!r}")
+            raise RuntimeError(  # noqa: TRY004 - external API shape error, not a type bug
+                f"Unexpected API response (expected list): {batch!r}"
+            )
         releases.extend(batch)
         if len(batch) < 100:
             break
@@ -80,7 +82,9 @@ def _load_stored_hashes(repo: str, token: str) -> dict[str, str]:
         content = base64.b64decode(data["content"]).decode("utf-8")
         stored = json.loads(content)
         if not isinstance(stored, dict):
-            raise RuntimeError(f"hashes.json is not a JSON object: {stored!r}")
+            raise RuntimeError(  # noqa: TRY004 - external data shape error, not a type bug
+                f"hashes.json is not a JSON object: {stored!r}"
+            )
         return stored
     except HTTPError as exc:
         if exc.code == 404:

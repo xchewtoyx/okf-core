@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+import dataclasses
 import sqlite3
 from collections import deque
 from collections.abc import Sequence
-import dataclasses
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast

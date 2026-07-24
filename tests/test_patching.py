@@ -14,9 +14,9 @@ from okf_core import (
     DocumentChangePlanningError,
     DocumentChangeSafetyError,
     apply_document_change,
+    patching,
     plan_document_change,
 )
-from okf_core import patching
 
 
 def _bundle(root: Path) -> BundleConfig:

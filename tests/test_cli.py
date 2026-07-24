@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-import json
 import inspect
+import json
 from pathlib import Path
+from typing import Any
 
+import pytest
 from click.testing import CliRunner
 
 from okf_core.cli import cli
-import pytest
-from typing import Any
 
 
 @pytest.fixture(autouse=True)
@@ -2240,11 +2240,11 @@ def test_index_recurse_generates_nested_indexes(tmp_path: Path) -> None:
     assert str(nested_subdir / "index.md") in paths
 
     for item in data:
-        if item["path"] == str(tmp_path / "index.md"):
-            assert item["entries"] == 1
-        elif item["path"] == str(subdir / "index.md"):
-            assert item["entries"] == 1
-        elif item["path"] == str(nested_subdir / "index.md"):
+        if (
+            item["path"] == str(tmp_path / "index.md")
+            or item["path"] == str(subdir / "index.md")
+            or item["path"] == str(nested_subdir / "index.md")
+        ):
             assert item["entries"] == 1
 
 

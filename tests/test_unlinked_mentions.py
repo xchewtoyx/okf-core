@@ -7,8 +7,8 @@ import pytest
 from okf_core import (
     BundleConfig,
     SearchConfigError,
-    find_unlinked_mentions,
     UnlinkedMentionsResult,
+    find_unlinked_mentions,
 )
 
 

@@ -15,13 +15,13 @@ def test_search_connect_applies_long_timeout_immediately(
     calls: list[dict[str, object]] = []
 
     class RecordingConnection:
-        def __enter__(self) -> "RecordingConnection":
+        def __enter__(self) -> RecordingConnection:
             return self
 
         def __exit__(self, *args: object) -> None:
             return None
 
-        def execute(self, _sql: str, *args: object) -> "RecordingConnection":
+        def execute(self, _sql: str, *args: object) -> RecordingConnection:
             raise RuntimeError("stop after connect")
 
     def connect(*args: object, **kwargs: object) -> RecordingConnection:

@@ -1,13 +1,18 @@
 from __future__ import annotations
-from typing import Any
 
-from pathlib import Path
 import re
+from pathlib import Path
+from typing import Any
 
 import pytest
 
-from okf_core import ConfigError, ConfigOverrides, discover_config, load_config
-from okf_core import is_supported_okf_version
+from okf_core import (
+    ConfigError,
+    ConfigOverrides,
+    discover_config,
+    is_supported_okf_version,
+    load_config,
+)
 
 
 def test_absent_config_uses_built_in_defaults(tmp_path: Path) -> None:

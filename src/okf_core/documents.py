@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Hashable
 from dataclasses import dataclass, field
-from typing import Any, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from okf_core.config import ProfileConfig, TaxonomyConfig
@@ -171,15 +171,14 @@ def _validate_taxonomy(
                     field="type",
                 ),
             )
-    elif known_types:
-        if concept_type not in known_types:
-            return (
-                ValidationFinding(
-                    severity="warning",
-                    message=f"Concept type '{concept_type}' is not recognized as a known type",
-                    field="type",
-                ),
-            )
+    elif known_types and concept_type not in known_types:
+        return (
+            ValidationFinding(
+                severity="warning",
+                message=f"Concept type '{concept_type}' is not recognized as a known type",
+                field="type",
+            ),
+        )
 
     return ()
 
