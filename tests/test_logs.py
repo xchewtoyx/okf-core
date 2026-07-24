@@ -240,6 +240,84 @@ def test_parse_entry_with_only_unrenderable_content_reported_and_skipped() -> No
     assert "empty entry text" in parsed.problems[0].message
 
 
+def test_parse_loose_bullet_continuation_paragraph_folded_into_text() -> None:
+    # A loose bullet item (blank line between paragraphs) must not drop its
+    # second paragraph -- it's continuation prose for the same entry.
+    content = (
+        "## 2026-05-15\n"
+        "* First paragraph of entry.\n"
+        "\n"
+        "  Second paragraph, same item.\n"
+    )
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (
+        LogEntry(text="First paragraph of entry. Second paragraph, same item."),
+    )
+    assert parsed.problems == ()
+
+
+def test_parse_loose_bullet_continuation_preserves_label() -> None:
+    content = (
+        "## 2026-05-15\n"
+        "* **Update**: First paragraph.\n"
+        "\n"
+        "  Second paragraph.\n"
+    )
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (
+        LogEntry(text="First paragraph. Second paragraph.", label="Update"),
+    )
+
+
+def test_parse_loose_bullet_three_paragraphs_all_folded() -> None:
+    content = "## 2026-05-15\n" "* One.\n" "\n" "  Two.\n" "\n" "  Three.\n"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (LogEntry(text="One. Two. Three."),)
+
+
+def test_parse_stray_paragraph_under_date_heading_reported_and_skipped() -> None:
+    content = "## 2026-05-15\nJust a paragraph, no bullet at all.\n"
+    parsed = parse_log(content)
+    assert parsed.sections == (LogDateSection(date="2026-05-15", entries=()),)
+    assert len(parsed.problems) == 1
+    assert "stray paragraph" in parsed.problems[0].message
+    assert parsed.problems[0].date == "2026-05-15"
+
+
+def test_parse_stray_paragraph_does_not_suppress_later_valid_entries() -> None:
+    content = "## 2026-05-15\nStray paragraph.\n\n* A real entry.\n"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (LogEntry(text="A real entry."),)
+    assert len(parsed.problems) == 1
+
+
+def test_parse_nested_sub_bullet_reported_and_skipped() -> None:
+    # The LogEntry model has no representation for nested sub-bullets --
+    # the parent entry's own text is kept, and the nested content is
+    # reported rather than silently merged or dropped.
+    content = "## 2026-05-15\n* Top entry.\n  * Nested sub note.\n"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (LogEntry(text="Top entry."),)
+    assert len(parsed.problems) == 1
+    assert "nested sub-list" in parsed.problems[0].message
+    assert parsed.problems[0].date == "2026-05-15"
+
+
+def test_parse_nested_sub_bullet_does_not_affect_sibling_entries() -> None:
+    content = (
+        "## 2026-05-15\n"
+        "* Top entry.\n"
+        "  * Nested sub note.\n"
+        "* Another top-level entry.\n"
+    )
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (
+        LogEntry(text="Top entry."),
+        LogEntry(text="Another top-level entry."),
+    )
+    assert len(parsed.problems) == 1
+
+
 # ---------------------------------------------------------------------------
 # render_log
 # ---------------------------------------------------------------------------

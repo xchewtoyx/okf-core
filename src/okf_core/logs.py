@@ -72,7 +72,12 @@ def parse_log(content: str) -> ParsedLog:
     section. Each bullet-list item becomes a ``LogEntry``; a leading
     ``**Word**: `` bold prefix is captured as ``.label`` and stripped from
     ``.text``, otherwise ``.label`` is ``None`` and ``.text`` is the full
-    rendered prose.
+    rendered prose. A "loose" item's second and later paragraphs are folded
+    into that same entry's ``.text`` (space-joined) rather than dropped. A
+    non-bullet paragraph directly under a date heading, and a nested
+    sub-list within an entry, are each reported as a ``LogParseProblem`` and
+    skipped, since neither has a representation in the flat ``LogEntry``
+    model.
     """
     tokens = _MARKDOWN.parse(content)
     title: str | None = None
@@ -107,6 +112,17 @@ def parse_log(content: str) -> ParsedLog:
         elif token.type == "bullet_list_open":
             i = _consume_bullet_list(tokens, i, current_date, current_entries, problems)
             continue
+        elif token.type == "paragraph_open" and current_date is not None:
+            problems.append(
+                LogParseProblem(
+                    date=current_date,
+                    line=_token_line(token),
+                    message=(
+                        "skipped stray paragraph under date heading: log "
+                        "entries must be bullet-list items, not bare paragraphs"
+                    ),
+                )
+            )
         i += 1
 
     if current_date is not None:
@@ -165,10 +181,16 @@ def _consume_bullet_list(
     ever producing a captured inline token (a blank bullet, or one whose
     only content has no Markdown-source rendering) is itself reported as an
     empty-entry problem here, since ``_entry_from_list_item`` is never
-    reached for it.
+    reached for it. A "loose" item's second and later paragraphs are folded
+    into the same entry's ``.text`` via ``_merge_continuation_paragraph``
+    rather than dropped, since they are continuation prose for one entry,
+    not a new one. A nested sub-list within an item is reported and skipped
+    via ``_skip_nested_sub_list``, since the ``LogEntry`` model has no
+    representation for nested bullets.
     """
     list_level = tokens[start].level
     item_captured = False
+    item_entry_index: int | None = None
     item_open_line: int | None = None
     i = start + 1
     while i < len(tokens):
@@ -178,6 +200,7 @@ def _consume_bullet_list(
             break
         if t.level == list_level + 1 and t.type == "list_item_open":
             item_captured = False
+            item_entry_index = None
             item_open_line = _token_line(t)
         elif t.level == list_level + 1 and t.type == "list_item_close":
             if not item_captured and current_date is not None:
@@ -188,20 +211,98 @@ def _consume_bullet_list(
                         message="skipped malformed log entry: empty entry text",
                     )
                 )
-        elif (
-            t.type == "inline"
-            and list_level < t.level <= list_level + 3
-            and not item_captured
-        ):
+        elif t.type == "bullet_list_open" and t.level > list_level:
+            i = _skip_nested_sub_list(tokens, i, current_date, problems)
+            continue
+        elif t.type == "inline" and list_level < t.level <= list_level + 3:
             if current_date is not None:
-                entry, problem = _entry_from_list_item(t, current_date, _token_line(t))
-                if entry is not None:
-                    current_entries.append(entry)
-                elif problem is not None:
-                    problems.append(problem)
+                if not item_captured:
+                    entry, problem = _entry_from_list_item(
+                        t, current_date, _token_line(t)
+                    )
+                    if entry is not None:
+                        current_entries.append(entry)
+                        item_entry_index = len(current_entries) - 1
+                    elif problem is not None:
+                        problems.append(problem)
+                        item_entry_index = None
+                else:
+                    item_entry_index = _merge_continuation_paragraph(
+                        t, current_entries, item_entry_index
+                    )
             item_captured = True
         i += 1
     return i
+
+
+def _skip_nested_sub_list(
+    tokens: Sequence[Any],
+    start: int,
+    current_date: str | None,
+    problems: list[LogParseProblem],
+) -> int:
+    """Skip a nested bullet list found inside a log entry's list item.
+
+    The ``LogEntry`` model represents one flat prose entry per bullet, with
+    no place for nested sub-bullets, so a sub-list can't be captured
+    without either misreading it as continuation prose for the parent
+    entry (wrong -- it's a distinct nested point, not more prose for the
+    same one) or inventing hierarchy the model doesn't have. This reports
+    it as a ``LogParseProblem`` and skips to the matching
+    ``bullet_list_close``, returning the index just past it, so the parent
+    entry's own text is unaffected.
+    """
+    nested_level = tokens[start].level
+    if current_date is not None:
+        problems.append(
+            LogParseProblem(
+                date=current_date,
+                line=_token_line(tokens[start]),
+                message=(
+                    "skipped nested sub-list under log entry: nested bullets "
+                    "are not supported, only the entry's own text is kept"
+                ),
+            )
+        )
+    i = start + 1
+    depth = 1
+    while i < len(tokens) and depth > 0:
+        if tokens[i].type == "bullet_list_open" and tokens[i].level == nested_level:
+            depth += 1
+        elif tokens[i].type == "bullet_list_close" and tokens[i].level == nested_level:
+            depth -= 1
+        i += 1
+    return i
+
+
+def _merge_continuation_paragraph(
+    token: object,
+    current_entries: list[LogEntry],
+    item_entry_index: int | None,
+) -> int | None:
+    """Fold a loose list item's second-and-later paragraph into its entry.
+
+    CommonMark renders a "loose" bullet item (one with a blank line between
+    paragraphs) as sibling paragraphs within the same list item, all at the
+    same token depth as the first. Only the first paragraph is turned into
+    a ``LogEntry`` by ``_entry_from_list_item``; later ones are the same
+    entry's continuation prose, not a new entry, so they're appended to
+    ``.text`` here (space-joined) instead of being silently dropped.
+    Returns the entry's (possibly new) index in ``current_entries``, so the
+    caller can keep folding further paragraphs into the same entry.
+    """
+    children = getattr(token, "children", None) or []
+    continuation_text = _render_prose(children).strip()
+    if not continuation_text:
+        return item_entry_index
+    if item_entry_index is None:
+        current_entries.append(LogEntry(text=continuation_text))
+        return len(current_entries) - 1
+    prior = current_entries[item_entry_index]
+    current_entries[item_entry_index] = LogEntry(
+        text=f"{prior.text} {continuation_text}", label=prior.label
+    )
+    return item_entry_index
 
 
 def _date_section_from_heading(
