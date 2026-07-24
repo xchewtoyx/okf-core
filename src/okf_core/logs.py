@@ -28,7 +28,9 @@ class LogEntry:
     convention described in the OKF spec's Log Files section; it is ``None``
     for plain-prose entries. ``text`` is the entry's prose with the label
     prefix (if any) removed, rendered back to Markdown source -- embedded
-    links and other inline markup are preserved verbatim, not resolved.
+    links and other inline markup have their content preserved (not
+    resolved), though re-rendering can canonicalize formatting details such
+    as a link title's quoting style.
     """
 
     text: str
@@ -421,8 +423,9 @@ def render_log(parsed: ParsedLog) -> str:
 def load_log(path: Path) -> ParsedLog:
     """Read and parse ``path`` as a log.md file, tolerating a missing file.
 
-    Mirrors ``scan_bundle``'s missing-root tolerance: if ``path`` does not
-    exist, an empty ``ParsedLog`` is returned instead of raising.
+    Mirrors ``scan_bundle``'s missing-root tolerance: if ``path`` is not an
+    existing file (missing entirely, or an existing non-file path such as a
+    directory), an empty ``ParsedLog`` is returned instead of raising.
     """
     if not path.is_file():
         return ParsedLog(title=None, sections=(), problems=())
@@ -855,10 +858,12 @@ def _entry_from_list_item(
 _render_prose = render_linked_span
 """Render a run of inline child tokens back to Markdown source.
 
-Links are reconstituted verbatim as ``[text](href)``, or ``[text](href
-"title")`` when the link carries a title; every other token passes through
-``inline_token_source``. Unlike index.py's entry-title renderer, log entry
-prose has no positional restriction on links -- any number may appear
+Links are reconstituted with their semantic content preserved -- as
+``[text](href)``, or, when the link carries a title, ``[text](href
+"title")`` with the title canonicalized to double-quoted form -- not
+necessarily byte-for-byte identical to the source; every other token passes
+through ``inline_token_source``. Unlike index.py's entry-title renderer, log
+entry prose has no positional restriction on links -- any number may appear
 anywhere in the entry. Shared with index.py's suffix-span renderer via
 ``_markdown_inline.render_linked_span`` -- see that module for the
 implementation.

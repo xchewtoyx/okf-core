@@ -55,9 +55,12 @@ def _render_link_destination(child: Any) -> str:
 def render_linked_span(children: Sequence[Any]) -> str:
     """Render a run of inline child tokens back to Markdown source.
 
-    Links are reconstituted verbatim as ``[text](href)`` or, when the link
-    carries a title, ``[text](href "title")``; every other token passes
-    through ``inline_token_source``.
+    Links are reconstituted with their semantic content preserved -- as
+    ``[text](href)``, or, when the link carries a title, ``[text](href
+    "title")`` with the title canonicalized to double-quoted form regardless
+    of the original delimiter style (``'...'`` or ``(...)``) -- not
+    necessarily byte-for-byte identical to the source. Every other token
+    passes through ``inline_token_source``.
     """
     parts: list[str] = []
     i = 0
