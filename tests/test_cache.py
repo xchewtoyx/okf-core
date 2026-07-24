@@ -873,7 +873,7 @@ def test_warm_access_does_not_require_write_lock(tmp_path: Path) -> None:
             m = scan_bundle(bundle)
             build_bundle_graph(bundle, manifest=m)
             result["ok"] = True
-        except Exception as exc:  # noqa: BLE001 # pragma: no cover - failure path
+        except Exception as exc:  # noqa: BLE001 - collect failure # pragma: no cover
             result["error"] = exc
 
     worker = threading.Thread(target=warm_pass)
