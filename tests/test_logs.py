@@ -200,6 +200,22 @@ def test_parse_entry_with_multiple_links_preserved() -> None:
     assert entry.text == "See [A](a.md) and [B](b.md)."
 
 
+def test_parse_entry_with_link_title_preserved() -> None:
+    # The log_concept_move convention (#136) links old-id -> new-id with a
+    # "moved to" title -- the title must round-trip, not just the href.
+    content = '## 2026-05-15\n* [old-id](new-id "moved to")\n'
+    parsed = parse_log(content)
+    entry = parsed.sections[0].entries[0]
+    assert entry.text == '[old-id](new-id "moved to")'
+
+
+def test_parse_entry_with_link_title_containing_quote_preserved() -> None:
+    content = '## 2026-05-15\n* [old-id](new-id "has \\"quoted\\" text")\n'
+    parsed = parse_log(content)
+    entry = parsed.sections[0].entries[0]
+    assert entry.text == '[old-id](new-id "has \\"quoted\\" text")'
+
+
 # ---------------------------------------------------------------------------
 # parse_log: malformed entries
 # ---------------------------------------------------------------------------
@@ -712,6 +728,8 @@ def test_render_log_empty_produces_empty_string() -> None:
         "## 2026-05-15\n* No title, one plain entry.\n",
         "# Only Title\n",
         "# T\n\n## 2026-01-01\n* **Update**: See [X](x.md) and [Y](y.md).\n",
+        '## 2026-05-15\n* [old-id](new-id "moved to")\n',
+        '## 2026-05-15\n* [old-id](new-id "has \\"quoted\\" text")\n',
     ],
 )
 def test_parse_render_parse_round_trip_is_structurally_equivalent(content: str) -> None:

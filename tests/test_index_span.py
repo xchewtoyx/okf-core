@@ -37,6 +37,14 @@ def _inline_children(src: str) -> list:
         (" - see [x](y)", " - see [x](y)"),  # single inner link round-trips
         (" - [a](b) and [c](d)", " - [a](b) and [c](d)"),  # multiple inner links
         (" - *em* and **bold**", " - *em* and **bold**"),  # emphasis delimiters
+        (
+            ' - see [x](y "a title")',
+            ' - see [x](y "a title")',
+        ),  # inner link title round-trips
+        (
+            ' - see [x](y "has \\"quotes\\"")',
+            ' - see [x](y "has \\"quotes\\"")',
+        ),  # inner link title with embedded quote round-trips
     ],
 )
 def test_render_suffix_span_round_trips(src: str, expected: str) -> None:

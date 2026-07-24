@@ -860,12 +860,13 @@ def _entry_from_list_item(
 _render_prose = render_linked_span
 """Render a run of inline child tokens back to Markdown source.
 
-Links are reconstituted verbatim as ``[text](href)``; every other token
-passes through ``inline_token_source``. Unlike index.py's entry-title
-renderer, log entry prose has no positional restriction on links -- any
-number may appear anywhere in the entry. Shared with index.py's
-suffix-span renderer via ``_markdown_inline.render_linked_span`` -- see
-that module for the implementation.
+Links are reconstituted verbatim as ``[text](href)``, or ``[text](href
+"title")`` when the link carries a title; every other token passes through
+``inline_token_source``. Unlike index.py's entry-title renderer, log entry
+prose has no positional restriction on links -- any number may appear
+anywhere in the entry. Shared with index.py's suffix-span renderer via
+``_markdown_inline.render_linked_span`` -- see that module for the
+implementation.
 """
 
 

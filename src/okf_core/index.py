@@ -551,7 +551,8 @@ _inline_content = inline_token_source
 _render_suffix_span = render_linked_span
 """Reconstitute the Markdown source of the tokens following the title link.
 
-Inner link pairs become ``[text](href)``; every other token passes through
+Inner link pairs become ``[text](href)``, or ``[text](href "title")`` when
+the link carries a title; every other token passes through
 ``_inline_content``. Shared with ``logs.py``'s entry-prose renderer via
 ``_markdown_inline.render_linked_span`` -- see that module for the
 implementation.
