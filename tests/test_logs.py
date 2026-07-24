@@ -300,7 +300,8 @@ def test_parse_nested_sub_bullet_reported_and_skipped() -> None:
     parsed = parse_log(content)
     assert parsed.sections[0].entries == (LogEntry(text="Top entry."),)
     assert len(parsed.problems) == 1
-    assert "nested sub-list" in parsed.problems[0].message
+    assert "skipped unexpected nested block" in parsed.problems[0].message
+    assert "nested bullet list" in parsed.problems[0].message
     assert parsed.problems[0].date == "2026-05-15"
 
 
@@ -317,6 +318,81 @@ def test_parse_nested_sub_bullet_does_not_affect_sibling_entries() -> None:
         LogEntry(text="Another top-level entry."),
     )
     assert len(parsed.problems) == 1
+
+
+# ---------------------------------------------------------------------------
+# parse_log: any other unexpected block nested *inside* a list item (ordered
+# sub-list, fence, indented code, hr, blockquote, sub-heading, html_block) --
+# generalizes the nested-bullet-list case above (and the fenced-code-as-a-
+# loose-item's-second-block gap found during #145 acceptance review) to any
+# block-level construct a list item can directly contain beyond its own (and,
+# for a loose item, continuation) paragraphs.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "nested_block", "descriptor"),
+    [
+        ("ordered_list", "  1. nested item.\n", "ordered_list_open"),
+        ("fence", "\n  ```\n  code\n  ```\n", "fenced or indented code block"),
+        ("indented_code", "\n      code here\n", "fenced or indented code block"),
+        ("hr", "\n  ---\n", "thematic break"),
+        ("blockquote", "\n  > quoted\n", "blockquote"),
+        ("h3_heading", "\n  ### nested heading\n", "sub-heading"),
+        ("html_block", "\n  <div>hi</div>\n", "raw HTML block"),
+    ],
+)
+def test_parse_unexpected_nested_block_in_entry_reported_and_skipped(
+    label: str, nested_block: str, descriptor: str
+) -> None:
+    content = f"## 2026-05-15\n* Top entry.\n{nested_block}* Another entry.\n"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (
+        LogEntry(text="Top entry."),
+        LogEntry(text="Another entry."),
+    ), label
+    assert len(parsed.problems) == 1, label
+    assert "skipped unexpected nested block" in parsed.problems[0].message, label
+    assert descriptor in parsed.problems[0].message, label
+    assert parsed.problems[0].date == "2026-05-15", label
+
+
+@pytest.mark.parametrize(
+    ("label", "nested_block"),
+    [
+        ("ordered_list", "  1. nested item.\n"),
+        ("fence", "\n  ```\n  code\n  ```\n"),
+        ("indented_code", "\n      code here\n"),
+        ("hr", "\n  ---\n"),
+        ("blockquote", "\n  > quoted\n"),
+        ("h3_heading", "\n  ### nested heading\n"),
+        ("html_block", "\n  <div>hi</div>\n"),
+    ],
+)
+def test_parse_unexpected_nested_block_in_entry_does_not_affect_sibling_entries(
+    label: str, nested_block: str
+) -> None:
+    content = (
+        f"## 2026-05-15\n* A preceding entry.\n{nested_block}* A following entry.\n"
+    )
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (
+        LogEntry(text="A preceding entry."),
+        LogEntry(text="A following entry."),
+    ), label
+    assert len(parsed.problems) == 1, label
+
+
+def test_parse_unexpected_nested_fence_as_loose_items_second_block() -> None:
+    # The specific #145 acceptance-review repro: a loose item's second
+    # block (blank line then an indented fence) is not continuation prose
+    # for the entry -- it must be reported, not silently merged or dropped.
+    content = "## 2026-05-15\n* Entry text.\n\n  ```\n  code\n  ```\n"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (LogEntry(text="Entry text."),)
+    assert len(parsed.problems) == 1
+    assert "skipped unexpected nested block" in parsed.problems[0].message
+    assert "fenced or indented code block" in parsed.problems[0].message
 
 
 # ---------------------------------------------------------------------------

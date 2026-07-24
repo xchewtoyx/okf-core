@@ -175,10 +175,16 @@ def parse_log(content: str) -> ParsedLog:
     construct other than the expected ``## YYYY-MM-DD`` date heading and the
     entry bullet list -- a bare paragraph, fenced or indented code block,
     thematic break, any heading (including an out-of-place ``# Title``-
-    shaped ``h1``, ATX or setext), raw HTML block, blockquote, or a nested
-    sub-list within an entry -- placed directly under an *open, valid* date
-    heading is reported as a ``LogParseProblem`` and skipped, since none of
-    them has a representation in the flat ``LogEntry`` model.
+    shaped ``h1``, ATX or setext), raw HTML block, or blockquote -- placed
+    directly under an *open, valid* date heading is reported as a
+    ``LogParseProblem`` and skipped, since none of them has a representation
+    in the flat ``LogEntry`` model. This guarantee holds one nesting level
+    deeper too: within a list item itself, anything after the item's own
+    (and, for a loose item, continuation) paragraphs -- a nested bullet or
+    ordered list, fenced or indented code, a thematic break, a blockquote,
+    a heading, or raw HTML -- is unexpected nested content and is likewise
+    reported and skipped rather than silently discarded, without corrupting
+    that entry's own captured text or any sibling entry.
     Note that an HTML block with no blank line before a following bullet can
     still be absorbed into that block by CommonMark's own HTML-block rule
     before this parser ever sees it as a separate list; that case is still
@@ -424,6 +430,47 @@ def load_log(path: Path) -> ParsedLog:
     return parse_log(content)
 
 
+class _ItemBlockKind(enum.Enum):
+    """The structural shape of one block found directly inside a list item.
+
+    Mirrors ``BlockKind``'s role for top-level blocks, one nesting level
+    down: a ``paragraph_open`` (the entry's own text, or a loose item's
+    continuation paragraph -- both fold into the entry, via
+    ``_entry_from_list_item``/``_merge_continuation_paragraph``) versus
+    anything else a list item can directly contain -- a nested bullet or
+    ordered list, a fenced or indented code block, a thematic break, a
+    blockquote, a heading, or raw HTML -- none of which the flat
+    ``LogEntry`` model has room for. A closed two-member set, checked by an
+    exhaustive ``match`` in ``_consume_list_item``, for the same reason
+    ``BlockKind`` is: a future markdown-it block type falls into ``OTHER``
+    automatically rather than needing a new case, but the *handling* of
+    ``PARAGRAPH`` vs. everything else can never silently go unhandled.
+    """
+
+    PARAGRAPH = "paragraph"
+    OTHER = "other"
+
+
+@dataclass(frozen=True)
+class _ItemBlock:
+    """One block-level construct found directly inside a list item.
+
+    Parallels ``TopLevelBlock`` one nesting level down -- see there for the
+    general field meanings. ``inline_token`` is the paragraph's own
+    ``inline`` child token, kept (rather than pre-rendered text, unlike
+    ``TopLevelBlock.inline_text``) because entry text needs the raw child
+    tokens for label detection and link-preserving rendering; it is
+    ``None`` for every ``_ItemBlockKind.OTHER`` block.
+    """
+
+    kind: _ItemBlockKind
+    start: int
+    end: int
+    line: int | None
+    token: Any
+    inline_token: Any | None
+
+
 def _consume_bullet_list(
     tokens: Sequence[Any],
     start: int,
@@ -435,93 +482,182 @@ def _consume_bullet_list(
 
     Appends entries to ``current_entries`` and problems to ``problems`` as a
     side effect (both caller-owned lists), and returns the token index just
-    past the matching ``bullet_list_close``. A list item that closes without
-    ever producing a captured inline token (a blank bullet, or one whose
-    only content has no Markdown-source rendering) is itself reported as an
-    empty-entry problem here, since ``_entry_from_list_item`` is never
-    reached for it. A "loose" item's second and later paragraphs are folded
-    into the same entry's ``.text`` via ``_merge_continuation_paragraph``
-    rather than dropped, since they are continuation prose for one entry,
-    not a new one. A nested sub-list within an item is reported and skipped
-    via ``_skip_nested_sub_list``, since the ``LogEntry`` model has no
-    representation for nested bullets.
+    past the matching ``bullet_list_close``. Each ``list_item_open`` ...
+    ``list_item_close`` span is resolved via ``_skip_matching_block`` and
+    handed whole to ``_consume_list_item``, which does the actual per-item
+    work.
     """
     list_level = tokens[start].level
-    item_captured = False
-    item_entry_index: int | None = None
-    item_open_line: int | None = None
+    item_level = list_level + 1
+    child_level = list_level + 2
     i = start + 1
     while i < len(tokens):
-        t = tokens[i]
-        if t.level == list_level and t.nesting == -1:
+        token = tokens[i]
+        if token.level == list_level and token.nesting == -1:
             i += 1
             break
-        if t.level == list_level + 1 and t.type == "list_item_open":
-            item_captured = False
-            item_entry_index = None
-            item_open_line = _token_line(t)
-        elif t.level == list_level + 1 and t.type == "list_item_close":
-            if not item_captured and current_date is not None:
-                problems.append(
-                    LogParseProblem(
-                        date=current_date,
-                        line=item_open_line,
-                        message="skipped malformed log entry: empty entry text",
-                    )
-                )
-        elif t.type == "bullet_list_open" and t.level > list_level:
-            i = _skip_nested_sub_list(tokens, i, current_date, problems)
+        if token.level == item_level and token.type == "list_item_open":
+            item_end = _skip_matching_block(tokens, i)
+            _consume_list_item(
+                tokens,
+                i,
+                item_end,
+                child_level,
+                current_date,
+                current_entries,
+                problems,
+            )
+            i = item_end
             continue
-        elif t.type == "inline" and list_level < t.level <= list_level + 3:
-            if current_date is not None:
-                if not item_captured:
-                    entry, problem = _entry_from_list_item(
-                        t, current_date, _token_line(t)
-                    )
-                    if entry is not None:
-                        current_entries.append(entry)
-                        item_entry_index = len(current_entries) - 1
-                    elif problem is not None:
-                        problems.append(problem)
-                        item_entry_index = None
-                else:
-                    item_entry_index = _merge_continuation_paragraph(
-                        t, current_entries, item_entry_index
-                    )
-            item_captured = True
         i += 1
     return i
 
 
-def _skip_nested_sub_list(
+def _consume_list_item(
     tokens: Sequence[Any],
-    start: int,
+    item_start: int,
+    item_end: int,
+    child_level: int,
     current_date: str | None,
+    current_entries: list[LogEntry],
     problems: list[LogParseProblem],
-) -> int:
-    """Skip a nested bullet list found inside a log entry's list item.
+) -> None:
+    """Handle one list item's direct block-level children, in place.
 
-    The ``LogEntry`` model represents one flat prose entry per bullet, with
-    no place for nested sub-bullets, so a sub-list can't be captured
-    without either misreading it as continuation prose for the parent
-    entry (wrong -- it's a distinct nested point, not more prose for the
-    same one) or inventing hierarchy the model doesn't have. This reports
-    it as a ``LogParseProblem`` and skips to the matching
-    ``bullet_list_close`` via ``_skip_matching_block``, returning the index
-    just past it, so the parent entry's own text is unaffected.
+    ``item_start``/``item_end`` bound the item's own already-resolved span
+    (its ``list_item_open`` up to, exclusive, past its matching
+    ``list_item_close``); ``child_level`` is the level those direct
+    children sit at. The children are partitioned by
+    ``_partition_item_blocks`` -- the same shape-only classification
+    ``_partition_top_level_blocks``/``_classify_block`` use one nesting
+    level up -- and walked in order via an exhaustive ``match`` over
+    ``_ItemBlockKind``: the first ``PARAGRAPH`` becomes the entry via
+    ``_entry_from_list_item``; a later one is a loose item's continuation
+    paragraph and folds into that same entry via
+    ``_merge_continuation_paragraph``; anything else (``OTHER`` -- a nested
+    bullet or ordered list, fenced or indented code, a thematic break, a
+    blockquote, a heading, raw HTML) is unexpected nested content, reported
+    once per block via ``_skip_unexpected_item_block`` and otherwise
+    ignored, since ``_partition_item_blocks`` already resolved its full
+    span past any nesting of its own -- it can't be misread as more of the
+    entry's own text. A list item that closes without ever capturing a
+    paragraph (a blank bullet, one whose only content has no
+    Markdown-source rendering, or one whose only content is itself
+    unexpected) is reported separately as an empty entry, matching prior
+    behaviour.
     """
-    if current_date is not None:
+    item_open_line = _token_line(tokens[item_start])
+    captured = False
+    item_entry_index: int | None = None
+    blocks = _partition_item_blocks(tokens, item_start + 1, item_end - 1, child_level)
+    for block in blocks:
+        match block.kind:
+            case _ItemBlockKind.PARAGRAPH:
+                if current_date is not None:
+                    if not captured:
+                        entry, problem = _entry_from_list_item(
+                            block.inline_token, current_date, block.line
+                        )
+                        if entry is not None:
+                            current_entries.append(entry)
+                            item_entry_index = len(current_entries) - 1
+                        elif problem is not None:
+                            problems.append(problem)
+                            item_entry_index = None
+                    else:
+                        item_entry_index = _merge_continuation_paragraph(
+                            block.inline_token, current_entries, item_entry_index
+                        )
+                captured = True
+            case _ItemBlockKind.OTHER:
+                _skip_unexpected_item_block(block, current_date, problems)
+    if not captured and current_date is not None:
         problems.append(
             LogParseProblem(
                 date=current_date,
-                line=_token_line(tokens[start]),
-                message=(
-                    "skipped nested sub-list under log entry: nested bullets "
-                    "are not supported, only the entry's own text is kept"
-                ),
+                line=item_open_line,
+                message="skipped malformed log entry: empty entry text",
             )
         )
-    return _skip_matching_block(tokens, start)
+
+
+def _partition_item_blocks(
+    tokens: Sequence[Any], start: int, end: int, level: int
+) -> list[_ItemBlock]:
+    """Partition one list item's direct block-level children.
+
+    ``start``/``end`` bound the item's own content span (just past its
+    ``list_item_open`` up to, but not including, its matching
+    ``list_item_close``); ``level`` is the level those direct children sit
+    at. Structurally identical to ``_partition_top_level_blocks`` one
+    nesting level down: a container-opening token (``nesting == 1``) claims
+    tokens up to its matching close via ``_skip_matching_block``; a
+    self-contained token (``nesting == 0``, e.g.
+    ``hr``/``fence``/``code_block``/``html_block``) is a one-token block. An
+    empty item (no children at all -- ``start == end``) yields no blocks,
+    which is how an empty/blank bullet is represented.
+    """
+    blocks: list[_ItemBlock] = []
+    i = start
+    while i < end:
+        token = tokens[i]
+        block_end = i + 1 if token.nesting == 0 else _skip_matching_block(tokens, i)
+        if token.type == "paragraph_open":
+            kind = _ItemBlockKind.PARAGRAPH
+            inline_token = (
+                tokens[i + 1]
+                if i + 1 < block_end and tokens[i + 1].type == "inline"
+                else None
+            )
+        else:
+            kind = _ItemBlockKind.OTHER
+            inline_token = None
+        blocks.append(
+            _ItemBlock(
+                kind=kind,
+                start=i,
+                end=block_end,
+                line=_token_line(token),
+                token=token,
+                inline_token=inline_token,
+            )
+        )
+        i = block_end
+    return blocks
+
+
+def _skip_unexpected_item_block(
+    block: _ItemBlock,
+    current_date: str | None,
+    problems: list[LogParseProblem],
+) -> None:
+    """Report one unexpected block-level construct found inside a list item.
+
+    Covers any direct child of a list item other than its own paragraph(s)
+    -- a nested bullet or ordered list, a fenced or indented code block, a
+    thematic break, a blockquote, a heading, or raw HTML -- as a single
+    ``LogParseProblem`` category, mirroring ``_skip_stray_block``'s role for
+    stray top-level blocks one nesting level up. The block's span was
+    already resolved by ``_partition_item_blocks``, so no further token walk
+    is needed here; skipping it is just declining to fold it into the
+    entry's text. A no-op when ``current_date`` is ``None`` -- in practice
+    this is never reached with a ``None`` date, since a bullet list is only
+    ever dispatched to ``_consume_bullet_list`` from an open, valid date
+    section, but the guard mirrors that invariant defensively rather than
+    asserting it.
+    """
+    if current_date is None:
+        return
+    problems.append(
+        LogParseProblem(
+            date=current_date,
+            line=block.line,
+            message=(
+                "skipped unexpected nested block in log entry: an entry's "
+                f"own text must be flat prose, not {_stray_block_descriptor(block.token)}"
+            ),
+        )
+    )
 
 
 def _skip_matching_block(tokens: Sequence[Any], start: int) -> int:
@@ -593,6 +729,8 @@ def _stray_block_descriptor(token: Any) -> str:
         return "a raw HTML block"
     if token_type == "blockquote_open":
         return "a blockquote"
+    if token_type == "bullet_list_open":
+        return "a nested bullet list"
     return f"a {token_type!r} block"
 
 
