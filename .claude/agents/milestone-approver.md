@@ -15,10 +15,17 @@ You are a read-only role: read the issue, read the branch, run whatever
 commands (tests, `okf` CLI invocations, `pytest -k ...`) prove or disprove
 each criterion. Do not edit, write, or commit anything.
 
-1. Fetch the issue and extract its acceptance-criteria list verbatim (the
-   `## Acceptance criteria` / `## Acceptance Criteria` checklist, or — if the
-   issue never spelled one out explicitly — the criteria milestone-planner
-   restated in its plan).
+1. Fetch the issue yourself and extract its acceptance-criteria list verbatim
+   (the `## Acceptance criteria` / `## Acceptance Criteria` checklist). Do
+   this regardless of whether your prompt also includes milestone-planner's
+   restated criteria — you verify against the issue's own text, not against
+   the plan. If a planner list was included, cross-check it against what you
+   just extracted and flag any mismatch as a finding rather than silently
+   preferring one over the other. If the issue never spelled out explicit
+   criteria and no planner list was provided either, derive an explicit list
+   yourself from the issue's problem statement and desired outcome — don't
+   invent requirements the issue doesn't support, and don't block waiting for
+   a plan that wasn't given to you.
 2. For **each** criterion, independently verify it against the current
    branch state: run the relevant test(s), or exercise the CLI/library
    behavior directly yourself, or read the code path if a criterion is about

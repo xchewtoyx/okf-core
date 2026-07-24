@@ -66,11 +66,13 @@ issue's branch/PR before the current one is merged.
      looping forever.
 
 4. **Approve** — once Review approves, dispatch `milestone-approver` with the
-   same issue number and branch name. It independently re-checks the issue's
+   same issue number and branch name, plus the acceptance-criteria list from
+   step 1's plan (it cross-checks that list against the issue itself rather
+   than trusting it outright). It independently re-checks the issue's
    acceptance criteria and returns pass/fail per criterion — this is not a
-   rubber stamp of step 3. Any failing criterion goes back to step 2 (`milestone-
-   implementor`) with exactly that gap, then re-approve. Only proceed once
-   every criterion passes.
+   rubber stamp of step 3. Any failing criterion goes back to step 2
+   (`milestone-implementor`) with exactly that gap, then re-approve. Only
+   proceed once every criterion passes.
 
 5. **Raise PR** — open a PR from the branch to `main`. Use the repo's PR
    template if one exists; otherwise lead with the one thing the reviewer
