@@ -280,7 +280,8 @@ def test_parse_stray_paragraph_under_date_heading_reported_and_skipped() -> None
     parsed = parse_log(content)
     assert parsed.sections == (LogDateSection(date="2026-05-15", entries=()),)
     assert len(parsed.problems) == 1
-    assert "stray paragraph" in parsed.problems[0].message
+    assert "skipped stray block" in parsed.problems[0].message
+    assert "bare paragraph" in parsed.problems[0].message
     assert parsed.problems[0].date == "2026-05-15"
 
 
@@ -316,6 +317,70 @@ def test_parse_nested_sub_bullet_does_not_affect_sibling_entries() -> None:
         LogEntry(text="Another top-level entry."),
     )
     assert len(parsed.problems) == 1
+
+
+# ---------------------------------------------------------------------------
+# parse_log: any other stray block under a date heading (fence, hr,
+# html_block, sub-heading, blockquote) -- generalizes the stray-paragraph
+# case above to any block-level construct that isn't a date/title heading
+# or the entry bullet list.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "stray_block", "descriptor"),
+    [
+        ("fence", "```\ncode\n```\n", "fenced or indented code block"),
+        ("hr", "---\n", "thematic break"),
+        ("html_block", "<div>raw</div>\n\n", "raw HTML block"),
+        ("h3_heading", "### sub heading\n", "sub-heading"),
+        ("blockquote", "> quoted stuff\n", "blockquote"),
+    ],
+)
+def test_parse_stray_block_under_date_heading_reported_and_skipped(
+    label: str, stray_block: str, descriptor: str
+) -> None:
+    content = f"## 2026-05-15\n{stray_block}* A real entry.\n"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (LogEntry(text="A real entry."),), label
+    assert len(parsed.problems) == 1, label
+    assert "skipped stray block" in parsed.problems[0].message, label
+    assert descriptor in parsed.problems[0].message, label
+    assert parsed.problems[0].date == "2026-05-15", label
+
+
+@pytest.mark.parametrize(
+    ("label", "stray_block"),
+    [
+        ("fence", "```\ncode\n```\n"),
+        ("hr", "---\n"),
+        ("html_block", "<div>raw</div>\n\n"),
+        ("h3_heading", "### sub heading\n"),
+        ("blockquote", "> quoted stuff\n"),
+    ],
+)
+def test_parse_stray_block_does_not_affect_preceding_valid_entries(
+    label: str, stray_block: str
+) -> None:
+    content = f"## 2026-05-15\n* A preceding entry.\n{stray_block}"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == (LogEntry(text="A preceding entry."),), label
+    assert len(parsed.problems) == 1, label
+
+
+def test_parse_html_block_without_blank_line_absorbs_following_bullet() -> None:
+    # CommonMark's HTML-block rule keeps consuming lines until a blank line,
+    # so an HTML block with no blank line before the next bullet swallows it
+    # into the same html_block token before this parser ever sees a
+    # separate list. The swallowed entry can't be recovered -- what this
+    # fix guarantees is that the loss is now reported as a LogParseProblem
+    # instead of vanishing with zero diagnostics.
+    content = "## 2026-05-15\n<div>raw</div>\n* An entry that gets absorbed.\n"
+    parsed = parse_log(content)
+    assert parsed.sections[0].entries == ()
+    assert len(parsed.problems) == 1
+    assert "skipped stray block" in parsed.problems[0].message
+    assert "raw HTML block" in parsed.problems[0].message
 
 
 # ---------------------------------------------------------------------------

@@ -73,11 +73,17 @@ def parse_log(content: str) -> ParsedLog:
     ``**Word**: `` bold prefix is captured as ``.label`` and stripped from
     ``.text``, otherwise ``.label`` is ``None`` and ``.text`` is the full
     rendered prose. A "loose" item's second and later paragraphs are folded
-    into that same entry's ``.text`` (space-joined) rather than dropped. A
-    non-bullet paragraph directly under a date heading, and a nested
-    sub-list within an entry, are each reported as a ``LogParseProblem`` and
-    skipped, since neither has a representation in the flat ``LogEntry``
-    model.
+    into that same entry's ``.text`` (space-joined) rather than dropped. Any
+    block-level construct other than the expected ``## YYYY-MM-DD``/title
+    headings and the entry bullet list -- a bare paragraph, fenced or
+    indented code block, thematic break, sub-heading, raw HTML block,
+    blockquote, or a nested sub-list within an entry -- placed directly
+    under a date heading is reported as a ``LogParseProblem`` and skipped,
+    since none of them has a representation in the flat ``LogEntry`` model.
+    Note that an HTML block with no blank line before a following bullet can
+    still be absorbed into that block by CommonMark's own HTML-block rule
+    before this parser ever sees it as a separate list; that case is still
+    reported as a problem, but the swallowed entry cannot be recovered.
     """
     tokens = _MARKDOWN.parse(content)
     title: str | None = None
@@ -112,17 +118,9 @@ def parse_log(content: str) -> ParsedLog:
         elif token.type == "bullet_list_open":
             i = _consume_bullet_list(tokens, i, current_date, current_entries, problems)
             continue
-        elif token.type == "paragraph_open" and current_date is not None:
-            problems.append(
-                LogParseProblem(
-                    date=current_date,
-                    line=_token_line(token),
-                    message=(
-                        "skipped stray paragraph under date heading: log "
-                        "entries must be bullet-list items, not bare paragraphs"
-                    ),
-                )
-            )
+        elif current_date is not None and _is_stray_top_level_block(token):
+            i = _skip_stray_block(tokens, i, current_date, problems)
+            continue
         i += 1
 
     if current_date is not None:
@@ -249,10 +247,9 @@ def _skip_nested_sub_list(
     entry (wrong -- it's a distinct nested point, not more prose for the
     same one) or inventing hierarchy the model doesn't have. This reports
     it as a ``LogParseProblem`` and skips to the matching
-    ``bullet_list_close``, returning the index just past it, so the parent
-    entry's own text is unaffected.
+    ``bullet_list_close`` via ``_skip_matching_block``, returning the index
+    just past it, so the parent entry's own text is unaffected.
     """
-    nested_level = tokens[start].level
     if current_date is not None:
         problems.append(
             LogParseProblem(
@@ -264,15 +261,100 @@ def _skip_nested_sub_list(
                 ),
             )
         )
+    return _skip_matching_block(tokens, start)
+
+
+def _skip_matching_block(tokens: Sequence[Any], start: int) -> int:
+    """Skip from a container-opening token to just past its matching close.
+
+    Tracks nesting via each token's ``level`` and markdown-it's ``nesting``
+    convention (``+1`` for an opening token, ``-1`` for its close, ``0`` for
+    a self-contained block) rather than a specific type name, so the same
+    walk works uniformly for any balanced container -- a nested
+    ``bullet_list_open``/``bullet_list_close`` pair, a stray
+    ``blockquote_open``, an errant sub-heading, or any other construct --
+    without a bespoke skip loop per type. Returns the index just past
+    ``start``'s matching close.
+    """
+    level = tokens[start].level
     i = start + 1
     depth = 1
     while i < len(tokens) and depth > 0:
-        if tokens[i].type == "bullet_list_open" and tokens[i].level == nested_level:
-            depth += 1
-        elif tokens[i].type == "bullet_list_close" and tokens[i].level == nested_level:
-            depth -= 1
+        if tokens[i].level == level:
+            depth += tokens[i].nesting
         i += 1
     return i
+
+
+_TOP_LEVEL_HEADING_TAGS = frozenset({"h1", "h2"})
+
+
+def _is_stray_top_level_block(token: Any) -> bool:
+    """Whether ``token`` opens a block that has no place directly under a
+    date heading: anything other than the ``# Title``/``## YYYY-MM-DD``
+    headings (already handled by their own branches) or the entry bullet
+    list. Matches on markdown-it's ``nesting`` convention (``>= 0`` covers
+    both a container's opening token and a self-contained block like
+    ``fence``/``hr``/``html_block``) so new block types need no additional
+    case here -- only a closing token (``nesting == -1``, e.g. a heading's
+    own close falling through one token at a time) is excluded.
+    """
+    if token.type == "heading_open":
+        return token.tag not in _TOP_LEVEL_HEADING_TAGS
+    return bool(token.nesting >= 0)
+
+
+def _skip_stray_block(
+    tokens: Sequence[Any],
+    start: int,
+    current_date: str,
+    problems: list[LogParseProblem],
+) -> int:
+    """Report and skip one stray top-level block placed under a date heading.
+
+    Covers any block-level construct other than the expected date/title
+    headings and the entry bullet list -- a bare paragraph, fenced or
+    indented code block, thematic break, sub-heading, raw HTML block,
+    blockquote, and so on -- as a single ``LogParseProblem`` category, since
+    none of them has a representation in the flat ``LogEntry`` model. A
+    self-contained block (``token.nesting == 0``, e.g. ``fence``/``hr``/
+    ``html_block``) is a single token and needs no further skip; a
+    container (``token.nesting == 1``, e.g. ``blockquote_open`` or an
+    errant sub-``heading_open``) is skipped to its matching close via
+    ``_skip_matching_block`` so sibling content after it is unaffected.
+    """
+    token = tokens[start]
+    problems.append(
+        LogParseProblem(
+            date=current_date,
+            line=_token_line(token),
+            message=(
+                "skipped stray block under date heading: log entries must "
+                f"be bullet-list items, not {_stray_block_descriptor(token)}"
+            ),
+        )
+    )
+    if token.nesting == 0:
+        return start + 1
+    return _skip_matching_block(tokens, start)
+
+
+def _stray_block_descriptor(token: Any) -> str:
+    """Human-readable noun phrase for a stray block's ``LogParseProblem``."""
+    token_type = token.type
+    if token_type == "paragraph_open":
+        return "a bare paragraph"
+    if token_type == "heading_open":
+        return f"a {token.tag!r} sub-heading"
+    if token_type in ("fence", "code_block"):
+        return "a fenced or indented code block"
+    if token_type == "hr":
+        return "a thematic break"
+    if token_type == "html_block":
+        return "a raw HTML block"
+    if token_type == "blockquote_open":
+        return "a blockquote"
+    return f"a {token_type!r} block"
 
 
 def _merge_continuation_paragraph(
