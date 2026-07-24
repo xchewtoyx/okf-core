@@ -700,12 +700,17 @@ def _skip_stray_block(
     further token walk is needed here; skipping it is just moving on to
     the next block in the caller's loop.
     """
+    location = (
+        "under date heading"
+        if date_for_problem is not None
+        else "after malformed date heading"
+    )
     problems.append(
         LogParseProblem(
             date=date_for_problem,
             line=block.line,
             message=(
-                "skipped stray block under date heading: log entries must "
+                f"skipped stray block {location}: log entries must "
                 f"be bullet-list items, not {_stray_block_descriptor(block.token)}"
             ),
         )

@@ -297,6 +297,7 @@ def test_parse_stray_paragraph_under_date_heading_reported_and_skipped() -> None
     assert parsed.sections == (LogDateSection(date="2026-05-15", entries=()),)
     assert len(parsed.problems) == 1
     assert "skipped stray block" in parsed.problems[0].message
+    assert "under date heading" in parsed.problems[0].message
     assert "bare paragraph" in parsed.problems[0].message
     assert parsed.problems[0].date == "2026-05-15"
 
@@ -616,6 +617,7 @@ def test_parse_stray_h1_after_malformed_date_heading_with_title_already_set() ->
     stray_problems = [p for p in parsed.problems if "skipped stray block" in p.message]
     assert len(stray_problems) == 1
     assert stray_problems[0].date is None
+    assert "after malformed date heading" in stray_problems[0].message
 
 
 def test_parse_stray_h1_after_malformed_date_heading_with_no_title_yet() -> None:
