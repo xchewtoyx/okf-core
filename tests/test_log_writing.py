@@ -306,11 +306,16 @@ def test_plan_uses_real_today_by_default(tmp_path: Path) -> None:
     _write(tmp_path / "topics" / "new.md", "# New\n")
     bundle = _bundle(tmp_path)
 
+    # Bound the real UTC date on both sides of the call rather than snapshotting
+    # it once afterward: if the call happens to straddle a UTC midnight
+    # rollover, "before" and "after" can legitimately differ by one day, and
+    # either one is a valid date for the plan to have used.
+    before = datetime.datetime.now(tz=datetime.timezone.utc).date()
     plan = plan_log_concept_move(bundle, "topics/old", "topics/new.md")
+    after = datetime.datetime.now(tz=datetime.timezone.utc).date()
 
     parsed: ParsedLog = parse_log(plan.proposed_content)
-    expected_today = datetime.datetime.now(tz=datetime.timezone.utc).date()
-    assert parsed.sections[0].date == expected_today.isoformat()
+    assert parsed.sections[0].date in {before.isoformat(), after.isoformat()}
 
 
 # ---------------------------------------------------------------------------

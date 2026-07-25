@@ -342,7 +342,11 @@ matching every other planning primitive below; pass `allow_missing=True` to
 also accept a target that does not exist yet, in which case its original
 content is treated as empty (`original_exists=False` records this on the
 returned plan) — used by `plan_log_concept_move` below to plan against a
-bundle that has no `log.md` yet.
+bundle that has no `log.md` yet. With `allow_missing=True`, the target's
+parent directory must still exist (and be a directory, not a file);
+otherwise planning raises `DocumentChangePlanningError` rather than
+returning a plan that can never be applied, since `apply_document_change`
+creates the file via a temp file in that same parent directory.
 
 `plan_document_change_from_reader(bundle, path, build_proposed_content, *, allow_missing=False)`
 is `plan_document_change`'s counterpart for callers whose proposed content

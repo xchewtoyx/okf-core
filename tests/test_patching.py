@@ -426,6 +426,29 @@ def test_plan_allow_missing_treats_absent_target_as_empty(tmp_path: Path) -> Non
     assert not path.exists()
 
 
+@pytest.mark.parametrize(
+    "prepare_parent",
+    [
+        lambda parent: None,
+        lambda parent: parent.write_text("not a directory\n", encoding="utf-8"),
+    ],
+    ids=["parent-missing", "parent-is-a-file"],
+)
+def test_plan_allow_missing_rejects_missing_parent_directory(
+    tmp_path: Path, prepare_parent: object
+) -> None:
+    parent = tmp_path / "topics"
+    prepare_parent(parent)  # type: ignore[operator]
+    path = parent / "missing.md"
+
+    with pytest.raises(
+        DocumentChangePlanningError, match="parent directory does not exist"
+    ):
+        plan_document_change(_bundle(tmp_path), path, "Proposed\n", allow_missing=True)
+
+    assert not path.exists()
+
+
 def test_plan_allow_missing_still_requires_existing_target_to_be_a_file(
     tmp_path: Path,
 ) -> None:

@@ -178,7 +178,10 @@ def plan_document_change(
     module; pass ``allow_missing=True`` to also accept a target that does not
     exist yet, treating its original content as empty (``DocumentChangePlan
     .original_exists`` records which case applied, and ``apply_document_change``
-    creates the file fresh rather than replacing it).
+    creates the file fresh rather than replacing it). With ``allow_missing
+    =True``, the target's parent directory must still exist as a directory --
+    a missing parent raises ``DocumentChangePlanningError`` at plan time,
+    since a plan against a parentless target could never be applied.
     """
 
     def use_proposed_content(resolved_path: Path, _: str) -> str:
@@ -1388,7 +1391,8 @@ def _resolve_existing_target(
     pre-#136 caller. With ``allow_missing=True`` a missing target is
     accepted instead (returned as ``exists=False``) so a caller like
     ``plan_log_concept_move`` can plan against a ``log.md`` that has never
-    been written yet.
+    been written yet -- but only if the target's parent directory exists;
+    see ``_require_missing_target_parent_exists``.
     """
     bundle_root = bundle.bundle_root.resolve(strict=False)
     candidate = path if path.is_absolute() else bundle_root / path
@@ -1401,6 +1405,7 @@ def _resolve_existing_target(
     _require_plan_target(bundle_root, resolved_path, planning=True)
     if not resolved_path.exists():
         if allow_missing:
+            _require_missing_target_parent_exists(resolved_path)
             return resolved_path, bundle_root, False
         raise DocumentChangePlanningError(
             resolved_path, "Document change target does not exist"
@@ -1410,6 +1415,29 @@ def _resolve_existing_target(
             resolved_path, "Document change target must be a regular file"
         )
     return resolved_path, bundle_root, True
+
+
+def _require_missing_target_parent_exists(resolved_path: Path) -> None:
+    """Raise if a missing target's parent directory doesn't exist as a directory.
+
+    A plan built with ``allow_missing=True`` records ``original_exists=False``
+    and lets ``apply_document_change`` create the file fresh via
+    ``_write_temporary_file``'s ``tempfile.mkstemp(dir=path.parent)`` call.
+    ``mkstemp`` requires that directory to already exist; a plan built
+    against a target whose parent is missing (or is a file rather than a
+    directory) can therefore never be applied. Catching this at plan time
+    gives callers a structured ``DocumentChangePlanningError`` instead of a
+    confusing ``OSError`` surfacing only once they try to apply the plan.
+    ``resolved_path`` has already been through ``.resolve(strict=False)``,
+    so ``.parent`` reflects any symlinked ancestors as their real target --
+    no separate symlink check is needed here.
+    """
+    parent = resolved_path.parent
+    if not parent.is_dir():
+        raise DocumentChangePlanningError(
+            resolved_path,
+            f"Document change target's parent directory does not exist: {parent}",
+        )
 
 
 def _require_plan_target(
