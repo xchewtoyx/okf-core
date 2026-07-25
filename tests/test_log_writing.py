@@ -318,10 +318,13 @@ def test_plan_uses_real_today_by_default(tmp_path: Path) -> None:
     _write(tmp_path / "topics" / "new.md", "# New\n")
     bundle = _bundle(tmp_path)
 
-    # Freeze an instant in the last minute of a UTC day: if the default
-    # code path ever stopped using UTC (e.g. fell back to local time, or a
-    # naive `datetime.now()`), this instant would resolve to a different
-    # calendar date and the exact-equality assertion below would catch it.
+    # Freeze an instant in the last minute of a UTC day rather than some
+    # arbitrary midday moment: the frozen instant's UTC date must appear
+    # verbatim in the produced log section. An instant this close to the
+    # day boundary means any off-by-one error in how the default `today`
+    # is derived from the frozen clock -- e.g. resolving to the wrong side
+    # of midnight -- shows up as a failing exact-equality assertion below,
+    # rather than passing by coincidence the way a midday instant could.
     frozen_instant = datetime.datetime(
         2026, 7, 25, 23, 59, 30, tzinfo=datetime.timezone.utc
     )
