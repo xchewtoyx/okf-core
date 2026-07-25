@@ -8,6 +8,7 @@ __pycache__/
 .nox/
 .coverage
 .coverage.*
+coverage.xml
 htmlcov/
 
 # Packaging and build artifacts

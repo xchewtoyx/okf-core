@@ -163,7 +163,7 @@ def test_get_all_releases_paginates() -> None:
     page2 = [{"tag_name": "v1.0.0", "assets": []}]
     calls: list[str] = []
 
-    def fake_api(path: str, token: str) -> Any:
+    def fake_api(path: str, _token: str) -> Any:
         calls.append(path)
         return page1 if path.endswith("page=1") else page2
 
@@ -196,7 +196,7 @@ def test_load_stored_hashes_returns_dict() -> None:
 
 
 def test_load_stored_hashes_returns_empty_on_404() -> None:
-    def raise_404(path: str, token: str) -> Any:
+    def raise_404(_path: str, _token: str) -> Any:
         raise HTTPError(url="", code=404, msg="Not Found", hdrs=None, fp=None)  # type: ignore[arg-type]
 
     with patch.object(gen_index, "_api", raise_404):
@@ -213,7 +213,7 @@ def test_load_stored_hashes_raises_on_non_dict() -> None:
 
 
 def test_load_stored_hashes_reraises_non_404_http_error() -> None:
-    def raise_500(path: str, token: str) -> Any:
+    def raise_500(_path: str, _token: str) -> Any:
         raise HTTPError(url="", code=500, msg="Server Error", hdrs=None, fp=None)  # type: ignore[arg-type]
 
     with patch.object(gen_index, "_api", raise_500), pytest.raises(HTTPError):
@@ -232,7 +232,7 @@ def test_main_writes_index_files(tmp_path: Path) -> None:
     wheel.write_bytes(b"fake wheel content")
     out = tmp_path / "pages"
 
-    def fake_api(path: str, token: str) -> Any:
+    def fake_api(path: str, _token: str) -> Any:
         if "contents/hashes.json" in path:
             raise HTTPError(url="", code=404, msg="Not Found", hdrs=None, fp=None)  # type: ignore[arg-type]
         return [
@@ -280,7 +280,7 @@ def test_main_skips_prerelease_and_draft(tmp_path: Path) -> None:
     dist.mkdir()
     out = tmp_path / "pages"
 
-    def fake_api(path: str, token: str) -> Any:
+    def fake_api(path: str, _token: str) -> Any:
         if "contents/hashes.json" in path:
             raise HTTPError(url="", code=404, msg="Not Found", hdrs=None, fp=None)  # type: ignore[arg-type]
         return [

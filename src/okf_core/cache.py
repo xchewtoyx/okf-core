@@ -11,12 +11,11 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 
 from okf_core.config import BundleConfig
-from okf_core.graph import BundleGraph, ConceptLink, GraphProblem, compute_pagerank
+from okf_core.graph import BundleGraph, ConceptLink, compute_pagerank
 from okf_core.hooks import hookimpl
 from okf_core.manifest import (
     BundleManifest,
     ConceptManifestEntry,
-    ManifestProblem,
     _freeze_value,
 )
 
@@ -232,16 +231,12 @@ class SqliteCachePlugin:
         )
 
     @hookimpl
-    def okf_start_scan(
-        self,
-        bundle: BundleConfig,
-    ) -> None:
+    def okf_start_scan(self) -> None:
         self._begin_batch()
 
     @hookimpl
     def okf_end_scan(
         self,
-        bundle: BundleConfig,
         manifest: BundleManifest,
     ) -> None:
         if self._conn is None:
@@ -278,25 +273,18 @@ class SqliteCachePlugin:
             self._end_batch()
 
     @hookimpl
-    def okf_abort_scan(
-        self,
-        bundle: BundleConfig,
-    ) -> None:
+    def okf_abort_scan(self) -> None:
         # Buffered writes were never applied, so aborting only means dropping
         # them and closing the connection; there is no transaction to roll back.
         self._end_batch()
 
     @hookimpl
-    def okf_start_graph(
-        self,
-        bundle: BundleConfig,
-    ) -> None:
+    def okf_start_graph(self) -> None:
         self._begin_batch()
 
     @hookimpl
     def okf_end_graph(
         self,
-        bundle: BundleConfig,
         graph: BundleGraph,
     ) -> None:
         if self._conn is None:
@@ -349,10 +337,7 @@ class SqliteCachePlugin:
             self._end_batch()
 
     @hookimpl
-    def okf_abort_graph(
-        self,
-        bundle: BundleConfig,
-    ) -> None:
+    def okf_abort_graph(self) -> None:
         self._end_batch()
 
     @hookimpl
@@ -426,10 +411,8 @@ class SqliteCachePlugin:
     def okf_exit_scan_concept(
         self,
         entry: ConceptManifestEntry | None,
-        problem: ManifestProblem | None,
         path: Path,
         root: Path,
-        bundle: BundleConfig,
     ) -> None:
         if entry is None:
             return
@@ -555,8 +538,6 @@ class SqliteCachePlugin:
         self,
         entry: ConceptManifestEntry,
         links: Sequence[ConceptLink] | None,
-        problem: GraphProblem | None,
-        bundle: BundleConfig,
     ) -> None:
         if links is None:
             return

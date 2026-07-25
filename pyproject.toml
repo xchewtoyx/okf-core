@@ -41,7 +41,10 @@ test = [
   "pytest",
   "pytest-cov",
   "coverage",
+  "diff-cover >= 9, < 10",
   "packaging >= 24",
+  "hypothesis >= 6, < 7",
+  "freezegun >= 1.5, < 2",
 ]
 dev = [
   "black >= 24, < 27",
@@ -59,6 +62,15 @@ packages = ["src/okf_core"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+[tool.coverage.run]
+branch = true
+source = ["src/okf_core"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+]
+
 [tool.black]
 target-version = ["py310"]
 
@@ -66,10 +78,13 @@ target-version = ["py310"]
 target-version = "py310"
 
 [tool.ruff.lint]
-extend-select = ["C90"]
+extend-select = ["C90", "ARG"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 14
+
+[tool.ruff.lint.flake8-unused-arguments]
+ignore-variadic-names = true
 
 [tool.ruff.lint.per-file-ignores]
 # Local fake classes in tests mirror sqlite3 connection objects; adding a

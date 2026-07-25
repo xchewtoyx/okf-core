@@ -1,6 +1,7 @@
 python := if os() == "windows" { ".venv\\Scripts\\python.exe" } else { ".venv/bin/python" }
 _venv_actionlint := if os() == "windows" { ".venv\\Scripts\\actionlint.exe" } else { ".venv/bin/actionlint" }
 actionlint := if path_exists(_venv_actionlint) == "true" { _venv_actionlint } else { "actionlint" }
+diff_cover := if os() == "windows" { ".venv\\Scripts\\diff-cover.exe" } else { ".venv/bin/diff-cover" }
 
 set windows-shell := ["cmd.exe", "/c"]
 
@@ -62,6 +63,10 @@ lint: _require-venv
     {{python}} -m ruff check src tests .github/scripts/ scripts/
     {{python}} -m mypy src tests .github/scripts/ scripts/ --ignore-missing-imports
 
+# Check that every okf_core name referenced in README.md is actually exported
+check-readme-exports: _require-venv
+    {{python}} .github/scripts/check_readme_exports.py
+
 # Lint GitHub Actions workflows with actionlint (skipped in Claude cloud instances)
 lint-actions: _require-venv
     @just --justfile {{justfile()}} _lint-actions-{{os()}}
@@ -83,8 +88,27 @@ _lint-actions-posix:
 _lint-actions-windows:
     @if "%CLAUDE_CODE_REMOTE%" == "true" (where actionlint >nul 2>&1 || (echo actionlint not available in cloud instance; skipping workflow lint && exit /b 0)) else ({{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml)
 
+# Run pytest with branch coverage and gate PR-changed/new lines against origin/main
+# (skipped when there's no comparable base to diff against, e.g. running locally on main itself)
+coverage-diff: _require-venv
+    @just --justfile {{justfile()}} _coverage-diff-{{ if os() == "windows" { "windows" } else { "posix" } }}
+
+[private]
+_coverage-diff-posix:
+    @if ! git rev-parse --verify -q origin/main > /dev/null 2>&1 || [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ]; then \
+        echo "no comparable base (origin/main unavailable or HEAD matches origin/main); skipping coverage-diff"; \
+    else \
+        {{python}} -m pytest --cov=okf_core --cov-branch --cov-report=xml && \
+        {{diff_cover}} coverage.xml --compare-branch=origin/main --fail-under=90; \
+    fi
+
+[private]
+_coverage-diff-windows:
+    @git rev-parse --verify -q origin/main >nul 2>&1 & \
+        if errorlevel 1 (echo no comparable base ^(origin/main unavailable or HEAD matches origin/main^); skipping coverage-diff) else (git diff --quiet origin/main -- >nul 2>&1 && (echo no comparable base ^(origin/main unavailable or HEAD matches origin/main^); skipping coverage-diff) || ({{python}} -m pytest --cov=okf_core --cov-branch --cov-report=xml && {{diff_cover}} coverage.xml --compare-branch=origin/main --fail-under=90))
+
 # Run check + lint + test (local superset of CI; also lints scripts/)
-ci: check lint lint-actions test
+ci: check lint lint-actions check-readme-exports test coverage-diff
 
 # Run search benchmarks
 benchmark-search: _require-venv
