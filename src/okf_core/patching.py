@@ -177,6 +177,36 @@ def plan_document_change(
     )
 
 
+def plan_document_change_from_reader(
+    bundle: BundleConfig,
+    path: Path | str,
+    build_proposed_content: Callable[[Path, str], str],
+    *,
+    allow_missing: bool = False,
+) -> DocumentChangePlan:
+    """Prepare an inspectable change whose content is derived from the document itself.
+
+    Unlike ``plan_document_change`` (which takes an already-computed
+    ``proposed_content`` string), this is for callers whose proposal must be
+    *derived from* the document's current content -- e.g. parsing it,
+    inserting something, and re-rendering. ``build_proposed_content`` is
+    called with the resolved path and the exact ``original_content`` this
+    plan reads once and hashes as its baseline. Deriving the proposal from
+    any other read of the same file (a separate call before or after this
+    one) would let a concurrent edit between the two reads go undetected: the
+    plan's ``original_sha256`` would match whichever read happened last,
+    while the proposed content would silently reflect the other one --
+    passing the hash check at apply time while discarding the edit that
+    happened in between.
+    """
+    return _plan_document_change(
+        bundle,
+        Path(path),
+        build_proposed_content,
+        allow_missing=allow_missing,
+    )
+
+
 def plan_markdown_section_patch(
     bundle: BundleConfig,
     path: Path | str,

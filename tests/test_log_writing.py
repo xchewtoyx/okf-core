@@ -177,6 +177,53 @@ def test_old_equals_new_after_resolution_is_a_noop(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Single-read planning (no stale-read race between parse and hash baseline)
+# ---------------------------------------------------------------------------
+
+
+def test_plan_reads_log_content_exactly_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dedup/insert/render decision must come from the same read that
+    gets hashed as the plan's baseline. An earlier implementation read
+    log.md once (via load_log's Path.read_text) to build the proposed
+    content and let plan_document_change read it again, separately (via
+    Path.read_bytes), to compute the hash baseline -- so a concurrent edit
+    between those two reads could be silently discarded: the plan's hash
+    would match the second read while the proposed content reflected the
+    first. Counting every disk read of log.md across both read mechanisms is
+    a direct regression test for that race, not just for its symptoms --
+    counting only one mechanism would miss a reintroduced second read that
+    happens to use the other one.
+    """
+    _write(tmp_path / "topics" / "new.md", "# New\n")
+    _write(tmp_path / "log.md", "## 2020-01-01\n* **Update**: Existing.\n")
+    bundle = _bundle(tmp_path)
+    log_path = (tmp_path / "log.md").resolve()
+
+    real_read_bytes = Path.read_bytes
+    real_read_text = Path.read_text
+    calls: list[Path] = []
+
+    def counting_read_bytes(self: Path, *args: object, **kwargs: object) -> bytes:
+        if self.resolve() == log_path:
+            calls.append(self)
+        return real_read_bytes(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    def counting_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self.resolve() == log_path:
+            calls.append(self)
+        return real_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_bytes", counting_read_bytes)
+    monkeypatch.setattr(Path, "read_text", counting_read_text)
+
+    plan_log_concept_move(bundle, "topics/old", "topics/new.md", today=_TODAY)
+
+    assert len(calls) == 1
+
+
+# ---------------------------------------------------------------------------
 # Apply-time conflict
 # ---------------------------------------------------------------------------
 

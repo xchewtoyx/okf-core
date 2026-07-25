@@ -344,6 +344,18 @@ content is treated as empty (`original_exists=False` records this on the
 returned plan) — used by `plan_log_concept_move` below to plan against a
 bundle that has no `log.md` yet.
 
+`plan_document_change_from_reader(bundle, path, build_proposed_content, *, allow_missing=False)`
+is `plan_document_change`'s counterpart for callers whose proposed content
+must be *derived from* the document's current content — parsing it,
+inserting something, and re-rendering — rather than already computed.
+`build_proposed_content(resolved_path, original_content)` receives the exact
+content this call reads once and hashes as the plan's baseline; deriving the
+proposal from any other read of the same file (an earlier, separate read
+before delegating here) would let a concurrent edit between the two reads go
+undetected, since the plan's hash would match whichever read happened last
+while the proposed content silently reflected the other one. `plan_log_concept_move`
+below uses this rather than `plan_document_change` for exactly this reason.
+
 `apply_document_change(bundle, plan)` rechecks the bundle's OKF version write
 safety and verifies that the target still has the planned original hash. A
 stale, deleted, or replaced target raises `DocumentChangeConflictError` with
@@ -536,7 +548,7 @@ for section in parsed.sections:
 render_log(parsed)  # renders parsed back to spec-shape log.md Markdown
 ```
 
-`plan_log_concept_move(bundle, old, new, *, today=None)` and `log_concept_move(bundle, old, new, *, today=None)` record a concept move as a new entry in the bundle-root `log.md`, mirroring `plan_move_concept`/`move_concept`'s planning/applying pairing. `old` is the moved concept's former concept ID; `new` is its new location as a bundle-root-relative `.md` path, which must currently exist on disk — this primitive only records that a move happened (e.g. after `move_concept`), it does not move anything itself. Both are validated via `paths.py`'s existing concept ID/path resolution (bundle-root containment, `.md` shape, reserved-filename rejection, concept path strategy); a validation failure raises `ConceptPathError`, except a missing `new` target or an existing `log.md` that fails to decode as UTF-8, either of which raises `DocumentChangePlanningError`. The recorded entry has `label="Moved"` and `text` of the form `` [old-concept-id](new-relative-path "moved to") `` — the anchor text is the stable former concept ID, the href is the literal new on-disk path, capturing both forms in one entry. If `old` and `new` resolve to the same path, or an identical move is already recorded anywhere in the log (not just under today's date), planning returns an unchanged plan and nothing is written — re-logging the same move is idempotent. Otherwise the entry is inserted at the top of today's date section (created if absent, keeping the log newest-first even if the existing top section isn't today's). `today` overrides the real current date (UTC) for deterministic tests. Planning delegates to `plan_document_change(..., allow_missing=True)` (see below), so a bundle with no `log.md` yet is planned from an empty document instead of raising, and `log_concept_move` retains the same SHA-256 optimistic-concurrency protection as every other write primitive here — including against a `log.md` created concurrently after planning.
+`plan_log_concept_move(bundle, old, new, *, today=None)` and `log_concept_move(bundle, old, new, *, today=None)` record a concept move as a new entry in the bundle-root `log.md`, mirroring `plan_move_concept`/`move_concept`'s planning/applying pairing. `old` is the moved concept's former concept ID; `new` is its new location as a bundle-root-relative `.md` path, which must currently exist on disk — this primitive only records that a move happened (e.g. after `move_concept`), it does not move anything itself. Both are validated via `paths.py`'s existing concept ID/path resolution (bundle-root containment, `.md` shape, reserved-filename rejection, concept path strategy); a validation failure raises `ConceptPathError`, except a missing `new` target or an existing `log.md` that fails to decode as UTF-8, either of which raises `DocumentChangePlanningError`. The recorded entry has `label="Moved"` and `text` of the form `` [old-concept-id](new-relative-path "moved to") `` — the anchor text is the stable former concept ID, the href is the literal new on-disk path, capturing both forms in one entry. If `old` and `new` resolve to the same path, or an identical move is already recorded anywhere in the log (not just under today's date), planning returns an unchanged plan and nothing is written — re-logging the same move is idempotent. Otherwise the entry is inserted at the top of today's date section (created if absent, keeping the log newest-first even if the existing top section isn't today's). `today` overrides the real current date (UTC) for deterministic tests. Planning delegates to `plan_document_change_from_reader(..., allow_missing=True)` (see above) — not `plan_document_change` — so the parse/dedup/insert/render logic above runs against the exact content that call reads once and hashes as the plan's baseline, rather than a separate, earlier read; a bundle with no `log.md` yet is planned from an empty document instead of raising, and `log_concept_move` retains the same SHA-256 optimistic-concurrency protection as every other write primitive here — including against a `log.md` created or edited concurrently after planning began.
 
 ### Context Packs
 

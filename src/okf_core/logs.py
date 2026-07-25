@@ -19,7 +19,7 @@ from okf_core.patching import (
     DocumentChangePlanningError,
     DocumentChangeResult,
     apply_document_change,
-    plan_document_change,
+    plan_document_change_from_reader,
 )
 from okf_core.paths import concept_id_to_path, path_to_concept_id
 
@@ -976,28 +976,6 @@ def _insert_entry_for_today(
     return ParsedLog(title=parsed.title, sections=tuple(sections), problems=())
 
 
-def _read_log_source(path: Path) -> str:
-    """Read log.md's raw text the same way ``plan_document_change`` will.
-
-    Mirrors ``patching._read_for_planning``'s raw-bytes-plus-strict-UTF-8
-    decode -- deliberately not ``Path.read_text()``, whose universal-newline
-    translation could make this string differ from what
-    ``plan_document_change`` independently reads a moment later, breaking
-    the byte-identical comparison an unchanged plan relies on for
-    ``.changed is False``. Returns ``""`` for a missing path, matching
-    ``load_log()``'s and ``plan_document_change(..., allow_missing=True)``'s
-    shared missing-file-is-empty convention.
-    """
-    if not path.is_file():
-        return ""
-    try:
-        return path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise DocumentChangePlanningError(
-            path, f"Could not decode document as UTF-8: {exc}"
-        ) from exc
-
-
 def _resolve_move_target(
     bundle: BundleConfig, bundle_root: Path, new: Path | str
 ) -> Path:
@@ -1045,10 +1023,13 @@ def plan_log_concept_move(
     new ``"Moved"`` entry is inserted at the top of today's date section
     (created if absent, per ``_insert_entry_for_today``) and the whole log is
     re-rendered. Either way, planning delegates to
-    ``plan_document_change(..., allow_missing=True)`` so a bundle with no
-    ``log.md`` yet is planned as if starting from an empty document rather
-    than raising. ``today`` overrides the real current date; pass a fixed
-    value for deterministic tests.
+    ``plan_document_change_from_reader(..., allow_missing=True)`` so a bundle
+    with no ``log.md`` yet is planned as if starting from an empty document
+    rather than raising, and so the parse/dedup/insert/render above all
+    operate on the exact content that gets hashed as the plan's baseline --
+    not a separate, earlier read that a concurrent edit could slip in behind.
+    ``today`` overrides the real current date; pass a fixed value for
+    deterministic tests.
     """
     bundle_root = bundle.bundle_root.resolve(strict=False)
     old_path = concept_id_to_path(old, bundle)
@@ -1056,21 +1037,22 @@ def plan_log_concept_move(
     log_path = bundle_root / "log.md"
 
     if old_path == new_path:
-        return plan_document_change(
-            bundle, log_path, _read_log_source(log_path), allow_missing=True
+        return plan_document_change_from_reader(
+            bundle, log_path, lambda _, original: original, allow_missing=True
         )
 
     new_relative_path = new_path.relative_to(bundle_root).as_posix()
-    parsed = load_log(log_path)
-    if _move_already_logged(parsed, old, new_relative_path):
-        return plan_document_change(
-            bundle, log_path, _read_log_source(log_path), allow_missing=True
-        )
 
-    entry = _build_move_entry(old, new_relative_path)
-    updated = _insert_entry_for_today(parsed, entry, today)
-    return plan_document_change(
-        bundle, log_path, render_log(updated), allow_missing=True
+    def build_proposed_content(_: Path, original_content: str) -> str:
+        parsed = parse_log(original_content)
+        if _move_already_logged(parsed, old, new_relative_path):
+            return original_content
+        entry = _build_move_entry(old, new_relative_path)
+        updated = _insert_entry_for_today(parsed, entry, today)
+        return render_log(updated)
+
+    return plan_document_change_from_reader(
+        bundle, log_path, build_proposed_content, allow_missing=True
     )
 
 
