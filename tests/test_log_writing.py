@@ -6,6 +6,7 @@ import datetime
 from pathlib import Path
 
 import pytest
+from freezegun import freeze_time
 from hypothesis import assume, given
 from hypothesis import strategies as st
 from markdown_it import MarkdownIt
@@ -317,16 +318,18 @@ def test_plan_uses_real_today_by_default(tmp_path: Path) -> None:
     _write(tmp_path / "topics" / "new.md", "# New\n")
     bundle = _bundle(tmp_path)
 
-    # Bound the real UTC date on both sides of the call rather than snapshotting
-    # it once afterward: if the call happens to straddle a UTC midnight
-    # rollover, "before" and "after" can legitimately differ by one day, and
-    # either one is a valid date for the plan to have used.
-    before = datetime.datetime.now(tz=datetime.timezone.utc).date()
-    plan = plan_log_concept_move(bundle, "topics/old", "topics/new.md")
-    after = datetime.datetime.now(tz=datetime.timezone.utc).date()
+    # Freeze an instant in the last minute of a UTC day: if the default
+    # code path ever stopped using UTC (e.g. fell back to local time, or a
+    # naive `datetime.now()`), this instant would resolve to a different
+    # calendar date and the exact-equality assertion below would catch it.
+    frozen_instant = datetime.datetime(
+        2026, 7, 25, 23, 59, 30, tzinfo=datetime.timezone.utc
+    )
+    with freeze_time(frozen_instant):
+        plan = plan_log_concept_move(bundle, "topics/old", "topics/new.md")
 
     parsed: ParsedLog = parse_log(plan.proposed_content)
-    assert parsed.sections[0].date in {before.isoformat(), after.isoformat()}
+    assert parsed.sections[0].date == frozen_instant.date().isoformat()
 
 
 # ---------------------------------------------------------------------------
