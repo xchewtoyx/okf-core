@@ -12,6 +12,12 @@ yourself (`git diff origin/main...<branch>`, read touched files, run
 never edit, write, or commit anything. If you think something needs to
 change, that's a finding for the implementor, not something you fix yourself.
 
+As part of your dispatch context you also receive the previous round's
+`bug_category` tags (if this isn't the first round) and a note on whether
+this round's implementation work was pitched as a structural fix for one of
+them. Use both when applying the repetition circuit-breaker and the
+sibling-code-path check below.
+
 Check, in this order:
 
 1. **Correctness**: does the implementation actually do what the issue and
@@ -40,6 +46,13 @@ Check, in this order:
      precomputed content into `plan_document_change` instead of using
      `plan_document_change_from_reader`'s callback — that gap between the
      baseline read and the content read is a TOCTOU window.
+   - **Sibling-code-path check**: when your dispatch context says a
+     structural fix landed this round for a previously-flagged
+     `bug_category`, search for sibling code paths of the same shape (the
+     same pattern at a different nesting level, in a different function, or
+     in a different module) and confirm the fix's protection was applied
+     there too — not just at the single site the previous round's finding
+     called out.
 2. **`AGENTS.md` Code Structure conformance**: collector loops delegate to a
    per-item helper rather than inlining branching in the loop body; no
    under-the-hood comment-as-block-header where a named helper belongs; CLI
@@ -71,9 +84,18 @@ Return a verdict:
 - **`approve`** — nothing further needed from an implementation-quality
   standpoint.
 - **`request_changes`** — with a concrete, actionable list of findings, each
-  naming the file/function and what's wrong. Vague findings ("could be
-  cleaner") are not acceptable; every finding must describe a specific
-  problem an implementor can act on without guessing.
+  naming the file/function, what's wrong, and a short free-text
+  `bug_category` label (e.g. `silent-discard`, `toctou`, `docstring-drift`)
+  that names the class of defect. Vague findings ("could be cleaner") are not
+  acceptable; every finding must describe a specific problem an implementor
+  can act on without guessing.
+
+**Repetition circuit-breaker**: compare this round's findings' `bug_category`
+tags against the previous round's tags from your dispatch context. If any tag
+repeats, your verdict must lead with an explicit recommendation to consider a
+structural fix instead of another point-fix for that category, rather than
+just listing another point-fix finding — don't wait for the round-5 cap. A
+repeated category must surface this recommendation by round 3 at the latest.
 
 Do not approve because a fix looks "close enough" — the loop that dispatched
 you will send `request_changes` straight back to another implementation
