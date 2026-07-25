@@ -47,7 +47,7 @@ Check, in this order:
      confirm the claim is literally true (e.g. "does not exist" vs. an
      `is_file()` check). Confirm every public symbol referenced in README as
      `okf_core.X` is actually exported from `okf_core/__init__.py`.
-   - **Diagnostic-message null-state check**: check new diagnostic/log/
+   - **Diagnostic-message null-state check**: check new diagnostic, log, or
      CHANGELOG messages against every state that can trigger them, including
      `None`/absent context (e.g. a message referencing "under X heading"
      must stay true when no heading exists).
