@@ -173,9 +173,33 @@ issue's branch/PR before the current one is merged.
    merges. While waiting:
    - Handle CI failures and review comments as they arrive (via subscription
      events or your own re-checks), using the same implementor/reviewer loop
-     as steps 2 and 4 (re-running step 3's scoped pass first if it applies),
-     and reply to comment threads explaining your reasoning for the fix — or
-     for not making one — rather than pushing silently.
+     as steps 2 and 4 (re-running step 3's scoped pass first if it applies).
+   - **Comment triage (delegated)** — for each incoming review finding
+     (webhook-delivered or surfaced by your own re-check), once any
+     implementor/reviewer round above has run for it — or a decision has been
+     made not to act — dispatch a scoped `general-purpose` Agent call (no new
+     `.claude/agents/*.md` file; this mirrors step 3's and step 4's
+     diagnostic-dispatch pattern of reusing existing infrastructure with a
+     narrowed prompt rather than inventing new agents) to investigate the
+     finding against the current code, tests, and any repro as needed.
+   - **Output contract** — the triage subagent returns ONLY a
+     `fixed`/`not-fixed` verdict plus a single reply paragraph — no
+     investigation transcript, no diff, no repro output. This mirrors
+     `milestone-implementor`'s existing "branch/commit/summary only, never a
+     full diff" discipline: the supervisor stays thin on comment triage
+     exactly as it does on implementation.
+   - **Verdict wiring** — `not-fixed`: dispatch `milestone-implementor` with
+     the finding (the existing path above, unchanged), re-running step 3's
+     scoped pass and step 4 review if applicable, then re-dispatch the
+     triage subagent on the same finding to get a post-fix verdict + reply
+     before posting. `fixed` (the finding is already addressed by prior
+     work, or judged not to need a code change): post the reply
+     immediately, no implementor round.
+   - Post that reply paragraph verbatim to the comment thread — no
+     re-reading the underlying finding, no re-deriving or editing the
+     subagent's wording — explaining the reasoning for the fix, or for not
+     making one, rather than pushing silently. Drop the investigation detail
+     from context immediately after posting.
    - Do not plan, implement, or open a PR for any other milestone issue while
      this one is open.
    - Do not advance until GitHub actually reports this PR merged — never
