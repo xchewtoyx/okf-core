@@ -43,6 +43,7 @@ test = [
   "coverage",
   "packaging >= 24",
   "hypothesis >= 6, < 7",
+  "freezegun >= 1.5, < 2",
 ]
 dev = [
   "black >= 24, < 27",
