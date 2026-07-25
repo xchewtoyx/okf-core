@@ -41,6 +41,7 @@ test = [
   "pytest",
   "pytest-cov",
   "coverage",
+  "diff-cover >= 9, < 10",
   "packaging >= 24",
   "hypothesis >= 6, < 7",
   "freezegun >= 1.5, < 2",
@@ -60,6 +61,15 @@ packages = ["src/okf_core"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]
+
+[tool.coverage.run]
+branch = true
+source = ["src/okf_core"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+]
 
 [tool.black]
 target-version = ["py310"]
