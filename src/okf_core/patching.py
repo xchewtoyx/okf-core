@@ -78,7 +78,7 @@ class FileMoveConflictError(DocumentChangeError):
 
 @dataclass(frozen=True)
 class DocumentChangePlan:
-    """An inspectable proposed replacement for one existing bundle document.
+    """An inspectable proposed replacement for one bundle document.
 
     ``original_exists`` is ``True`` for every plan built the traditional way,
     against a target that was already present when planned. It is ``False``

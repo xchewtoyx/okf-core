@@ -1032,7 +1032,10 @@ def plan_log_concept_move(
     move itself (e.g. via ``move_concept``) is the caller's responsibility.
     Both are validated via ``paths.py``'s existing concept ID/path resolution
     (bundle-root containment, ``.md`` shape, reserved-filename rejection,
-    concept path strategy); a validation failure raises ``ConceptPathError``.
+    concept path strategy); a validation failure raises ``ConceptPathError``,
+    except a missing ``new`` target, which raises ``DocumentChangePlanningError``
+    (mirroring how a missing move destination is reported elsewhere in this
+    module) -- as does an existing ``log.md`` that fails to decode as UTF-8.
 
     If ``old`` and ``new`` resolve to the same path, this is a no-op
     (mirroring ``FileMovePlan.noop``) and the returned plan changes nothing.
