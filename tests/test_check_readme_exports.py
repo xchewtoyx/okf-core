@@ -150,3 +150,61 @@ def test_real_readme_has_no_missing_exports() -> None:
     )
 
     assert missing == set()
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+
+def test_main_reports_missing_exports_and_returns_1(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A README reference to a name absent from okf_core.__all__ must fail
+    the check: main() should print the missing name and return exit code 1.
+
+    This is the regression the check exists to catch (PR #163's
+    `plan_document_change_from_reader` bug) — without this test, main()
+    could be changed to always return 0 and nothing in the suite would
+    notice.
+    """
+    import okf_core
+
+    (tmp_path / "README.md").write_text(
+        "See `okf_core.definitely_not_exported` for details.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_readme_exports, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(okf_core, "__all__", [])
+
+    result = check_readme_exports.main()
+
+    captured = capsys.readouterr()
+    assert result == 1
+    assert "definitely_not_exported" in captured.out
+    assert "not exported" in captured.out
+
+
+def test_main_reports_no_missing_exports_and_returns_0(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """When every README-referenced name is exported, main() should print
+    the OK summary and return exit code 0."""
+    import okf_core
+
+    (tmp_path / "README.md").write_text(
+        "See `okf_core.totally_exported` for details.\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(check_readme_exports, "_REPO_ROOT", tmp_path)
+    monkeypatch.setattr(okf_core, "__all__", ["totally_exported"])
+
+    result = check_readme_exports.main()
+
+    captured = capsys.readouterr()
+    assert result == 0
+    assert "OK: all 1 referenced okf_core name(s) are exported." in captured.out
