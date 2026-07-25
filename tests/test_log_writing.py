@@ -311,3 +311,90 @@ def test_plan_uses_real_today_by_default(tmp_path: Path) -> None:
     parsed: ParsedLog = parse_log(plan.proposed_content)
     expected_today = datetime.datetime.now(tz=datetime.timezone.utc).date()
     assert parsed.sections[0].date == expected_today.isoformat()
+
+
+# ---------------------------------------------------------------------------
+# Unparseable existing log.md: refuse to plan rather than lossily rewrite
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("existing_log", "description"),
+    [
+        (
+            "## 2020-01-01\nA bare paragraph, not a bullet.\n",
+            "stray block under a date heading",
+        ),
+        (
+            "## not-a-date\n* **Update**: Entry under malformed heading.\n",
+            "malformed date heading",
+        ),
+    ],
+)
+def test_plan_rejects_existing_log_with_parse_problems(
+    tmp_path: Path, existing_log: str, description: str
+) -> None:
+    _write(tmp_path / "topics" / "new.md", "# New\n")
+    _write(tmp_path / "log.md", existing_log)
+    bundle = _bundle(tmp_path)
+    assert parse_log(existing_log).problems, f"fixture has no problems: {description}"
+
+    with pytest.raises(DocumentChangePlanningError, match="unparseable"):
+        plan_log_concept_move(bundle, "topics/old", "topics/new.md", today=_TODAY)
+
+
+def test_plan_still_succeeds_against_existing_log_with_zero_problems(
+    tmp_path: Path,
+) -> None:
+    _write(tmp_path / "topics" / "new.md", "# New\n")
+    _write(tmp_path / "log.md", "## 2020-01-01\n* **Update**: Fine.\n")
+    bundle = _bundle(tmp_path)
+
+    plan = plan_log_concept_move(bundle, "topics/old", "topics/new.md", today=_TODAY)
+
+    assert plan.changed is True
+
+
+def test_plan_does_not_raise_for_missing_log(tmp_path: Path) -> None:
+    """parse_log("") never reports problems, so the missing-log path (which
+    plans against an empty original_content) is naturally unaffected by the
+    new problems check above -- confirmed explicitly here rather than left
+    to be an accident of the empty-log fixture other tests happen to use.
+    """
+    _write(tmp_path / "topics" / "new.md", "# New\n")
+    bundle = _bundle(tmp_path)
+    assert not parse_log("").problems
+
+    plan = plan_log_concept_move(bundle, "topics/old", "topics/new.md", today=_TODAY)
+
+    assert plan.original_exists is False
+    assert plan.changed is True
+
+
+# ---------------------------------------------------------------------------
+# Concept IDs that can't be represented as Markdown link text
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("old", ["topics/old]", "topics/[old", "top[ic]s/old"])
+def test_plan_rejects_old_concept_id_with_brackets(tmp_path: Path, old: str) -> None:
+    _write(tmp_path / "topics" / "new.md", "# New\n")
+    bundle = _bundle(tmp_path)
+
+    with pytest.raises(DocumentChangePlanningError, match=r"\[.*\]"):
+        plan_log_concept_move(bundle, old, "topics/new.md", today=_TODAY)
+
+
+def test_plan_bracket_rejection_does_not_apply_to_noop_move(tmp_path: Path) -> None:
+    """A concept ID with brackets that resolves to the same path as `new` is
+    still a no-op: no entry is ever built from `old` and the log is never
+    re-rendered, so there's nothing for the bracket to corrupt -- the
+    rejection in _require_representable_concept_id is only reachable once an
+    entry is actually about to be built.
+    """
+    _write(tmp_path / "topics" / "new].md", "# New\n")
+    bundle = _bundle(tmp_path)
+
+    plan = plan_log_concept_move(bundle, "topics/new]", "topics/new].md", today=_TODAY)
+
+    assert plan.changed is False

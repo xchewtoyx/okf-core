@@ -474,6 +474,39 @@ def test_apply_reports_target_created_concurrently(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8") == "Concurrent\n"
 
 
+def test_apply_allow_missing_reports_parent_replaced_by_symlink(
+    tmp_path: Path,
+) -> None:
+    """Mirrors test_apply_reports_parent_replaced_by_symlink above for the
+    allow_missing=True / original_exists=False path: _require_target_still_missing
+    used to only check plan.path.exists()/.is_symlink(), which misses an
+    ancestor directory swapped for a symlink after planning when nothing
+    exists yet at the escaped location's final filename -- letting
+    apply_document_change create the file outside the bundle root through
+    the symlink instead of rejecting it as a conflict.
+    """
+    if not _can_symlink():
+        pytest.skip("System does not support symlinks or requires elevated privileges")
+    bundle_root = tmp_path / "bundle"
+    original_parent = bundle_root / "topics"
+    original_parent.mkdir(parents=True)
+    path = original_parent / "topic.md"
+    bundle = _bundle(bundle_root)
+    plan = plan_document_change(bundle, path, "Created\n", allow_missing=True)
+
+    moved_parent = bundle_root / "topics-old"
+    original_parent.rename(moved_parent)
+    outside_parent = tmp_path / "outside"
+    outside_parent.mkdir()
+    original_parent.symlink_to(outside_parent, target_is_directory=True)
+
+    with pytest.raises(DocumentChangeConflictError) as caught:
+        apply_document_change(bundle, plan)
+
+    assert caught.value.actual_sha256 is None
+    assert not (outside_parent / "topic.md").exists()
+
+
 def test_apply_rechecks_still_missing_before_replace(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -1490,9 +1490,21 @@ def _require_target_still_missing(plan: DocumentChangePlan) -> None:
     a target whose content changed underneath an existing-target plan, even
     though there is no "current hash" to compare against; ``actual_sha256``
     reports the new content's hash (or ``None`` if it can't be read) so the
-    conflict message still says what showed up.
+    conflict message still says what showed up. The ``resolve(strict=False)
+    != plan.path`` check mirrors ``_read_for_apply``/``_require_current_hash``'s
+    equivalent check for the existing-target path: it catches an *ancestor*
+    directory that was swapped for a symlink after planning (escaping the
+    bundle root) even though ``plan.path`` itself is still not a symlink and
+    nothing exists at the escaped location yet -- ``.exists()``/
+    ``.is_symlink()`` alone would miss that case and let
+    ``apply_document_change`` go on to create the file outside the bundle
+    root through the swapped ancestor.
     """
-    if plan.path.exists() or plan.path.is_symlink():
+    if (
+        plan.path.exists()
+        or plan.path.is_symlink()
+        or plan.path.resolve(strict=False) != plan.path
+    ):
         raise DocumentChangeConflictError(
             plan.path,
             plan.original_sha256,
