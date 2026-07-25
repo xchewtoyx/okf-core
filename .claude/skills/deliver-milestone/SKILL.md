@@ -56,7 +56,29 @@ issue's branch/PR before the current one is merged.
 2. **Implement** — dispatch `milestone-implementor` with that task list. It
    returns a branch name, commit SHA(s), and a short summary — not a diff.
 
-3. **Review** — dispatch `milestone-reviewer` with the issue number and the
+3. **Scoped concurrency pass (auto-triggered)** — before the normal review,
+   check whether this issue's diff touches `src/okf_core/patching.py`'s
+   `plan_*`/`apply_*` function bodies. Detect this with a file-scoped diff
+   limited to that one file, e.g. `git diff origin/main...<branch> --
+   src/okf_core/patching.py` — this is a narrow, targeted check, not the
+   full-diff/full-source read that "Stay thin" bans, so running it yourself
+   is fine. If that file-scoped diff is non-empty:
+   - Dispatch `milestone-reviewer` an extra time with a narrowed prompt
+     asking only: "does every write path in this diff derive its proposed
+     content from the same read used for its concurrency baseline?"
+   - Treat any finding from this pass the same as a normal
+     `request_changes`: dispatch `milestone-implementor` with that finding
+     and the branch name, then re-run both the scoped pass and the normal
+     review (step 4) until the scoped pass comes back clean.
+   - This auto-trigger is narrower than the reviewer's own
+     Concurrency/TOCTOU checklist item (which covers `patching.py` itself
+     plus its callers, and runs as part of every normal full review below,
+     not just when this file-scoped diff is non-empty) — this pass exists to
+     catch it earlier, before the full review round.
+   - If the file-scoped diff is empty, skip this step and go straight to
+     step 4.
+
+4. **Review** — dispatch `milestone-reviewer` with the issue number and the
    branch name — it reviews the branch against that specific issue. It
    returns `approve` or `request_changes` with concrete findings.
    - On `request_changes`: dispatch `milestone-implementor` again with
@@ -65,16 +87,16 @@ issue's branch/PR before the current one is merged.
      escalate to the user with the reviewer's last findings instead of
      looping forever.
 
-4. **Approve** — once Review approves, dispatch `milestone-approver` with the
+5. **Approve** — once Review approves, dispatch `milestone-approver` with the
    same issue number and branch name, plus the acceptance-criteria list from
    step 1's plan (it cross-checks that list against the issue itself rather
    than trusting it outright). It independently re-checks the issue's
    acceptance criteria and returns pass/fail per criterion — this is not a
-   rubber stamp of step 3. Any failing criterion goes back to step 2
+   rubber stamp of step 4. Any failing criterion goes back to step 2
    (`milestone-implementor`) with exactly that gap, then re-approve. Only
    proceed once every criterion passes.
 
-5. **Raise PR** — open a PR from the branch to `main`. Use the repo's PR
+6. **Raise PR** — open a PR from the branch to `main`. Use the repo's PR
    template if one exists; otherwise lead with the one thing the reviewer
    most needs to understand that isn't obvious from the diff — not a
    restatement of what the code shows. Include `Closes #<issue>`. If your
@@ -82,21 +104,22 @@ issue's branch/PR before the current one is merged.
    `subscribe_pr_activity`-style tool that delivers review comments and CI
    results as events), use it. If it doesn't, fall back to periodically
    re-checking the PR's check-run and review state yourself instead — either
-   way, the gate in step 6 is the same.
+   way, the gate in step 7 is the same.
 
-6. **Wait for merge — hard gate.** Per `AGENTS.md`, automated agents never
+7. **Wait for merge — hard gate.** Per `AGENTS.md`, automated agents never
    merge their own PRs, and an issue isn't done until a human approves and
    merges. While waiting:
    - Handle CI failures and review comments as they arrive (via subscription
      events or your own re-checks), using the same implementor/reviewer loop
-     as steps 2–3, and reply to comment threads explaining your reasoning for
-     the fix — or for not making one — rather than pushing silently.
+     as steps 2 and 4 (re-running step 3's scoped pass first if it applies),
+     and reply to comment threads explaining your reasoning for the fix — or
+     for not making one — rather than pushing silently.
    - Do not plan, implement, or open a PR for any other milestone issue while
      this one is open.
    - Do not advance until GitHub actually reports this PR merged — never
      assume or infer merge status from silence.
 
-7. Once merged: if you subscribed to this PR's activity, unsubscribe from it;
+8. Once merged: if you subscribed to this PR's activity, unsubscribe from it;
    drop this issue's working detail entirely, rerun scope discovery, and move
    to the next eligible issue.
 

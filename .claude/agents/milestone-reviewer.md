@@ -28,6 +28,18 @@ Check, in this order:
      dynamic values (IDs, titles, paths) into Markdown syntax, confirm the
      rendered output round-trips through the parser without corruption from
      `[`, `]`, or unbalanced `()` in the input.
+   - **Concurrency/TOCTOU check**: for any diff touching `patching.py`'s
+     `plan_*`/`apply_*` functions (`plan_document_change`,
+     `plan_document_change_from_reader`, `plan_markdown_section_patch`,
+     `plan_markdown_link_rewrite`, `plan_frontmatter_merge`,
+     `apply_document_change`, `plan_file_move`, `apply_file_move`) or a
+     caller of them, verify the proposed content passed to
+     `plan_document_change_from_reader` (or equivalent) is derived from the
+     same read used as the hash baseline. Explicitly reject the anti-pattern
+     where a caller reads/parses the target itself and then passes
+     precomputed content into `plan_document_change` instead of using
+     `plan_document_change_from_reader`'s callback — that gap between the
+     baseline read and the content read is a TOCTOU window.
 2. **`AGENTS.md` Code Structure conformance**: collector loops delegate to a
    per-item helper rather than inlining branching in the loop body; no
    under-the-hood comment-as-block-header where a named helper belongs; CLI
