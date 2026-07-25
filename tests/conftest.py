@@ -3,6 +3,15 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from hypothesis import settings
+
+# CI runners are slower and less consistent than local machines, so a
+# deadline tuned for local speed produces flaky failures under load rather
+# than catching real performance regressions. Disable the deadline entirely
+# for the whole suite instead of tuning a number that would just need
+# raising again the next time CI gets slower.
+settings.register_profile("ci", deadline=None)
+settings.load_profile("ci")
 
 
 @pytest.fixture(autouse=True)

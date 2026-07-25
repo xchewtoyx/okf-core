@@ -196,6 +196,7 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   - Incorrect data/config types (e.g., list vs. string).
   - Malformed file inputs or config structures (e.g. invalid syntax).
   - Explicit error handling checks (asserting that `ConfigError` or expected domain exceptions are raised).
+- **Round-Trip Property Tests for Markdown Interpolation**: Any function that interpolates a dynamic value into Markdown link/reference syntax (e.g. `render_linked_span`, `_build_move_entry`) must have a `hypothesis`-based round-trip property test — parse-generate-reparse and assert the recovered value matches — covering markdown-significant characters (`[`, `]`, `(`, `)`, unbalanced parens, backslashes, double quotes), not just hand-picked examples. Hand-picked examples miss adjacency effects between these characters that only a generated-input fuzz reliably reaches; see `tests/test_index_span.py` and `tests/test_log_writing.py` for the pattern (#173).
 - **Enforce Code Formatting**: Run code formatting with `black` on the codebase prior to executing tests and before pushing/submitting code changes:
   ```sh
   just fmt
