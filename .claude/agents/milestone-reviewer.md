@@ -19,7 +19,7 @@ Check, in this order:
    gap in *how* it's implemented (not whether the criterion is met at all —
    that's milestone-approver's job, but flag it here too if you spot it).
    - **New-optional-code-path validation-diff check**: when a new optional
-     code path is added beside an existing one (e.g. an `allow_missing`/
+     code path is added beside an existing one (e.g. an `allow_missing` or
      nullable-target branch), explicitly diff the validation the established
      branch performs (symlink/escape resolution, parent-directory checks,
      hash/staleness checks) against the new branch and confirm nothing is
