@@ -37,9 +37,7 @@ class _ResolvingPlugin:
         self.calls: list[str] = []
 
     @hookimpl
-    def okf_fetch_moved_concept_path(
-        self, dead_concept_id: str, bundle: BundleConfig
-    ) -> Path | None:
+    def okf_fetch_moved_concept_path(self, dead_concept_id: str) -> Path | None:
         self.calls.append(dead_concept_id)
         return self._mapping.get(dead_concept_id)
 
