@@ -79,13 +79,18 @@ issue's branch/PR before the current one is merged.
      step 4.
 
 4. **Review** — dispatch `milestone-reviewer` with the issue number and the
-   branch name — it reviews the branch against that specific issue. It
-   returns `approve` or `request_changes` with concrete findings.
+   branch name — it reviews the branch against that specific issue. The
+   review loop resolves to exactly one of three named outcomes:
+   - `approve`
+   - `restructure`
+   - continuing the `request_changes` loop, up to the 5-round cap
+
+   Details for each:
    - On `request_changes`: dispatch `milestone-implementor` again with
      exactly those findings and the branch name, then re-review. Repeat until
      `approve`, capped at 5 rounds — if still not approved after 5, stop and
-     escalate to the user with the reviewer's last findings instead of
-     looping forever.
+     escalate to the user via `AskUserQuestion` with the reviewer's last
+     findings instead of looping forever.
    - **Round-history tracking (in-context only)** — maintain, per issue, an
      ordered list `{round: N, bug_categories: [tags from that round's
      request_changes findings]}`. This is not a file or artifact — keeping it
@@ -97,6 +102,52 @@ issue's branch/PR before the current one is merged.
      a note if this round's implementor work was pitched as a structural fix
      for one of those categories. This is what lets milestone-reviewer apply
      its repetition circuit-breaker and sibling-code-path check.
+   - **`restructure` auto-trigger** — immediately after appending a round to
+     the round-history list above, compare its `bug_categories` against the
+     previous round's. If they share a category, that's the trigger for the
+     `restructure` outcome — the same condition milestone-reviewer's own
+     circuit-breaker text already checks, now checked structurally by
+     deliver-milestone itself rather than left to the reviewer's prose alone.
+     This can fire as early as after round 2, and no later than round 3 —
+     always before the 5-round cap is reached.
+   - **Diagnostic dispatch** — when the auto-trigger fires, dispatch a scoped
+     `Agent` call (`general-purpose`; no new `.claude/agents/*.md` file —
+     this mirrors how step 3 reuses `milestone-reviewer` with a narrowed
+     prompt rather than inventing new infrastructure). Give it the
+     accumulated rounds' findings for the repeated category only, and task it
+     solely with naming the shared root cause and proposing a structural fix
+     — not with writing code.
+   - **Model tier** — do not set a `model` override on this dispatch; it
+     inherits the default tier (Sonnet) the rest of the loop's subagents run
+     at. This diagnostic is the same distilled-pattern-recognition shape
+     milestone-reviewer already performs every round, just re-aimed at its
+     own prior findings — not the long-horizon/large-context work a premium
+     tier is positioned for. Don't reach for a premium tier without evidence
+     the default tier is producing shallow output.
+   - **Output contract** — the diagnostic returns only a recommendation (root
+     cause + proposed structural fix), never code. Route it through the
+     existing `AskUserQuestion` escalation mechanism used at the 5-round cap
+     above, now with the proposed fix attached as a concrete option, and
+     present it before spending another implement round.
+   - **Re-entry on approval** — if the user approves the proposed
+     restructure via `AskUserQuestion`, the loop resumes at step 1
+     (`milestone-planner`) with the diagnostic's recommendation folded into
+     the planner dispatch prompt as the revised approach, rather than
+     continuing another implementor/reviewer round on the old plan.
+     Approving a restructure also resets this issue's round-history list
+     (round count and `bug_categories`) before re-entering step 1, so the new
+     approach doesn't inherit stale repetition signal from the abandoned one.
+   - **Decline path** — if the user declines the proposed restructure via
+     `AskUserQuestion`, the loop continues exactly as today: back to
+     `milestone-implementor` with the reviewer's findings, still capped at 5
+     rounds. The diagnostic does not re-fire for the same still-repeating
+     category on this issue (don't re-ask every round) — the 5-round cap
+     remains the fallback escalation.
+   - When a restructure's resulting implementation comes back through this
+     step, it must still carry the "pitched as a structural fix for category
+     X" note (above) into the re-review dispatch, so milestone-reviewer's
+     sibling-code-path check engages — this wiring holds across the
+     restructure path unchanged; no new mechanism needed.
 
 5. **Approve** — once Review approves, dispatch `milestone-approver` with the
    same issue number and branch name, plus the acceptance-criteria list from
