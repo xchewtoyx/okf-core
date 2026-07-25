@@ -6,10 +6,19 @@ import datetime
 from pathlib import Path
 
 import pytest
+from hypothesis import assume, given
+from hypothesis import strategies as st
+from markdown_it import MarkdownIt
+from markdown_it.token import Token
 
 from okf_core import BundleConfig, ConceptPathError
+from okf_core._markdown_inline import inline_token_source
 from okf_core.logs import (
+    _MARKDOWN,
+    _MOVE_ENTRY_TITLE,
     ParsedLog,
+    _build_move_entry,
+    _has_balanced_parens,
     load_log,
     log_concept_move,
     parse_log,
@@ -20,6 +29,8 @@ from okf_core.patching import (
     DocumentChangePlanningError,
     apply_document_change,
 )
+
+_MD = MarkdownIt("commonmark")
 
 _TODAY = datetime.date(2026, 7, 25)
 
@@ -468,3 +479,71 @@ def test_plan_paren_rejection_does_not_apply_to_noop_move(tmp_path: Path) -> Non
     )
 
     assert plan.changed is False
+
+
+# ---------------------------------------------------------------------------
+# Hypothesis round-trip: _build_move_entry's interpolated text must parse
+# back to the same (old_concept_id, href, title) it was built from.
+# ---------------------------------------------------------------------------
+
+# Ordinary text plus markdown-significant punctuation that a concept ID or
+# relative path can legitimately contain: quotes and parens have no special
+# meaning as raw link text/destination content. `[`, `]`, `\`, and `:` are
+# excluded because upstream validation already rejects them before an ID or
+# path ever reaches `_build_move_entry` -- `[`/`]` via
+# `_require_representable_concept_id`, and `\`/`:` via
+# `_concept_id_to_relative_markdown_path` (see that function's docstring on
+# `_require_representable_concept_id`) -- so a fuzzed string containing them
+# would be testing an input class `_build_move_entry` never actually sees.
+_PATH_LIKE_ALPHABET = 'ab01 .-_/"()'
+
+
+def _recovered_link(entry_text: str) -> tuple[Token, str]:
+    """Parse a `_build_move_entry` `.text` value and return (link_open, text).
+
+    Reuses `inline_token_source` -- the same primitive `render_linked_span`
+    itself is built from -- to reconstitute the inner text, so a token like an
+    emphasis delimiter (e.g. a lone `_`) is counted correctly instead of
+    silently dropped by only looking at `text`-typed tokens.
+    """
+    children = _MD.parseInline(entry_text)[0].children
+    assert children is not None and children[0].type == "link_open"
+    assert children[-1].type == "link_close"
+    parts = [
+        content
+        for child in children[1:-1]
+        if (content := inline_token_source(child)) is not None
+    ]
+    return children[0], "".join(parts)
+
+
+@given(
+    old_concept_id=st.text(alphabet=_PATH_LIKE_ALPHABET, max_size=12),
+    new_relative_path=st.text(alphabet=_PATH_LIKE_ALPHABET, min_size=1, max_size=12),
+)
+def test_build_move_entry_round_trips(
+    old_concept_id: str, new_relative_path: str
+) -> None:
+    """`_build_move_entry`'s entry text parses back to the same ID/path/title.
+
+    `new_relative_path` is filtered to balanced parens via the real
+    `_has_balanced_parens` guard (not a reimplementation of it) so this stays
+    in sync with `_require_representable_move_target`, the precondition
+    `_build_move_entry`'s own docstring says callers must already have
+    checked. It's further filtered to a non-empty normalized href: an empty
+    destination has no way to carry the fixed title too (CommonMark's
+    unencoded destination grammar can't express "empty destination, then a
+    title" -- `( "title")` parses as a literal href, not an empty one) --
+    the same gap `render_linked_span`'s own round-trip test works around,
+    here on the write side instead of the read side.
+    """
+    assume(_has_balanced_parens(new_relative_path))
+    href = _MARKDOWN.normalizeLink(new_relative_path)
+    assume(href != "")
+
+    entry = _build_move_entry(old_concept_id, new_relative_path)
+    link, text = _recovered_link(entry.text)
+
+    assert text == old_concept_id
+    assert link.attrGet("href") == href
+    assert link.attrGet("title") == _MOVE_ENTRY_TITLE
