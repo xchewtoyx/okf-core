@@ -86,6 +86,17 @@ issue's branch/PR before the current one is merged.
      `approve`, capped at 5 rounds — if still not approved after 5, stop and
      escalate to the user with the reviewer's last findings instead of
      looping forever.
+   - **Round-history tracking (in-context only)** — maintain, per issue, an
+     ordered list `{round: N, bug_categories: [tags from that round's
+     request_changes findings]}`. This is not a file or artifact — keeping it
+     in-context only is consistent with "Stay thin" above. Start the list
+     fresh when the issue begins and discard it the moment the issue's PR
+     merges (step 8).
+   - On each re-review dispatch (round N+1), pass the previous round's
+     `bug_categories` into the milestone-reviewer dispatch prompt, along with
+     a note if this round's implementor work was pitched as a structural fix
+     for one of those categories. This is what lets milestone-reviewer apply
+     its repetition circuit-breaker and sibling-code-path check.
 
 5. **Approve** — once Review approves, dispatch `milestone-approver` with the
    same issue number and branch name, plus the acceptance-criteria list from
