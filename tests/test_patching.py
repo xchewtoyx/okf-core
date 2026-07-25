@@ -146,6 +146,19 @@ def test_plan_rejects_non_string_proposed_content(tmp_path: Path) -> None:
         plan_document_change(_bundle(tmp_path), path, b"Proposed\n")  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("bad_content", [None, b"Proposed\n"], ids=["none", "bytes"])
+def test_plan_from_reader_rejects_non_string_callback_result(
+    tmp_path: Path, bad_content: object
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Original\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="must be a string"):
+        patching.plan_document_change_from_reader(
+            _bundle(tmp_path), path, lambda _, __: bad_content  # type: ignore[arg-type,return-value]
+        )
+
+
 def test_plan_reports_proposed_content_that_cannot_encode_as_utf8(
     tmp_path: Path,
 ) -> None:
@@ -390,4 +403,164 @@ def test_apply_failure_preserves_original_and_cleans_temp(
         apply_document_change(_bundle(tmp_path), plan)
 
     assert path.read_text(encoding="utf-8") == "Original\n"
+    assert not tuple(tmp_path.glob(".okf-*.tmp"))
+
+
+def test_plan_rejects_missing_target_without_allow_missing(tmp_path: Path) -> None:
+    with pytest.raises(DocumentChangePlanningError, match="does not exist"):
+        plan_document_change(_bundle(tmp_path), "missing.md", "Proposed\n")
+
+
+def test_plan_allow_missing_treats_absent_target_as_empty(tmp_path: Path) -> None:
+    path = tmp_path / "missing.md"
+
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Proposed\n", allow_missing=True
+    )
+
+    assert plan.original_exists is False
+    assert plan.original_content == ""
+    assert plan.proposed_content == "Proposed\n"
+    assert plan.original_sha256 == _digest(b"")
+    assert plan.changed is True
+    assert not path.exists()
+
+
+@pytest.mark.parametrize(
+    "prepare_parent",
+    [
+        lambda parent: None,
+        lambda parent: parent.write_text("not a directory\n", encoding="utf-8"),
+    ],
+    ids=["parent-missing", "parent-is-a-file"],
+)
+def test_plan_allow_missing_rejects_missing_parent_directory(
+    tmp_path: Path, prepare_parent: object
+) -> None:
+    parent = tmp_path / "topics"
+    prepare_parent(parent)  # type: ignore[operator]
+    path = parent / "missing.md"
+
+    with pytest.raises(
+        DocumentChangePlanningError, match="parent directory does not exist"
+    ):
+        plan_document_change(_bundle(tmp_path), path, "Proposed\n", allow_missing=True)
+
+    assert not path.exists()
+
+
+def test_plan_allow_missing_still_requires_existing_target_to_be_a_file(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "directory").mkdir()
+
+    with pytest.raises(DocumentChangePlanningError, match="regular file"):
+        plan_document_change(
+            _bundle(tmp_path), "directory", "Proposed\n", allow_missing=True
+        )
+
+
+def test_plan_allow_missing_still_uses_existing_target_content(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Original\n", encoding="utf-8")
+
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Proposed\n", allow_missing=True
+    )
+
+    assert plan.original_exists is True
+    assert plan.original_content == "Original\n"
+
+
+def test_apply_creates_missing_target_with_default_mode(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Created\n", allow_missing=True
+    )
+
+    result = apply_document_change(_bundle(tmp_path), plan)
+
+    assert result.changed is True
+    assert path.read_text(encoding="utf-8") == "Created\n"
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o644
+
+
+def test_apply_allow_missing_noop_does_not_create_target(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    plan = plan_document_change(_bundle(tmp_path), path, "", allow_missing=True)
+
+    result = apply_document_change(_bundle(tmp_path), plan)
+
+    assert result.changed is False
+    assert not path.exists()
+
+
+def test_apply_reports_target_created_concurrently(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Created\n", allow_missing=True
+    )
+    path.write_text("Concurrent\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangeConflictError) as caught:
+        apply_document_change(_bundle(tmp_path), plan)
+
+    assert caught.value.actual_sha256 == _digest(b"Concurrent\n")
+    assert path.read_text(encoding="utf-8") == "Concurrent\n"
+
+
+def test_apply_allow_missing_reports_parent_replaced_by_symlink(
+    tmp_path: Path,
+) -> None:
+    """Mirrors test_apply_reports_parent_replaced_by_symlink above for the
+    allow_missing=True / original_exists=False path: _require_target_still_missing
+    used to only check plan.path.exists()/.is_symlink(), which misses an
+    ancestor directory swapped for a symlink after planning when nothing
+    exists yet at the escaped location's final filename -- letting
+    apply_document_change create the file outside the bundle root through
+    the symlink instead of rejecting it as a conflict.
+    """
+    if not _can_symlink():
+        pytest.skip("System does not support symlinks or requires elevated privileges")
+    bundle_root = tmp_path / "bundle"
+    original_parent = bundle_root / "topics"
+    original_parent.mkdir(parents=True)
+    path = original_parent / "topic.md"
+    bundle = _bundle(bundle_root)
+    plan = plan_document_change(bundle, path, "Created\n", allow_missing=True)
+
+    moved_parent = bundle_root / "topics-old"
+    original_parent.rename(moved_parent)
+    outside_parent = tmp_path / "outside"
+    outside_parent.mkdir()
+    original_parent.symlink_to(outside_parent, target_is_directory=True)
+
+    with pytest.raises(DocumentChangeConflictError) as caught:
+        apply_document_change(bundle, plan)
+
+    assert caught.value.actual_sha256 is None
+    assert not (outside_parent / "topic.md").exists()
+
+
+def test_apply_rechecks_still_missing_before_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "topic.md"
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Created\n", allow_missing=True
+    )
+    original_write = patching._write_temporary_file
+
+    def concurrent_write(target: Path, content: bytes, mode: int) -> Path:
+        temp_path = original_write(target, content, mode)
+        target.write_text("Concurrent\n", encoding="utf-8")
+        return temp_path
+
+    monkeypatch.setattr(patching, "_write_temporary_file", concurrent_write)
+
+    with pytest.raises(DocumentChangeConflictError):
+        apply_document_change(_bundle(tmp_path), plan)
+
+    assert path.read_text(encoding="utf-8") == "Concurrent\n"
     assert not tuple(tmp_path.glob(".okf-*.tmp"))

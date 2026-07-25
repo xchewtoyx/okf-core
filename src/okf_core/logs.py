@@ -13,6 +13,15 @@ from typing import Any
 from markdown_it import MarkdownIt
 
 from okf_core._markdown_inline import render_linked_span, token_line
+from okf_core.config import BundleConfig
+from okf_core.patching import (
+    DocumentChangePlan,
+    DocumentChangePlanningError,
+    DocumentChangeResult,
+    apply_document_change,
+    plan_document_change_from_reader,
+)
+from okf_core.paths import concept_id_to_path, path_to_concept_id
 
 _MARKDOWN = MarkdownIt("commonmark")
 
@@ -882,3 +891,309 @@ def _render_log_entry(entry: LogEntry) -> str:
 
 
 _token_line = token_line
+
+
+# --- Concept move logging (#136) -------------------------------------------
+#
+# The functions below define the log.md move-entry convention: this is the
+# one code path that writes it, so a future reader (e.g. #130's log.md
+# fallback resolver) only needs to recognize what this module actually
+# produces, not match a free-standing spec that could drift from it.
+
+_MOVE_ENTRY_LABEL = "Moved"
+_MOVE_ENTRY_TITLE = "moved to"
+
+
+_CONCEPT_ID_LINK_TEXT_UNSAFE_CHARS = ("[", "]")
+
+
+def _require_representable_concept_id(old_concept_id: str, log_path: Path) -> None:
+    """Reject an ``old`` concept ID that can't be embedded as Markdown link text.
+
+    ``paths.py``'s concept ID validation (``_concept_id_to_relative_markdown_path``)
+    only rejects empty/dot path parts, backslashes, ``:``, and file
+    extensions -- a concept ID containing ``[`` or ``]`` passes it cleanly,
+    but ``_build_move_entry`` interpolates the ID directly into a Markdown
+    link's anchor text (``[old_concept_id](...)``), where an unescaped
+    bracket breaks the link's own delimiter matching.
+
+    Escaping the bracket instead of rejecting the ID was considered, since
+    ``index.py``'s ``_md_escape`` already does exactly this for its own
+    link text/href. It doesn't transfer here safely: this module's parser
+    reconstructs entry text from parsed tokens on every read
+    (``_entry_from_list_item`` via ``render_linked_span``), and that
+    reconstruction does not re-escape brackets appearing in already-parsed
+    link text. An escaped-on-write entry would therefore parse back with the
+    escape consumed, so its re-rendered ``.text`` would no longer equal the
+    freshly-built entry's escaped ``.text`` -- breaking
+    ``_move_already_logged``'s equality-based dedup for exactly the concept
+    IDs this would apply to. Rejecting the ID up front avoids that, and
+    matches this module's own established response to "can this be
+    represented in the flat LogEntry model" (see the stray-block handling in
+    ``parse_log``): report and refuse, rather than silently corrupt.
+    """
+    if any(char in old_concept_id for char in _CONCEPT_ID_LINK_TEXT_UNSAFE_CHARS):
+        raise DocumentChangePlanningError(
+            log_path,
+            "Concept ID cannot be recorded as a log.md move entry: '[' and "
+            f"']' break Markdown link syntax when used as link text: {old_concept_id!r}",
+        )
+
+
+def _has_balanced_parens(value: str) -> bool:
+    """Return whether every ``(``/``)`` in ``value`` is balanced and properly nested.
+
+    Mirrors the depth-tracking markdown-it's (and CommonMark's) unencoded
+    link-destination grammar actually uses: ``(`` increases nesting depth,
+    ``)`` decreases it, and the destination is only well-formed if depth
+    never goes negative and returns to zero by the end. This is what makes
+    ``topics/foo(bar)baz.md`` safe to use as a link destination (parens
+    balance, so the whole path is consumed as one href) while
+    ``topics/foo)bar.md`` and ``topics/foo(bar.md`` are not (unbalanced, so
+    the parser either truncates the destination early or fails to recognize
+    a link at all -- see ``_require_representable_move_target``).
+    """
+    depth = 0
+    for char in value:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _require_representable_move_target(new_relative_path: str, log_path: Path) -> None:
+    """Reject a ``new`` relative path that can't be embedded as a Markdown link destination.
+
+    ``_resolve_move_target``'s validation (via ``path_to_concept_id``) rejects
+    empty/dot path parts, backslashes, ``:``, and non-``.md`` extensions, but
+    a relative path containing an unbalanced ``(`` or ``)`` passes it
+    cleanly. ``_build_move_entry`` interpolates the path directly into a
+    Markdown link's ``(href "title")`` destination, where markdown-it's link
+    rule tracks paren nesting depth to find the end of the href: an unmatched
+    ``)`` truncates the destination at that character (leaving the rest as
+    stray literal text after the link), and an unmatched ``(`` makes the
+    parser fail to recognize the construct as a link at all, degrading the
+    whole entry to plain unlinked text. Both are silent corruption --
+    ``parse_log`` reports no problem either way, since the result is
+    syntactically valid Markdown, just not the link this module intended to
+    write. Balanced parens (e.g. ``topics/foo(bar)baz.md``) round-trip
+    correctly and are not rejected here -- see ``_has_balanced_parens``.
+
+    A sibling check to ``_require_representable_concept_id`` rather than a
+    generalization of it: that function rejects ``[``/``]`` by mere
+    presence, since any occurrence breaks link *text* delimiter matching,
+    while a link *destination* only breaks on parens that are structurally
+    unbalanced, not on their presence -- the two aren't the same predicate
+    parameterized by character set.
+    """
+    if not _has_balanced_parens(new_relative_path):
+        raise DocumentChangePlanningError(
+            log_path,
+            "Move target path cannot be recorded as a log.md move entry: "
+            "unbalanced '(' or ')' break Markdown link destination syntax: "
+            f"{new_relative_path!r}",
+        )
+
+
+def _build_move_entry(old_concept_id: str, new_relative_path: str) -> LogEntry:
+    """Build the ``LogEntry`` a concept move is recorded as.
+
+    ``label`` is the fixed ``"Moved"`` convention word. ``.text`` is a single
+    titled link: its anchor text is the concept's former concept ID (a
+    stable identity, independent of on-disk layout) and its href is the
+    concept's new bundle-root-relative ``.md`` path (what a fallback
+    resolver needs to actually find the file on disk) -- capturing both the
+    old and the new location, per this issue's own "or both" checklist
+    option. The literal ``"moved to"`` link title lets a future reader
+    distinguish this convention from any other titled link that might appear
+    in log.md prose. The href is run through markdown-it's own link
+    normalization so a freshly built entry's text is already in the same
+    canonical form ``parse_log`` would reconstruct after a round trip through
+    disk -- required for ``_move_already_logged``'s comparison below to
+    still match a previously written entry. Callers must have already
+    checked ``old_concept_id`` via ``_require_representable_concept_id`` (a
+    ``[``/``]`` here would break the link's own delimiter matching) and
+    ``new_relative_path`` via ``_require_representable_move_target`` (an
+    unbalanced ``(``/``)`` here would break the link destination's own
+    delimiter matching).
+    """
+    href = _MARKDOWN.normalizeLink(new_relative_path)
+    text = f'[{old_concept_id}]({href} "{_MOVE_ENTRY_TITLE}")'
+    return LogEntry(text=text, label=_MOVE_ENTRY_LABEL)
+
+
+def _move_already_logged(
+    parsed: ParsedLog, old_concept_id: str, new_relative_path: str
+) -> bool:
+    """Return whether an identical move entry is already recorded anywhere.
+
+    Scans every date section, not just today's -- a move logged yesterday is
+    still a duplicate today, and re-inserting it would both misrepresent
+    when the move happened and grow the log unboundedly on repeated calls.
+    """
+    target = _build_move_entry(old_concept_id, new_relative_path)
+    return any(
+        entry.label == target.label and entry.text == target.text
+        for section in parsed.sections
+        for entry in section.entries
+    )
+
+
+def _insert_entry_for_today(
+    parsed: ParsedLog, entry: LogEntry, today: datetime.date | None
+) -> ParsedLog:
+    """Prepend ``entry`` into today's ``LogDateSection``, creating it if absent.
+
+    Sections are re-sorted newest-first by ISO date string afterward rather
+    than assuming the existing top section already is today's -- a log with
+    only older dates (or one that is out of order for any reason) still ends
+    up with today's section in the right place. When ``today`` is not given,
+    "today" is UTC's current date rather than the local timezone's, so a
+    caller running near local midnight doesn't get a date that depends on
+    machine timezone configuration.
+    """
+    resolved_today = (
+        today
+        if today is not None
+        else datetime.datetime.now(tz=datetime.timezone.utc).date()
+    )
+    today_str = resolved_today.isoformat()
+    sections = list(parsed.sections)
+    for index, section in enumerate(sections):
+        if section.date == today_str:
+            sections[index] = LogDateSection(
+                date=today_str, entries=(entry, *section.entries)
+            )
+            break
+    else:
+        sections.append(LogDateSection(date=today_str, entries=(entry,)))
+
+    sections.sort(key=lambda section: section.date, reverse=True)
+    return ParsedLog(title=parsed.title, sections=tuple(sections), problems=())
+
+
+def _resolve_move_target(
+    bundle: BundleConfig, bundle_root: Path, new: Path | str
+) -> Path:
+    """Resolve and validate ``new`` as an existing bundle-root-relative ``.md`` path.
+
+    ``path_to_concept_id`` is used purely for its validation side effects
+    (bundle-root containment, ``.md`` shape, reserved-filename rejection,
+    concept path strategy) -- the concept ID it computes is discarded, since
+    ``new`` is recorded in the log entry as a literal path, not an ID.
+    """
+    new_path = Path(new)
+    candidate = new_path if new_path.is_absolute() else bundle_root / new_path
+    resolved = candidate.resolve(strict=False)
+    path_to_concept_id(resolved, bundle)
+    if not resolved.is_file():
+        raise DocumentChangePlanningError(resolved, "Move target does not exist")
+    return resolved
+
+
+def plan_log_concept_move(
+    bundle: BundleConfig,
+    old: str,
+    new: Path | str,
+    *,
+    today: datetime.date | None = None,
+) -> DocumentChangePlan:
+    """Plan recording one concept move as a dated entry in bundle-root ``log.md``.
+
+    ``old`` is the moved concept's former concept ID; ``new`` is its new
+    location as a bundle-root-relative ``.md`` path, which must currently
+    exist on disk -- this primitive only records that a move happened, the
+    move itself (e.g. via ``move_concept``) is the caller's responsibility.
+    Both are validated via ``paths.py``'s existing concept ID/path resolution
+    (bundle-root containment, ``.md`` shape, reserved-filename rejection,
+    concept path strategy); a validation failure raises ``ConceptPathError``.
+    ``DocumentChangePlanningError`` is raised instead for several other
+    conditions: a missing ``new`` target (mirroring how a missing move
+    destination is reported elsewhere in this module); an existing ``log.md``
+    that fails to decode as UTF-8; an ``old`` concept ID containing ``[`` or
+    ``]``, which cannot be represented as the move entry's Markdown link text
+    (see ``_require_representable_concept_id``); a ``new`` relative path
+    containing an unbalanced ``(`` or ``)``, which cannot be represented as
+    the move entry's Markdown link destination (see
+    ``_require_representable_move_target``); and an existing ``log.md`` that
+    ``parse_log`` reports any ``LogParseProblem`` against, since
+    ``render_log`` cannot reconstruct content it couldn't parse and
+    re-rendering the log in that state would silently drop it -- ``log.md``
+    must be fixed (by hand, or via whatever produced the unparseable content)
+    before another move can be safely recorded in it.
+
+    If ``old`` and ``new`` resolve to the same path, this is a no-op
+    (mirroring ``FileMovePlan.noop``) and the returned plan changes nothing
+    -- neither the concept ID nor the existing log content is inspected in
+    this case, since no entry is ever built or the log re-rendered.
+    Otherwise, every existing date section (not just today's) is checked for
+    an identical move already recorded; if found, the returned plan is
+    likewise unchanged -- re-logging the same move is idempotent. Otherwise a
+    new ``"Moved"`` entry is inserted at the top of today's date section
+    (created if absent, per ``_insert_entry_for_today``) and the whole log is
+    re-rendered. Either way, planning delegates to
+    ``plan_document_change_from_reader(..., allow_missing=True)`` so a bundle
+    with no ``log.md`` yet is planned as if starting from an empty document
+    rather than raising, and so the parse/dedup/insert/render above all
+    operate on the exact content that gets hashed as the plan's baseline --
+    not a separate, earlier read that a concurrent edit could slip in behind.
+    ``today`` overrides the real current date; pass a fixed value for
+    deterministic tests.
+    """
+    bundle_root = bundle.bundle_root.resolve(strict=False)
+    old_path = concept_id_to_path(old, bundle)
+    new_path = _resolve_move_target(bundle, bundle_root, new)
+    log_path = bundle_root / "log.md"
+
+    if old_path == new_path:
+        return plan_document_change_from_reader(
+            bundle, log_path, lambda _, original: original, allow_missing=True
+        )
+
+    _require_representable_concept_id(old, log_path)
+    new_relative_path = new_path.relative_to(bundle_root).as_posix()
+    _require_representable_move_target(new_relative_path, log_path)
+
+    def build_proposed_content(resolved_path: Path, original_content: str) -> str:
+        parsed = parse_log(original_content)
+        if parsed.problems:
+            raise DocumentChangePlanningError(
+                resolved_path,
+                f"log.md has {len(parsed.problems)} unparseable block(s) "
+                "(see parse_log's LogParseProblem list) that render_log "
+                "cannot reconstruct; rewriting it now would silently drop "
+                "that content. Fix log.md before recording another move "
+                "in it.",
+            )
+        if _move_already_logged(parsed, old, new_relative_path):
+            return original_content
+        entry = _build_move_entry(old, new_relative_path)
+        updated = _insert_entry_for_today(parsed, entry, today)
+        return render_log(updated)
+
+    return plan_document_change_from_reader(
+        bundle, log_path, build_proposed_content, allow_missing=True
+    )
+
+
+def log_concept_move(
+    bundle: BundleConfig,
+    old: str,
+    new: Path | str,
+    *,
+    today: datetime.date | None = None,
+) -> DocumentChangeResult:
+    """Plan and apply one concept move's ``log.md`` entry in a single call.
+
+    Mirrors ``moves.py``'s ``plan_move_concept``/``move_concept`` pairing:
+    ``plan_log_concept_move`` alone is read-only and safe for a dry-run
+    preview, while this convenience wrapper also applies it, retaining the
+    same SHA-256 optimistic-concurrency protection (including against a
+    ``log.md`` created concurrently after planning, when one didn't exist
+    yet).
+    """
+    plan = plan_log_concept_move(bundle, old, new, today=today)
+    return apply_document_change(bundle, plan)

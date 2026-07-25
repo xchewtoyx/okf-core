@@ -331,29 +331,57 @@ graph = build_bundle_graph(config.bundles["default"], manifest)
 
 ### Safe Document Changes
 
-`plan_document_change(bundle, path, proposed_content)` prepares an inspectable
-full-content change for one existing UTF-8 file under a configured bundle root.
-The returned `DocumentChangePlan` contains the original and proposed content,
-their exact byte-level SHA-256 hashes, the resolved path and bundle root, and a
-`changed` property. Planning reads the file but never modifies it. Relative
-paths are interpreted from the bundle root.
+`plan_document_change(bundle, path, proposed_content, *, allow_missing=False)`
+prepares an inspectable full-content change for one UTF-8 file under a
+configured bundle root. The returned `DocumentChangePlan` contains the
+original and proposed content, their exact byte-level SHA-256 hashes, the
+resolved path and bundle root, an `original_exists` flag, and a `changed`
+property. Planning reads the file but never modifies it. Relative paths are
+interpreted from the bundle root. By default the target must already exist,
+matching every other planning primitive below; pass `allow_missing=True` to
+also accept a target that does not exist yet, in which case its original
+content is treated as empty (`original_exists=False` records this on the
+returned plan) — used by `plan_log_concept_move` below to plan against a
+bundle that has no `log.md` yet. With `allow_missing=True`, the target's
+parent directory must still exist (and be a directory, not a file);
+otherwise planning raises `DocumentChangePlanningError` rather than
+returning a plan that can never be applied, since `apply_document_change`
+creates the file via a temp file in that same parent directory.
+
+`plan_document_change_from_reader(bundle, path, build_proposed_content, *, allow_missing=False)`
+is `plan_document_change`'s counterpart for callers whose proposed content
+must be *derived from* the document's current content — parsing it,
+inserting something, and re-rendering — rather than already computed.
+`build_proposed_content(resolved_path, original_content)` receives the exact
+content this call reads once and hashes as the plan's baseline; deriving the
+proposal from any other read of the same file (an earlier, separate read
+before delegating here) would let a concurrent edit between the two reads go
+undetected, since the plan's hash would match whichever read happened last
+while the proposed content silently reflected the other one. `plan_log_concept_move`
+below uses this rather than `plan_document_change` for exactly this reason.
 
 `apply_document_change(bundle, plan)` rechecks the bundle's OKF version write
 safety and verifies that the target still has the planned original hash. A
 stale, deleted, or replaced target raises `DocumentChangeConflictError` with
 machine-readable `path`, `expected_sha256`, and `actual_sha256` attributes.
+For a plan with `original_exists=False`, "still has the planned original
+hash" instead means the target must still be missing — one that was created
+concurrently after planning raises the same `DocumentChangeConflictError`.
 Other planning, safety, and application failures use the corresponding
 `DocumentChangeError` subclasses. A `DocumentChangeSafetyError` identifies the
 bundle metadata file that made the write unsafe through its `path` attribute.
 
 No-op plans are verified but do not rewrite the target. Changed content is
-prepared in the target directory, flushed, assigned the original permission
-bits, and installed with an atomic file replacement. This is a single-file
-optimistic-concurrency primitive, not a filesystem lock, multi-file
-transaction, or power-loss durability guarantee. It supports existing regular
-files only; symbolic links, missing files, directories, paths outside the
-bundle root, and non-UTF-8 input are rejected. Other focused patch operations
-are planned separately.
+prepared in the target directory, flushed, and installed with an atomic file
+replacement: for an existing target this keeps the original's permission
+bits, and for a plan created via `allow_missing=True` where the target still
+does not exist, the file is created fresh with a default `0o644` mode. This is
+a single-file optimistic-concurrency primitive, not a filesystem lock,
+multi-file transaction, or power-loss durability guarantee. It supports
+existing regular files, plus (with `allow_missing=True`) a not-yet-existing
+target; symbolic links, directories, paths outside the bundle root, and
+non-UTF-8 input are rejected. Other focused patch operations are planned
+separately.
 
 `plan_markdown_section_patch(bundle, path, heading, body, *, level=1)` builds
 the same inspectable `DocumentChangePlan` for one named Markdown section.
@@ -523,6 +551,8 @@ for section in parsed.sections:
 
 render_log(parsed)  # renders parsed back to spec-shape log.md Markdown
 ```
+
+`plan_log_concept_move(bundle, old, new, *, today=None)` and `log_concept_move(bundle, old, new, *, today=None)` record a concept move as a new entry in the bundle-root `log.md`, mirroring `plan_move_concept`/`move_concept`'s planning/applying pairing. `old` is the moved concept's former concept ID; `new` is its new location as a bundle-root-relative `.md` path, which must currently exist on disk — this primitive only records that a move happened (e.g. after `move_concept`), it does not move anything itself. Both are validated via `paths.py`'s existing concept ID/path resolution (bundle-root containment, `.md` shape, reserved-filename rejection, concept path strategy); a validation failure raises `ConceptPathError`. `DocumentChangePlanningError` is raised instead for: a missing `new` target; an existing `log.md` that fails to decode as UTF-8; an `old` concept ID containing `[` or `]`, which cannot be represented as the entry's Markdown link text; a `new` relative path containing an unbalanced `(` or `)`, which cannot be represented as the entry's Markdown link destination (balanced parens, e.g. `foo(bar)baz.md`, are fine); or an existing `log.md` that `parse_log` reports any parse problems against, since rewriting it would silently drop content the parser couldn't represent — fix `log.md` before recording another move in it. The recorded entry has `label="Moved"` and `text` of the form `` [old-concept-id](new-relative-path "moved to") `` — the anchor text is the stable former concept ID, the href is the literal new on-disk path, capturing both forms in one entry. If `old` and `new` resolve to the same path, or an identical move is already recorded anywhere in the log (not just under today's date), planning returns an unchanged plan and nothing is written — re-logging the same move is idempotent. Otherwise the entry is inserted at the top of today's date section (created if absent, keeping the log newest-first even if the existing top section isn't today's). `today` overrides the real current date (UTC) for deterministic tests. Planning delegates to `plan_document_change_from_reader(..., allow_missing=True)` (see above) — not `plan_document_change` — so the parse/dedup/insert/render logic above runs against the exact content that call reads once and hashes as the plan's baseline, rather than a separate, earlier read; a bundle with no `log.md` yet is planned from an empty document instead of raising, and `log_concept_move` retains the same SHA-256 optimistic-concurrency protection as every other write primitive here — including against a `log.md` created or edited concurrently after planning began.
 
 ### Context Packs
 
