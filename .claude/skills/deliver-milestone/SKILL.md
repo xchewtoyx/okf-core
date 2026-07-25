@@ -166,7 +166,18 @@ issue's branch/PR before the current one is merged.
    `subscribe_pr_activity`-style tool that delivers review comments and CI
    results as events), use it. If it doesn't, fall back to periodically
    re-checking the PR's check-run and review state yourself instead — either
-   way, the gate in step 7 is the same.
+   way, the gate in step 7 is the same. Subscription and periodic re-checks
+   are mutually exclusive per PR, not layered as belt-and-suspenders: once
+   subscription succeeds for a PR, do not also schedule periodic re-checks
+   for that same PR. When falling back to periodic re-checks, use a backoff
+   schedule instead of a fixed interval: start at 1 hour (frequent enough to
+   catch CI results and review activity promptly without polling
+   needlessly), and after each re-check that finds no state change — defined
+   concretely as the same head SHA, the same CI conclusion, and the same
+   `mergeable_state` as the previous check, the exact fields the originating
+   postmortem cited as unchanged across wasted checks — double the interval,
+   capped at 8 hours. Any re-check that finds a change in one of those three
+   fields resets the interval back to 1 hour.
 
 7. **Wait for merge — hard gate.** Per `AGENTS.md`, automated agents never
    merge their own PRs, and an issue isn't done until a human approves and
