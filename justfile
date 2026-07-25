@@ -104,7 +104,8 @@ _coverage-diff-posix:
 
 [private]
 _coverage-diff-windows:
-    @git diff --quiet origin/main -- >nul 2>&1 && (echo no comparable base; skipping coverage-diff) || ({{python}} -m pytest --cov=okf_core --cov-branch --cov-report=xml && {{diff_cover}} coverage.xml --compare-branch=origin/main --fail-under=90)
+    @git rev-parse --verify -q origin/main >nul 2>&1 & \
+        if errorlevel 1 (echo no comparable base ^(origin/main unavailable or HEAD matches origin/main^); skipping coverage-diff) else (git diff --quiet origin/main -- >nul 2>&1 && (echo no comparable base ^(origin/main unavailable or HEAD matches origin/main^); skipping coverage-diff) || ({{python}} -m pytest --cov=okf_core --cov-branch --cov-report=xml && {{diff_cover}} coverage.xml --compare-branch=origin/main --fail-under=90))
 
 # Run check + lint + test (local superset of CI; also lints scripts/)
 ci: check lint lint-actions check-readme-exports test coverage-diff
