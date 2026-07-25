@@ -144,6 +144,25 @@ class FileMoveResult:
     moved: bool
 
 
+def _require_string_content(resolved_path: Path, content: object) -> str:
+    """Reject a non-``str`` proposed content value before it reaches ``_encode_utf8``.
+
+    ``_encode_utf8`` calls ``.encode("utf-8")`` on whatever it's given; a
+    non-``str`` value (``None`` from a callback that forgot a ``return``,
+    accidentally-returned ``bytes``, etc.) would otherwise surface as a raw
+    ``AttributeError``/``TypeError`` instead of the structured
+    ``DocumentChangePlanningError`` every other planning failure raises.
+    Shared by ``plan_document_change`` and ``plan_document_change_from_reader``
+    so the check and its message stay in one place regardless of which one a
+    caller's non-``str`` content came from.
+    """
+    if not isinstance(content, str):
+        raise DocumentChangePlanningError(
+            resolved_path, "Proposed document content must be a string"
+        )
+    return content
+
+
 def plan_document_change(
     bundle: BundleConfig,
     path: Path | str,
@@ -163,11 +182,7 @@ def plan_document_change(
     """
 
     def use_proposed_content(resolved_path: Path, _: str) -> str:
-        if not isinstance(proposed_content, str):
-            raise DocumentChangePlanningError(
-                resolved_path, "Proposed document content must be a string"
-            )
-        return proposed_content
+        return _require_string_content(resolved_path, proposed_content)
 
     return _plan_document_change(
         bundle,
@@ -198,11 +213,24 @@ def plan_document_change_from_reader(
     while the proposed content would silently reflect the other one --
     passing the hash check at apply time while discarding the edit that
     happened in between.
+
+    ``build_proposed_content``'s return value is type-checked the same way
+    ``plan_document_change`` checks its own ``proposed_content`` argument
+    (see ``_require_string_content``): a callback that returns something
+    other than ``str`` raises ``DocumentChangePlanningError`` here rather
+    than an unstructured ``AttributeError`` once the bad value reaches
+    UTF-8 encoding.
     """
+
+    def use_built_content(resolved_path: Path, original_content: str) -> str:
+        return _require_string_content(
+            resolved_path, build_proposed_content(resolved_path, original_content)
+        )
+
     return _plan_document_change(
         bundle,
         Path(path),
-        build_proposed_content,
+        use_built_content,
         allow_missing=allow_missing,
     )
 

@@ -398,3 +398,68 @@ def test_plan_bracket_rejection_does_not_apply_to_noop_move(tmp_path: Path) -> N
     plan = plan_log_concept_move(bundle, "topics/new]", "topics/new].md", today=_TODAY)
 
     assert plan.changed is False
+
+
+# ---------------------------------------------------------------------------
+# `new` relative paths that can't be represented as a Markdown link
+# destination (unbalanced parens)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "new_filename",
+    ["foo)bar.md", "foo(bar.md", "(foo.md", "foo).md"],
+    ids=["unmatched-close", "unmatched-open", "leading-open", "trailing-close"],
+)
+def test_plan_rejects_new_with_unbalanced_parens(
+    tmp_path: Path, new_filename: str
+) -> None:
+    _write(tmp_path / "topics" / new_filename, "# New\n")
+    bundle = _bundle(tmp_path)
+
+    with pytest.raises(DocumentChangePlanningError, match=r"[()]"):
+        plan_log_concept_move(
+            bundle, "topics/old", f"topics/{new_filename}", today=_TODAY
+        )
+
+
+@pytest.mark.parametrize(
+    "new_filename",
+    ["foo(bar)baz.md", "(foo)bar.md", "foo(bar)(baz).md"],
+    ids=["mid-pair", "leading-pair", "two-pairs"],
+)
+def test_plan_accepts_new_with_balanced_parens(
+    tmp_path: Path, new_filename: str
+) -> None:
+    """Balanced parens in `new` are not rejected: markdown-it's link
+    destination parser tracks paren nesting depth and consumes a balanced
+    run as one href (confirmed directly against markdown-it-py), so
+    `topics/foo(bar)baz.md` round-trips as a correct link and rejecting it
+    would be over-rejecting a path CommonMark actually handles correctly.
+    """
+    _write(tmp_path / "topics" / new_filename, "# New\n")
+    bundle = _bundle(tmp_path)
+
+    plan = plan_log_concept_move(
+        bundle, "topics/old", f"topics/{new_filename}", today=_TODAY
+    )
+
+    assert plan.changed is True
+    parsed = parse_log(plan.proposed_content)
+    entry = parsed.sections[0].entries[0]
+    assert entry.text == _moved_entry_text("topics/old", f"topics/{new_filename}")
+
+
+def test_plan_paren_rejection_does_not_apply_to_noop_move(tmp_path: Path) -> None:
+    """Mirrors test_plan_bracket_rejection_does_not_apply_to_noop_move: a `new`
+    with unbalanced parens that resolves to the same path as `old` is still a
+    no-op, since no entry is ever built and the log is never re-rendered.
+    """
+    _write(tmp_path / "topics" / "old)new.md", "# New\n")
+    bundle = _bundle(tmp_path)
+
+    plan = plan_log_concept_move(
+        bundle, "topics/old)new", "topics/old)new.md", today=_TODAY
+    )
+
+    assert plan.changed is False

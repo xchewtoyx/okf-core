@@ -146,6 +146,19 @@ def test_plan_rejects_non_string_proposed_content(tmp_path: Path) -> None:
         plan_document_change(_bundle(tmp_path), path, b"Proposed\n")  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("bad_content", [None, b"Proposed\n"], ids=["none", "bytes"])
+def test_plan_from_reader_rejects_non_string_callback_result(
+    tmp_path: Path, bad_content: object
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Original\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="must be a string"):
+        patching.plan_document_change_from_reader(
+            _bundle(tmp_path), path, lambda _, __: bad_content  # type: ignore[arg-type,return-value]
+        )
+
+
 def test_plan_reports_proposed_content_that_cannot_encode_as_utf8(
     tmp_path: Path,
 ) -> None:

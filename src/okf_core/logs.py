@@ -940,6 +940,64 @@ def _require_representable_concept_id(old_concept_id: str, log_path: Path) -> No
         )
 
 
+def _has_balanced_parens(value: str) -> bool:
+    """Return whether every ``(``/``)`` in ``value`` is balanced and properly nested.
+
+    Mirrors the depth-tracking markdown-it's (and CommonMark's) unencoded
+    link-destination grammar actually uses: ``(`` increases nesting depth,
+    ``)`` decreases it, and the destination is only well-formed if depth
+    never goes negative and returns to zero by the end. This is what makes
+    ``topics/foo(bar)baz.md`` safe to use as a link destination (parens
+    balance, so the whole path is consumed as one href) while
+    ``topics/foo)bar.md`` and ``topics/foo(bar.md`` are not (unbalanced, so
+    the parser either truncates the destination early or fails to recognize
+    a link at all -- see ``_require_representable_move_target``).
+    """
+    depth = 0
+    for char in value:
+        if char == "(":
+            depth += 1
+        elif char == ")":
+            depth -= 1
+            if depth < 0:
+                return False
+    return depth == 0
+
+
+def _require_representable_move_target(new_relative_path: str, log_path: Path) -> None:
+    """Reject a ``new`` relative path that can't be embedded as a Markdown link destination.
+
+    ``_resolve_move_target``'s validation (via ``path_to_concept_id``) rejects
+    empty/dot path parts, backslashes, ``:``, and non-``.md`` extensions, but
+    a relative path containing an unbalanced ``(`` or ``)`` passes it
+    cleanly. ``_build_move_entry`` interpolates the path directly into a
+    Markdown link's ``(href "title")`` destination, where markdown-it's link
+    rule tracks paren nesting depth to find the end of the href: an unmatched
+    ``)`` truncates the destination at that character (leaving the rest as
+    stray literal text after the link), and an unmatched ``(`` makes the
+    parser fail to recognize the construct as a link at all, degrading the
+    whole entry to plain unlinked text. Both are silent corruption --
+    ``parse_log`` reports no problem either way, since the result is
+    syntactically valid Markdown, just not the link this module intended to
+    write. Balanced parens (e.g. ``topics/foo(bar)baz.md``) round-trip
+    correctly and are not rejected here -- see ``_has_balanced_parens``.
+
+    A sibling check to ``_require_representable_concept_id`` rather than a
+    generalization of it: that function rejects ``[``/``]`` by mere
+    presence, since any occurrence breaks link *text* delimiter matching,
+    while a link *destination* only breaks on parens that are structurally
+    unbalanced, not on their presence -- the two aren't the same predicate
+    parameterized by character set.
+    """
+    if not _has_balanced_parens(new_relative_path):
+        raise DocumentChangePlanningError(
+            log_path,
+            "Move target path cannot be recorded as a log.md move entry: "
+            "unbalanced '(' or ')' break Markdown link destination syntax: "
+            f"{new_relative_path!r}",
+        )
+
+
 def _build_move_entry(old_concept_id: str, new_relative_path: str) -> LogEntry:
     """Build the ``LogEntry`` a concept move is recorded as.
 
@@ -956,8 +1014,11 @@ def _build_move_entry(old_concept_id: str, new_relative_path: str) -> LogEntry:
     canonical form ``parse_log`` would reconstruct after a round trip through
     disk -- required for ``_move_already_logged``'s comparison below to
     still match a previously written entry. Callers must have already
-    checked ``old_concept_id`` via ``_require_representable_concept_id``: a
-    ``[``/``]`` here would break the link's own delimiter matching.
+    checked ``old_concept_id`` via ``_require_representable_concept_id`` (a
+    ``[``/``]`` here would break the link's own delimiter matching) and
+    ``new_relative_path`` via ``_require_representable_move_target`` (an
+    unbalanced ``(``/``)`` here would break the link destination's own
+    delimiter matching).
     """
     href = _MARKDOWN.normalizeLink(new_relative_path)
     text = f'[{old_concept_id}]({href} "{_MOVE_ENTRY_TITLE}")'
@@ -1049,13 +1110,16 @@ def plan_log_concept_move(
     Both are validated via ``paths.py``'s existing concept ID/path resolution
     (bundle-root containment, ``.md`` shape, reserved-filename rejection,
     concept path strategy); a validation failure raises ``ConceptPathError``.
-    ``DocumentChangePlanningError`` is raised instead for three other
+    ``DocumentChangePlanningError`` is raised instead for several other
     conditions: a missing ``new`` target (mirroring how a missing move
     destination is reported elsewhere in this module); an existing ``log.md``
     that fails to decode as UTF-8; an ``old`` concept ID containing ``[`` or
     ``]``, which cannot be represented as the move entry's Markdown link text
-    (see ``_require_representable_concept_id``); and an existing ``log.md``
-    that ``parse_log`` reports any ``LogParseProblem`` against, since
+    (see ``_require_representable_concept_id``); a ``new`` relative path
+    containing an unbalanced ``(`` or ``)``, which cannot be represented as
+    the move entry's Markdown link destination (see
+    ``_require_representable_move_target``); and an existing ``log.md`` that
+    ``parse_log`` reports any ``LogParseProblem`` against, since
     ``render_log`` cannot reconstruct content it couldn't parse and
     re-rendering the log in that state would silently drop it -- ``log.md``
     must be fixed (by hand, or via whatever produced the unparseable content)
@@ -1091,6 +1155,7 @@ def plan_log_concept_move(
 
     _require_representable_concept_id(old, log_path)
     new_relative_path = new_path.relative_to(bundle_root).as_posix()
+    _require_representable_move_target(new_relative_path, log_path)
 
     def build_proposed_content(resolved_path: Path, original_content: str) -> str:
         parsed = parse_log(original_content)
