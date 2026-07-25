@@ -11,6 +11,11 @@ from typing import TYPE_CHECKING, Any
 import yaml
 from markdown_it import MarkdownIt
 
+from okf_core._markdown_inline import (
+    inline_token_source,
+    render_linked_span,
+    token_line,
+)
 from okf_core.documents import (
     ConceptDocument,
     parse_concept_document,
@@ -540,18 +545,18 @@ def _md_escape(s: str) -> str:
     )
 
 
-def _inline_content(child: object) -> str | None:
-    """Return the Markdown source for a single inline child token, or None to skip."""
-    t = getattr(child, "type", "")
-    if t == "text":
-        return getattr(child, "content", "")
-    if t == "code_inline":
-        return f"`{getattr(child, 'content', '')}`"
-    if t in ("softbreak", "hardbreak"):
-        return " "
-    # Delimiter tokens (strong_open/close, em_open/close, s_open/close, etc.)
-    markup = getattr(child, "markup", "")
-    return markup if markup else None
+_inline_content = inline_token_source
+"""Alias kept for call sites within this module; see ``_markdown_inline``."""
+
+_render_suffix_span = render_linked_span
+"""Reconstitute the Markdown source of the tokens following the title link.
+
+Inner link pairs become ``[text](href)``, or ``[text](href "title")`` when
+the link carries a title; every other token passes through
+``_inline_content``. Shared with ``logs.py``'s entry-prose renderer via
+``_markdown_inline.render_linked_span`` -- see that module for the
+implementation.
+"""
 
 
 def _render_span(children: list[Any]) -> str:
@@ -559,36 +564,6 @@ def _render_span(children: list[Any]) -> str:
     return "".join(
         c for c in (_inline_content(child) for child in children) if c is not None
     )
-
-
-def _render_suffix_span(children: list[Any]) -> str:
-    """Reconstitute the Markdown source of the tokens following the title link.
-
-    Inner link pairs become ``[text](href)``; every other token passes through
-    _inline_content. A plain left-to-right loop — the balanced token list carries
-    the structure that the old single pass tracked with `desc_link_*` flags.
-    """
-    parts: list[str] = []
-    i = 0
-    while i < len(children):
-        child = children[i]
-        if child.type == "link_open":
-            href = child.attrGet("href") or ""
-            i += 1
-            inner: list[str] = []
-            while i < len(children) and children[i].type != "link_close":
-                content = _inline_content(children[i])
-                if content is not None:
-                    inner.append(content)
-                i += 1
-            parts.append(f"[{''.join(inner)}]({href})")
-            i += 1  # consume the matching link_close
-        else:
-            content = _inline_content(child)
-            if content is not None:
-                parts.append(content)
-            i += 1
-    return "".join(parts)
 
 
 def _title_link_bounds(children: list[Any]) -> tuple[int, int] | str:
@@ -660,11 +635,7 @@ def _entry_from_inline_token(
     return IndexEntry(title=title, link=href, description=description), None
 
 
-def _token_line(token: object) -> int | None:
-    token_map = getattr(token, "map", None)
-    if not token_map:
-        return None
-    return int(token_map[0]) + 1
+_token_line = token_line
 
 
 def _render_entry(entry: IndexEntry) -> str:
