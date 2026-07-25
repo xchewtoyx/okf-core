@@ -62,6 +62,10 @@ lint: _require-venv
     {{python}} -m ruff check src tests .github/scripts/ scripts/
     {{python}} -m mypy src tests .github/scripts/ scripts/ --ignore-missing-imports
 
+# Check that every okf_core name referenced in README.md is actually exported
+check-readme-exports: _require-venv
+    {{python}} .github/scripts/check_readme_exports.py
+
 # Lint GitHub Actions workflows with actionlint (skipped in Claude cloud instances)
 lint-actions: _require-venv
     @just --justfile {{justfile()}} _lint-actions-{{os()}}
@@ -84,7 +88,7 @@ _lint-actions-windows:
     @if "%CLAUDE_CODE_REMOTE%" == "true" (where actionlint >nul 2>&1 || (echo actionlint not available in cloud instance; skipping workflow lint && exit /b 0)) else ({{actionlint}} .github/workflows/publish.yml .github/workflows/test.yml)
 
 # Run check + lint + test (local superset of CI; also lints scripts/)
-ci: check lint lint-actions test
+ci: check lint lint-actions check-readme-exports test
 
 # Run search benchmarks
 benchmark-search: _require-venv

@@ -29,6 +29,9 @@ jobs:
           python -m ruff check src tests .github/scripts/
           python -m mypy src tests .github/scripts/ --ignore-missing-imports
 
+      - name: Check README okf_core references are exported
+        run: python .github/scripts/check_readme_exports.py
+
       - name: Lint workflows (actionlint)
         run: actionlint .github/workflows/*.yml
 
