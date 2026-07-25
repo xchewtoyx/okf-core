@@ -98,10 +98,10 @@ postmortem inventing its own evidence scope:
    This adapts `SKILL.md`'s "Scope discovery" section
    (`.claude/skills/deliver-milestone/SKILL.md`, "Scope discovery (redo this
    before every issue, not just once)"): just as that section re-queries
-   `is:open is:issue milestone:"<title>"` fresh on every loop iteration
-   rather than trusting a cached worklist, a postmortem run should re-query
-   the milestone's actual current issue state rather than relying on a
-   stale snapshot captured when the run started or on the handoff
+   `is:open is:issue milestone:"<milestone title>"` fresh on every loop
+   iteration rather than trusting a cached worklist, a postmortem run should
+   re-query the milestone's actual current issue state rather than relying
+   on a stale snapshot captured when the run started or on the handoff
    narrative's account of it.
 
 A postmortem run should treat this as a floor, not a ceiling — a specific
@@ -125,20 +125,20 @@ parallel one:
 - **Diagnostic dispatch via scoped `general-purpose` Agent calls, not new
   agent files** (`SKILL.md` step 4's "Diagnostic dispatch" bullet, and step
   7's "Comment triage (delegated)" bullet): both of those existing
-  mechanisms dispatch a scoped `Agent` call with `subagent_type:
-  general-purpose` and a narrowed prompt, explicitly choosing *not* to
-  create a new `.claude/agents/*.md` file for the purpose. A postmortem run
-  follows the identical shape: for each claim to verify (e.g. "did
-  `milestone-reviewer` miss a TOCTOU race that Copilot caught on PR #163?"),
-  dispatch one scoped `general-purpose` Agent, in parallel with the other
-  claims' dispatches, each told: the specific claim to verify, exactly which
-  evidence-set artifacts to check it against (per the section above), and
-  that it must return a bounded structured report — verdict plus concrete
-  citations (issue/PR/comment numbers, file/line references) — never a full
-  transcript or its own investigation narrative. This mirrors step 4's
-  output contract ("returns only a recommendation... never code") and step
-  7's ("returns only a `fixed`/`not-fixed` verdict plus a single reply
-  paragraph — no investigation transcript").
+  mechanisms dispatch a scoped `Agent` call with
+  `subagent_type: general-purpose` and a narrowed prompt, explicitly choosing
+  *not* to create a new `.claude/agents/*.md` file for the purpose. A
+  postmortem run follows the identical shape: for each claim to verify (e.g.
+  "did `milestone-reviewer` miss a TOCTOU race that Copilot caught on PR
+  #163?"), dispatch one scoped `general-purpose` Agent, in parallel with the
+  other claims' dispatches, each told: the specific claim to verify, exactly
+  which evidence-set artifacts to check it against (per the section above),
+  and that it must return a bounded structured report — verdict plus
+  concrete citations (issue/PR/comment numbers, file/line references) —
+  never a full transcript or its own investigation narrative. This mirrors
+  step 4's output contract ("returns only a recommendation... never code")
+  and step 7's ("returns only a `fixed`/`not-fixed` verdict plus a single
+  reply paragraph — no investigation transcript").
 - **Model tier**: no `model` override on these dispatches, for the same
   reason `SKILL.md` step 4 gives for its own diagnostic dispatch — claim
   verification against enumerated evidence is the same distilled
