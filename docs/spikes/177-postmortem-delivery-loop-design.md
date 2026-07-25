@@ -95,6 +95,14 @@ postmortem inventing its own evidence scope:
    reordered relative to the plan. This is what lets a postmortem's filed
    findings reference concrete issue/PR numbers instead of vague narrative
    ("the run struggled with X") the way #165's and #176's Notes sections do.
+   This adapts `SKILL.md`'s "Scope discovery" section (`.claude/skills/
+   deliver-milestone/SKILL.md`, "Scope discovery (redo this before every
+   issue, not just once)"): just as that section re-queries `is:open
+   is:issue milestone:"<title>"` fresh on every loop iteration rather than
+   trusting a cached worklist, a postmortem run should re-query the
+   milestone's actual current issue state rather than relying on a stale
+   snapshot captured when the run started or on the handoff narrative's
+   account of it.
 
 A postmortem run should treat this as a floor, not a ceiling — a specific
 finding may need one more targeted lookup (e.g. a single commit's diff to
@@ -150,7 +158,7 @@ specifying agent infrastructure). This spike resolves it explicitly:
 agent type for exactly this kind of narrowly-scoped verification work — the
 restructure diagnostic (step 4) and comment triage (step 7) — and both times
 chose a scoped `general-purpose` dispatch with a narrowed prompt instead, with
-step 3 and step 4's diagnostic-dispatch bullet each stating the reasoning
+step 4's and step 7's diagnostic-dispatch bullets each stating the reasoning
 inline ("no new `.claude/agents/*.md` file; this mirrors step 3's... pattern
 of reusing existing infrastructure with a narrowed prompt rather than
 inventing new agents"). A postmortem-verification task — check one claim
