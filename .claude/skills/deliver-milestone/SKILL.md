@@ -132,7 +132,7 @@ When scope discovery returns zero open issues for the milestone:
    adding a fresh empty `[Unreleased]` above it and a comparison link at the
    bottom, per `AGENTS.md`'s Changelog rules.
 2. Open this as its own PR ("Release `<milestone title>`"), subscribe to it,
-   and wait for human merge exactly as in steps 5–6 above.
+   and wait for human merge exactly as in steps 6–7 above.
 3. Once merged, report to the user: milestone closed, release PR merged, and
    ask whether to continue the loop on the next milestone.
 
