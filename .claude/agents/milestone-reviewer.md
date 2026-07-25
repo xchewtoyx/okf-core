@@ -18,6 +18,16 @@ Check, in this order:
    plan describe? Any obvious bug, missed edge case, or acceptance-criterion
    gap in *how* it's implemented (not whether the criterion is met at all —
    that's milestone-approver's job, but flag it here too if you spot it).
+   - New-optional-code-path validation-diff check: when a new optional code
+     path is added beside an existing one (e.g. an `allow_missing`/nullable-
+     target branch), explicitly diff the validation the established branch
+     performs (symlink/escape resolution, parent-directory checks,
+     hash/staleness checks) against the new branch and confirm nothing is
+     silently dropped.
+   - Markdown-interpolation round-trip check: for new code interpolating
+     dynamic values (IDs, titles, paths) into Markdown syntax, confirm the
+     rendered output round-trips through the parser without corruption from
+     `[`, `]`, or unbalanced `()` in the input.
 2. **`AGENTS.md` Code Structure conformance**: collector loops delegate to a
    per-item helper rather than inlining branching in the loop body; no
    under-the-hood comment-as-block-header where a named helper belongs; CLI
@@ -31,6 +41,16 @@ Check, in this order:
    `orientation.py`, CLI help, and docstrings actually updated and left
    internally consistent? Is there a `CHANGELOG.md` `[Unreleased]` entry that
    explains why the change matters rather than restating the diff?
+   - Docstring/README claim verification: for every docstring/README claim
+     about a function's exceptions, preconditions, or edge-case behavior,
+     grep the actual `raise` sites and branch conditions and confirm the
+     claim is literally true (e.g. "does not exist" vs. an `is_file()`
+     check). Confirm every public symbol referenced in README as
+     `okf_core.X` is actually exported from `okf_core/__init__.py`.
+   - Diagnostic-message null-state check: check new diagnostic/log/CHANGELOG
+     messages against every state that can trigger them, including
+     `None`/absent context (e.g. a message referencing "under X heading"
+     must stay true when no heading exists).
 5. **CI**: confirm `just ci` (or the manual equivalent) actually passes on
    this branch — don't take the implementor's word for it, rerun it.
 
