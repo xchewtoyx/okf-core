@@ -95,14 +95,14 @@ postmortem inventing its own evidence scope:
    reordered relative to the plan. This is what lets a postmortem's filed
    findings reference concrete issue/PR numbers instead of vague narrative
    ("the run struggled with X") the way #165's and #176's Notes sections do.
-   This adapts `SKILL.md`'s "Scope discovery" section (`.claude/skills/
-   deliver-milestone/SKILL.md`, "Scope discovery (redo this before every
-   issue, not just once)"): just as that section re-queries `is:open
-   is:issue milestone:"<title>"` fresh on every loop iteration rather than
-   trusting a cached worklist, a postmortem run should re-query the
-   milestone's actual current issue state rather than relying on a stale
-   snapshot captured when the run started or on the handoff narrative's
-   account of it.
+   This adapts `SKILL.md`'s "Scope discovery" section
+   (`.claude/skills/deliver-milestone/SKILL.md`, "Scope discovery (redo this
+   before every issue, not just once)"): just as that section re-queries
+   `is:open is:issue milestone:"<title>"` fresh on every loop iteration
+   rather than trusting a cached worklist, a postmortem run should re-query
+   the milestone's actual current issue state rather than relying on a
+   stale snapshot captured when the run started or on the handoff
+   narrative's account of it.
 
 A postmortem run should treat this as a floor, not a ceiling — a specific
 finding may need one more targeted lookup (e.g. a single commit's diff to
