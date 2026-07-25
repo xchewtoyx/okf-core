@@ -78,7 +78,16 @@ class FileMoveConflictError(DocumentChangeError):
 
 @dataclass(frozen=True)
 class DocumentChangePlan:
-    """An inspectable proposed replacement for one existing bundle document."""
+    """An inspectable proposed replacement for one existing bundle document.
+
+    ``original_exists`` is ``True`` for every plan built the traditional way,
+    against a target that was already present when planned. It is ``False``
+    only for a plan built with ``allow_missing=True`` against a target that
+    did not yet exist at planning time -- in which case ``original_content``
+    is ``""`` and ``apply_document_change`` creates the file fresh instead of
+    replacing it, still guarding against a concurrent create the same way
+    every other apply guards against a concurrent edit.
+    """
 
     bundle_root: Path
     path: Path
@@ -86,6 +95,7 @@ class DocumentChangePlan:
     proposed_content: str
     original_sha256: str
     proposed_sha256: str
+    original_exists: bool = True
 
     @property
     def changed(self) -> bool:
@@ -138,11 +148,18 @@ def plan_document_change(
     bundle: BundleConfig,
     path: Path | str,
     proposed_content: str,
+    *,
+    allow_missing: bool = False,
 ) -> DocumentChangePlan:
-    """Prepare an inspectable change for an existing UTF-8 bundle document.
+    """Prepare an inspectable change for a UTF-8 bundle document.
 
     Planning reads and hashes the target but never modifies it. Relative paths
-    are interpreted from the configured bundle root.
+    are interpreted from the configured bundle root. By default the target
+    must already exist, matching every other planning primitive in this
+    module; pass ``allow_missing=True`` to also accept a target that does not
+    exist yet, treating its original content as empty (``DocumentChangePlan
+    .original_exists`` records which case applied, and ``apply_document_change``
+    creates the file fresh rather than replacing it).
     """
 
     def use_proposed_content(resolved_path: Path, _: str) -> str:
@@ -156,6 +173,7 @@ def plan_document_change(
         bundle,
         Path(path),
         use_proposed_content,
+        allow_missing=allow_missing,
     )
 
 
@@ -554,6 +572,9 @@ def plan_frontmatter_merge(
     )
 
 
+_DEFAULT_NEW_FILE_MODE = 0o644
+
+
 def apply_document_change(
     bundle: BundleConfig,
     plan: DocumentChangePlan,
@@ -563,6 +584,13 @@ def apply_document_change(
     Changed content is prepared in the target directory and installed with
     ``os.replace``. This provides atomic replacement on supported local
     filesystems, but it is not a multi-file transaction or a filesystem lock.
+    For a plan built with ``allow_missing=True`` where the target did not
+    exist at planning time (``plan.original_exists is False``), "still
+    matches its planned hash" instead means the target must still be
+    missing -- a target that has since been created concurrently is a
+    conflict, the same as one whose content has since changed. The file is
+    then created fresh with ``_DEFAULT_NEW_FILE_MODE`` rather than
+    ``tempfile.mkstemp``'s restrictive default.
     """
 
     bundle_root = bundle.bundle_root.resolve(strict=False)
@@ -574,7 +602,12 @@ def apply_document_change(
 
     _require_plan_target(bundle_root, plan.path)
     _require_bundle_write_safety(bundle)
-    _, current_mode = _read_for_apply(plan)
+    if plan.original_exists:
+        _, current_mode = _read_for_apply(plan)
+    else:
+        _require_target_still_missing(plan)
+        current_mode = _DEFAULT_NEW_FILE_MODE
+
     if not plan.changed:
         return DocumentChangeResult(
             path=plan.path,
@@ -596,7 +629,10 @@ def apply_document_change(
     temp_path: Path | None = None
     try:
         temp_path = _write_temporary_file(plan.path, proposed_bytes, current_mode)
-        _require_current_hash(plan)
+        if plan.original_exists:
+            _require_current_hash(plan)
+        else:
+            _require_target_still_missing(plan)
         os.replace(temp_path, plan.path)
         temp_path = None
     except DocumentChangeError:
@@ -636,7 +672,7 @@ def plan_file_move(
     """
 
     try:
-        resolved_source, bundle_root = _resolve_existing_target(bundle, Path(source))
+        resolved_source, bundle_root, _ = _resolve_existing_target(bundle, Path(source))
     except DocumentChangePlanningError as exc:
         # _resolve_existing_target's messages are phrased for the generic
         # "document change target" case; reword for a move's source-specific
@@ -774,17 +810,25 @@ def _plan_document_change(
     bundle: BundleConfig,
     path: Path,
     build_proposed_content: Callable[[Path, str], str],
+    *,
+    allow_missing: bool = False,
 ) -> DocumentChangePlan:
-    resolved_path, bundle_root = _resolve_existing_target(bundle, path)
+    resolved_path, bundle_root, original_exists = _resolve_existing_target(
+        bundle, path, allow_missing=allow_missing
+    )
     _require_bundle_write_safety(bundle)
-    original_bytes = _read_for_planning(resolved_path)
-    try:
-        original_content = original_bytes.decode("utf-8")
-    except UnicodeDecodeError as exc:
-        raise DocumentChangePlanningError(
-            resolved_path,
-            f"Could not decode document as UTF-8: {exc}",
-        ) from exc
+    if original_exists:
+        original_bytes = _read_for_planning(resolved_path)
+        try:
+            original_content = original_bytes.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise DocumentChangePlanningError(
+                resolved_path,
+                f"Could not decode document as UTF-8: {exc}",
+            ) from exc
+    else:
+        original_bytes = b""
+        original_content = ""
 
     proposed_content = build_proposed_content(resolved_path, original_content)
     proposed_bytes = _encode_utf8(
@@ -799,6 +843,7 @@ def _plan_document_change(
         proposed_content=proposed_content,
         original_sha256=_sha256(original_bytes),
         proposed_sha256=_sha256(proposed_bytes),
+        original_exists=original_exists,
     )
 
 
@@ -1276,7 +1321,17 @@ def _yaml_values_equal(left: Any, right: Any) -> bool:
     return left == right
 
 
-def _resolve_existing_target(bundle: BundleConfig, path: Path) -> tuple[Path, Path]:
+def _resolve_existing_target(
+    bundle: BundleConfig, path: Path, *, allow_missing: bool = False
+) -> tuple[Path, Path, bool]:
+    """Resolve and validate a planning target, returning whether it exists.
+
+    By default a missing target is a planning error, matching every
+    pre-#136 caller. With ``allow_missing=True`` a missing target is
+    accepted instead (returned as ``exists=False``) so a caller like
+    ``plan_log_concept_move`` can plan against a ``log.md`` that has never
+    been written yet.
+    """
     bundle_root = bundle.bundle_root.resolve(strict=False)
     candidate = path if path.is_absolute() else bundle_root / path
     if candidate.is_symlink():
@@ -1287,6 +1342,8 @@ def _resolve_existing_target(bundle: BundleConfig, path: Path) -> tuple[Path, Pa
     resolved_path = candidate.resolve(strict=False)
     _require_plan_target(bundle_root, resolved_path, planning=True)
     if not resolved_path.exists():
+        if allow_missing:
+            return resolved_path, bundle_root, False
         raise DocumentChangePlanningError(
             resolved_path, "Document change target does not exist"
         )
@@ -1294,7 +1351,7 @@ def _resolve_existing_target(bundle: BundleConfig, path: Path) -> tuple[Path, Pa
         raise DocumentChangePlanningError(
             resolved_path, "Document change target must be a regular file"
         )
-    return resolved_path, bundle_root
+    return resolved_path, bundle_root, True
 
 
 def _require_plan_target(
@@ -1392,6 +1449,24 @@ def _require_current_hash(plan: DocumentChangePlan) -> None:
             plan.path,
             plan.original_sha256,
             actual_sha256,
+        )
+
+
+def _require_target_still_missing(plan: DocumentChangePlan) -> None:
+    """Raise if a target planned as missing (``original_exists=False``) now exists.
+
+    A target that appears concurrently between planning and apply -- created
+    by another process, or left over as a symlink -- is a conflict just like
+    a target whose content changed underneath an existing-target plan, even
+    though there is no "current hash" to compare against; ``actual_sha256``
+    reports the new content's hash (or ``None`` if it can't be read) so the
+    conflict message still says what showed up.
+    """
+    if plan.path.exists() or plan.path.is_symlink():
+        raise DocumentChangeConflictError(
+            plan.path,
+            plan.original_sha256,
+            _current_regular_file_sha256(plan.path),
         )
 
 

@@ -13,6 +13,15 @@ from typing import Any
 from markdown_it import MarkdownIt
 
 from okf_core._markdown_inline import render_linked_span, token_line
+from okf_core.config import BundleConfig
+from okf_core.patching import (
+    DocumentChangePlan,
+    DocumentChangePlanningError,
+    DocumentChangeResult,
+    apply_document_change,
+    plan_document_change,
+)
+from okf_core.paths import concept_id_to_path, path_to_concept_id
 
 _MARKDOWN = MarkdownIt("commonmark")
 
@@ -882,3 +891,201 @@ def _render_log_entry(entry: LogEntry) -> str:
 
 
 _token_line = token_line
+
+
+# --- Concept move logging (#136) -------------------------------------------
+#
+# The functions below define the log.md move-entry convention: this is the
+# one code path that writes it, so a future reader (e.g. #130's log.md
+# fallback resolver) only needs to recognize what this module actually
+# produces, not match a free-standing spec that could drift from it.
+
+_MOVE_ENTRY_LABEL = "Moved"
+_MOVE_ENTRY_TITLE = "moved to"
+
+
+def _build_move_entry(old_concept_id: str, new_relative_path: str) -> LogEntry:
+    """Build the ``LogEntry`` a concept move is recorded as.
+
+    ``label`` is the fixed ``"Moved"`` convention word. ``.text`` is a single
+    titled link: its anchor text is the concept's former concept ID (a
+    stable identity, independent of on-disk layout) and its href is the
+    concept's new bundle-root-relative ``.md`` path (what a fallback
+    resolver needs to actually find the file on disk) -- capturing both the
+    old and the new location, per this issue's own "or both" checklist
+    option. The literal ``"moved to"`` link title lets a future reader
+    distinguish this convention from any other titled link that might appear
+    in log.md prose. The href is run through markdown-it's own link
+    normalization so a freshly built entry's text is already in the same
+    canonical form ``parse_log`` would reconstruct after a round trip through
+    disk -- required for ``_move_already_logged``'s comparison below to
+    still match a previously written entry.
+    """
+    href = _MARKDOWN.normalizeLink(new_relative_path)
+    text = f'[{old_concept_id}]({href} "{_MOVE_ENTRY_TITLE}")'
+    return LogEntry(text=text, label=_MOVE_ENTRY_LABEL)
+
+
+def _move_already_logged(
+    parsed: ParsedLog, old_concept_id: str, new_relative_path: str
+) -> bool:
+    """Return whether an identical move entry is already recorded anywhere.
+
+    Scans every date section, not just today's -- a move logged yesterday is
+    still a duplicate today, and re-inserting it would both misrepresent
+    when the move happened and grow the log unboundedly on repeated calls.
+    """
+    target = _build_move_entry(old_concept_id, new_relative_path)
+    return any(
+        entry.label == target.label and entry.text == target.text
+        for section in parsed.sections
+        for entry in section.entries
+    )
+
+
+def _insert_entry_for_today(
+    parsed: ParsedLog, entry: LogEntry, today: datetime.date | None
+) -> ParsedLog:
+    """Prepend ``entry`` into today's ``LogDateSection``, creating it if absent.
+
+    Sections are re-sorted newest-first by ISO date string afterward rather
+    than assuming the existing top section already is today's -- a log with
+    only older dates (or one that is out of order for any reason) still ends
+    up with today's section in the right place. When ``today`` is not given,
+    "today" is UTC's current date rather than the local timezone's, so a
+    caller running near local midnight doesn't get a date that depends on
+    machine timezone configuration.
+    """
+    resolved_today = (
+        today
+        if today is not None
+        else datetime.datetime.now(tz=datetime.timezone.utc).date()
+    )
+    today_str = resolved_today.isoformat()
+    sections = list(parsed.sections)
+    for index, section in enumerate(sections):
+        if section.date == today_str:
+            sections[index] = LogDateSection(
+                date=today_str, entries=(entry, *section.entries)
+            )
+            break
+    else:
+        sections.append(LogDateSection(date=today_str, entries=(entry,)))
+
+    sections.sort(key=lambda section: section.date, reverse=True)
+    return ParsedLog(title=parsed.title, sections=tuple(sections), problems=())
+
+
+def _read_log_source(path: Path) -> str:
+    """Read log.md's raw text the same way ``plan_document_change`` will.
+
+    Mirrors ``patching._read_for_planning``'s raw-bytes-plus-strict-UTF-8
+    decode -- deliberately not ``Path.read_text()``, whose universal-newline
+    translation could make this string differ from what
+    ``plan_document_change`` independently reads a moment later, breaking
+    the byte-identical comparison an unchanged plan relies on for
+    ``.changed is False``. Returns ``""`` for a missing path, matching
+    ``load_log()``'s and ``plan_document_change(..., allow_missing=True)``'s
+    shared missing-file-is-empty convention.
+    """
+    if not path.is_file():
+        return ""
+    try:
+        return path.read_bytes().decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not decode document as UTF-8: {exc}"
+        ) from exc
+
+
+def _resolve_move_target(
+    bundle: BundleConfig, bundle_root: Path, new: Path | str
+) -> Path:
+    """Resolve and validate ``new`` as an existing bundle-root-relative ``.md`` path.
+
+    ``path_to_concept_id`` is used purely for its validation side effects
+    (bundle-root containment, ``.md`` shape, reserved-filename rejection,
+    concept path strategy) -- the concept ID it computes is discarded, since
+    ``new`` is recorded in the log entry as a literal path, not an ID.
+    """
+    new_path = Path(new)
+    candidate = new_path if new_path.is_absolute() else bundle_root / new_path
+    resolved = candidate.resolve(strict=False)
+    path_to_concept_id(resolved, bundle)
+    if not resolved.is_file():
+        raise DocumentChangePlanningError(resolved, "Move target does not exist")
+    return resolved
+
+
+def plan_log_concept_move(
+    bundle: BundleConfig,
+    old: str,
+    new: Path | str,
+    *,
+    today: datetime.date | None = None,
+) -> DocumentChangePlan:
+    """Plan recording one concept move as a dated entry in bundle-root ``log.md``.
+
+    ``old`` is the moved concept's former concept ID; ``new`` is its new
+    location as a bundle-root-relative ``.md`` path, which must currently
+    exist on disk -- this primitive only records that a move happened, the
+    move itself (e.g. via ``move_concept``) is the caller's responsibility.
+    Both are validated via ``paths.py``'s existing concept ID/path resolution
+    (bundle-root containment, ``.md`` shape, reserved-filename rejection,
+    concept path strategy); a validation failure raises ``ConceptPathError``.
+
+    If ``old`` and ``new`` resolve to the same path, this is a no-op
+    (mirroring ``FileMovePlan.noop``) and the returned plan changes nothing.
+    Otherwise, every existing date section (not just today's) is checked for
+    an identical move already recorded; if found, the returned plan is
+    likewise unchanged -- re-logging the same move is idempotent. Otherwise a
+    new ``"Moved"`` entry is inserted at the top of today's date section
+    (created if absent, per ``_insert_entry_for_today``) and the whole log is
+    re-rendered. Either way, planning delegates to
+    ``plan_document_change(..., allow_missing=True)`` so a bundle with no
+    ``log.md`` yet is planned as if starting from an empty document rather
+    than raising. ``today`` overrides the real current date; pass a fixed
+    value for deterministic tests.
+    """
+    bundle_root = bundle.bundle_root.resolve(strict=False)
+    old_path = concept_id_to_path(old, bundle)
+    new_path = _resolve_move_target(bundle, bundle_root, new)
+    log_path = bundle_root / "log.md"
+
+    if old_path == new_path:
+        return plan_document_change(
+            bundle, log_path, _read_log_source(log_path), allow_missing=True
+        )
+
+    new_relative_path = new_path.relative_to(bundle_root).as_posix()
+    parsed = load_log(log_path)
+    if _move_already_logged(parsed, old, new_relative_path):
+        return plan_document_change(
+            bundle, log_path, _read_log_source(log_path), allow_missing=True
+        )
+
+    entry = _build_move_entry(old, new_relative_path)
+    updated = _insert_entry_for_today(parsed, entry, today)
+    return plan_document_change(
+        bundle, log_path, render_log(updated), allow_missing=True
+    )
+
+
+def log_concept_move(
+    bundle: BundleConfig,
+    old: str,
+    new: Path | str,
+    *,
+    today: datetime.date | None = None,
+) -> DocumentChangeResult:
+    """Plan and apply one concept move's ``log.md`` entry in a single call.
+
+    Mirrors ``moves.py``'s ``plan_move_concept``/``move_concept`` pairing:
+    ``plan_log_concept_move`` alone is read-only and safe for a dry-run
+    preview, while this convenience wrapper also applies it, retaining the
+    same SHA-256 optimistic-concurrency protection (including against a
+    ``log.md`` created concurrently after planning, when one didn't exist
+    yet).
+    """
+    plan = plan_log_concept_move(bundle, old, new, today=today)
+    return apply_document_change(bundle, plan)

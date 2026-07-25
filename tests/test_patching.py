@@ -391,3 +391,107 @@ def test_apply_failure_preserves_original_and_cleans_temp(
 
     assert path.read_text(encoding="utf-8") == "Original\n"
     assert not tuple(tmp_path.glob(".okf-*.tmp"))
+
+
+def test_plan_rejects_missing_target_without_allow_missing(tmp_path: Path) -> None:
+    with pytest.raises(DocumentChangePlanningError, match="does not exist"):
+        plan_document_change(_bundle(tmp_path), "missing.md", "Proposed\n")
+
+
+def test_plan_allow_missing_treats_absent_target_as_empty(tmp_path: Path) -> None:
+    path = tmp_path / "missing.md"
+
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Proposed\n", allow_missing=True
+    )
+
+    assert plan.original_exists is False
+    assert plan.original_content == ""
+    assert plan.proposed_content == "Proposed\n"
+    assert plan.original_sha256 == _digest(b"")
+    assert plan.changed is True
+    assert not path.exists()
+
+
+def test_plan_allow_missing_still_requires_existing_target_to_be_a_file(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "directory").mkdir()
+
+    with pytest.raises(DocumentChangePlanningError, match="regular file"):
+        plan_document_change(
+            _bundle(tmp_path), "directory", "Proposed\n", allow_missing=True
+        )
+
+
+def test_plan_allow_missing_still_uses_existing_target_content(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Original\n", encoding="utf-8")
+
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Proposed\n", allow_missing=True
+    )
+
+    assert plan.original_exists is True
+    assert plan.original_content == "Original\n"
+
+
+def test_apply_creates_missing_target_with_default_mode(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Created\n", allow_missing=True
+    )
+
+    result = apply_document_change(_bundle(tmp_path), plan)
+
+    assert result.changed is True
+    assert path.read_text(encoding="utf-8") == "Created\n"
+    if os.name != "nt":
+        assert path.stat().st_mode & 0o777 == 0o644
+
+
+def test_apply_allow_missing_noop_does_not_create_target(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    plan = plan_document_change(_bundle(tmp_path), path, "", allow_missing=True)
+
+    result = apply_document_change(_bundle(tmp_path), plan)
+
+    assert result.changed is False
+    assert not path.exists()
+
+
+def test_apply_reports_target_created_concurrently(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Created\n", allow_missing=True
+    )
+    path.write_text("Concurrent\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangeConflictError) as caught:
+        apply_document_change(_bundle(tmp_path), plan)
+
+    assert caught.value.actual_sha256 == _digest(b"Concurrent\n")
+    assert path.read_text(encoding="utf-8") == "Concurrent\n"
+
+
+def test_apply_rechecks_still_missing_before_replace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "topic.md"
+    plan = plan_document_change(
+        _bundle(tmp_path), path, "Created\n", allow_missing=True
+    )
+    original_write = patching._write_temporary_file
+
+    def concurrent_write(target: Path, content: bytes, mode: int) -> Path:
+        temp_path = original_write(target, content, mode)
+        target.write_text("Concurrent\n", encoding="utf-8")
+        return temp_path
+
+    monkeypatch.setattr(patching, "_write_temporary_file", concurrent_write)
+
+    with pytest.raises(DocumentChangeConflictError):
+        apply_document_change(_bundle(tmp_path), plan)
+
+    assert path.read_text(encoding="utf-8") == "Concurrent\n"
+    assert not tuple(tmp_path.glob(".okf-*.tmp"))

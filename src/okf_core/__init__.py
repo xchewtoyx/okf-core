@@ -67,7 +67,9 @@ from okf_core.logs import (
     LogParseProblem,
     ParsedLog,
     load_log,
+    log_concept_move,
     parse_log,
+    plan_log_concept_move,
     render_log,
 )
 from okf_core.manifest import (
@@ -206,6 +208,7 @@ __all__ = [
     "list_concepts",
     "load_config",
     "load_log",
+    "log_concept_move",
     "move_concept",
     "neighborhood",
     "okf_version_for_index_write",
@@ -218,6 +221,7 @@ __all__ = [
     "plan_file_move",
     "plan_frontmatter_merge",
     "plan_graph_repair",
+    "plan_log_concept_move",
     "plan_markdown_link_rewrite",
     "plan_markdown_section_patch",
     "plan_move_concept",
