@@ -211,7 +211,7 @@ def test_generate_subdirectory_outside_directory_skipped_and_reported(
 def test_generate_describe_directory_hook(tmp_path: Path) -> None:
     subdir = tmp_path / "sub"
 
-    def describe(path: Path) -> str | None:
+    def describe(_path: Path) -> str | None:
         return "A subdirectory"
 
     result = generate_index(
@@ -224,7 +224,7 @@ def test_generate_describe_directory_hook(tmp_path: Path) -> None:
 def test_generate_describe_directory_none_return(tmp_path: Path) -> None:
     subdir = tmp_path / "sub"
 
-    def describe(path: Path) -> str | None:
+    def describe(_path: Path) -> str | None:
         return None
 
     result = generate_index(
@@ -383,7 +383,7 @@ def test_generate_describe_directory_multiline_normalized(tmp_path: Path) -> Non
     # describe_directory callback returning a multiline string must be normalized
     subdir = tmp_path / "sub"
 
-    def describe(path: Path) -> str | None:
+    def describe(_path: Path) -> str | None:
         return "first line\nsecond line"
 
     result = generate_index(
@@ -703,7 +703,7 @@ title: File Title
         encoding="utf-8",
     )
 
-    def describe(path: Path) -> str | None:
+    def describe(_path: Path) -> str | None:
         return "Callback Description"
 
     result = generate_index(

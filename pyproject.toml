@@ -66,10 +66,13 @@ target-version = ["py310"]
 target-version = "py310"
 
 [tool.ruff.lint]
-extend-select = ["C90"]
+extend-select = ["C90", "ARG"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 14
+
+[tool.ruff.lint.flake8-unused-arguments]
+ignore-variadic-names = true
 
 [tool.ruff.lint.per-file-ignores]
 # Local fake classes in tests mirror sqlite3 connection objects; adding a

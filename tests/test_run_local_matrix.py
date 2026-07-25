@@ -72,7 +72,7 @@ def test_main_docker_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
     """Verify main exits if docker is not installed."""
     import shutil
 
-    monkeypatch.setattr(shutil, "which", lambda cmd: None)
+    monkeypatch.setattr(shutil, "which", lambda _cmd: None)
 
     with pytest.raises(SystemExit) as excinfo:
         run_local_matrix.main()
@@ -84,7 +84,7 @@ def test_main_docker_daemon_not_running(monkeypatch: pytest.MonkeyPatch) -> None
     import shutil
     import subprocess
 
-    monkeypatch.setattr(shutil, "which", lambda cmd: "/usr/bin/docker")
+    monkeypatch.setattr(shutil, "which", lambda _cmd: "/usr/bin/docker")
 
     def mock_run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[bytes]:
         if cmd == ["docker", "info"]:

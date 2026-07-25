@@ -2149,7 +2149,7 @@ def test_cli_graph_repair_resolves_link_via_registered_plugin(
 
     class _ResolvingPlugin:
         @hookimpl
-        def okf_fetch_moved_concept_path(self, dead_concept_id, bundle):  # type: ignore[no-untyped-def]
+        def okf_fetch_moved_concept_path(self, dead_concept_id):  # type: ignore[no-untyped-def]
             return tmp_path / "new.md" if dead_concept_id == "dead" else None
 
     original_get_hook_manager = hooks_module.get_hook_manager

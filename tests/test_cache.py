@@ -141,7 +141,7 @@ def test_cache_hits_skip_file_reads(
     # Mock read_bytes on Path to verify it is NOT called during second scan
     read_called = False
 
-    def mock_read_bytes(self: Path) -> bytes:
+    def mock_read_bytes(_self: Path) -> bytes:
         nonlocal read_called
         read_called = True
         return b""
@@ -598,15 +598,11 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
         from okf_core.hooks import hookimpl
 
         @hookimpl
-        def okf_enter_scan_concept(
-            self, path: Path, root: Path, bundle: BundleConfig
-        ) -> None:
+        def okf_enter_scan_concept(self, path: Path) -> None:
             calls.append(("enter_scan", path.name))
 
         @hookimpl
-        def okf_fetch_scan_concept(
-            self, path: Path, root: Path, bundle: BundleConfig
-        ) -> None:
+        def okf_fetch_scan_concept(self, path: Path) -> None:
             calls.append(("fetch_scan", path.name))
 
         @hookimpl
@@ -615,23 +611,17 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
             entry: ConceptManifestEntry | None,
             problem: ManifestProblem | None,
             path: Path,
-            root: Path,
-            bundle: BundleConfig,
         ) -> None:
             calls.append(
                 ("exit_scan", path.name, entry is not None, problem is not None)
             )
 
         @hookimpl
-        def okf_enter_resolve_links(
-            self, entry: ConceptManifestEntry, bundle: BundleConfig
-        ) -> None:
+        def okf_enter_resolve_links(self, entry: ConceptManifestEntry) -> None:
             calls.append(("enter_resolve", entry.concept_id))
 
         @hookimpl
-        def okf_fetch_resolve_links(
-            self, entry: ConceptManifestEntry, bundle: BundleConfig
-        ) -> None:
+        def okf_fetch_resolve_links(self, entry: ConceptManifestEntry) -> None:
             calls.append(("fetch_resolve", entry.concept_id))
 
         @hookimpl
@@ -640,7 +630,6 @@ def test_hooks_execution_order_and_symmetry(tmp_path: Path) -> None:
             entry: ConceptManifestEntry,
             links: Sequence[ConceptLink] | None,
             problem: GraphProblem | None,
-            bundle: BundleConfig,
         ) -> None:
             calls.append(
                 (
@@ -915,7 +904,7 @@ def test_end_scan_closes_connection_when_flush_fails(
     )
 
     plugin = SqliteCachePlugin(bundle)
-    plugin.okf_start_scan(bundle)
+    plugin.okf_start_scan()
     assert plugin._active is True
     assert plugin._conn is not None
 
@@ -928,7 +917,7 @@ def test_end_scan_closes_connection_when_flush_fails(
     monkeypatch.setattr(plugin, "_apply_concept_op", _boom)
 
     with pytest.raises(RuntimeError, match="flush failed"):
-        plugin.okf_end_scan(bundle, BundleManifest(bundle_name="docs"))
+        plugin.okf_end_scan(BundleManifest(bundle_name="docs"))
 
     assert plugin._conn is None
     assert plugin._active is False

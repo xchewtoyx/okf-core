@@ -129,7 +129,7 @@ def test_plan_reports_read_failure(
     path = tmp_path / "topic.md"
     path.write_text("Original\n", encoding="utf-8")
 
-    def fail_read_bytes(self: Path) -> bytes:
+    def fail_read_bytes(_self: Path) -> bytes:
         raise OSError("read failed")
 
     monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
@@ -257,7 +257,7 @@ def test_apply_reports_read_failure(
     path.write_text("Original\n", encoding="utf-8")
     plan = plan_document_change(_bundle(tmp_path), path, "Proposed\n")
 
-    def fail_read_bytes(self: Path) -> bytes:
+    def fail_read_bytes(_self: Path) -> bytes:
         raise OSError("read failed")
 
     monkeypatch.setattr(Path, "read_bytes", fail_read_bytes)
@@ -429,7 +429,7 @@ def test_plan_allow_missing_treats_absent_target_as_empty(tmp_path: Path) -> Non
 @pytest.mark.parametrize(
     "prepare_parent",
     [
-        lambda parent: None,
+        lambda _parent: None,
         lambda parent: parent.write_text("not a directory\n", encoding="utf-8"),
     ],
     ids=["parent-missing", "parent-is-a-file"],
