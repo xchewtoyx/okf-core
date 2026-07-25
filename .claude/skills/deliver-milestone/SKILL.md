@@ -174,15 +174,20 @@ issue's branch/PR before the current one is merged.
    - Handle CI failures and review comments as they arrive (via subscription
      events or your own re-checks), using the same implementor/reviewer loop
      as steps 2 and 4 (re-running step 3's scoped pass first if it applies).
-   - **Comment triage (delegated)** — for each incoming review finding
-     (webhook-delivered or surfaced by your own re-check), once any
-     implementor/reviewer round above has run for it — or a decision has been
-     made not to act — dispatch a scoped `general-purpose` Agent call (no new
-     `.claude/agents/*.md` file; this mirrors step 3's and step 4's
-     diagnostic-dispatch pattern of reusing existing infrastructure with a
-     narrowed prompt rather than inventing new agents) to investigate the
-     finding against the current code, tests, and any repro as needed.
-   - **Output contract** — the triage subagent returns ONLY a
+   - **Comment triage (delegated)** — for every incoming review finding
+     (webhook-delivered or surfaced by your own re-check), always dispatch a
+     scoped `general-purpose` Agent call first (no new `.claude/agents/*.md`
+     file; this mirrors step 3's and step 4's diagnostic-dispatch pattern of
+     reusing existing infrastructure with a narrowed prompt rather than
+     inventing new agents) to investigate the finding against the current
+     code, tests, and any repro as needed, including whether prior
+     implementor/reviewer rounds above already addressed it. Whether the
+     finding is `fixed` or `not-fixed` — including "doesn't need a fix" — is
+     a verdict the subagent reaches through that investigation. The
+     supervisor never makes this call itself as a precondition to dispatch;
+     its only job here is to receive the finding, dispatch triage, and act
+     on the verdict the subagent returns.
+   - **Output contract** — the triage subagent returns only a
      `fixed`/`not-fixed` verdict plus a single reply paragraph — no
      investigation transcript, no diff, no repro output. This mirrors
      `milestone-implementor`'s existing "branch/commit/summary only, never a
