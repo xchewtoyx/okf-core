@@ -216,6 +216,13 @@ issue's branch/PR before the current one is merged.
      subagent's wording — explaining the reasoning for the fix, or for not
      making one, rather than pushing silently. Drop the investigation detail
      from context immediately after posting.
+   - Separately — and regardless of whether the finding arrived via webhook
+     or your own re-check — once it has been triaged and actioned (fixed,
+     replied-and-refuted, or explicitly deferred), discard the original
+     finding payload itself: the webhook-delivered comment body and
+     diff-hunk (or the equivalent raw detail from a re-check) the supervisor
+     held in order to dispatch triage. Carry forward only the short
+     verdict/reply, not the raw event.
    - Do not plan, implement, or open a PR for any other milestone issue while
      this one is open.
    - Do not advance until GitHub actually reports this PR merged — never
