@@ -229,11 +229,11 @@ okf index [--config PATH] [--bundle NAME] [--directory PATH] [--force] [--quiet]
 When config omits `okf_version`, root index generation preserves an existing supported root `okf_version` declaration by default. `--force` intentionally overwrites the root index without preserving that declaration, but it does not bypass unsupported-version write safety.
 
 Output: A JSON status dictionary, or a JSON array of status dictionaries when `--recurse` is specified:
-`{"path": "...", "entries": N, "problems": [...], "scan_problems": [...], "excluded_reserved_files": [...]}`
+`{"path": "...", "entries": N, "problems": [...], "scan_problems": [...], "excluded_reserved_files": [...], "write_conflict": null}`
 
-`entries` is the number of entries actually written (candidates minus skipped). `problems` lists index-level skipped entries (e.g. missing `type` field). `scan_problems` lists parse/read failures for files in the target directory that were silently omitted from the index. `excluded_reserved_files` lists regular files directly in the target directory whose filenames matched configured or spec-reserved names and were therefore ignored as concept documents; when no entries are written and reserved files were present, the stderr summary calls this out so users can distinguish an empty directory from one containing only reserved files.
+`entries` is the number of entries actually written (candidates minus skipped). `problems` lists index-level skipped entries (e.g. missing `type` field). `scan_problems` lists parse/read failures for files in the target directory that were silently omitted from the index. `excluded_reserved_files` lists regular files directly in the target directory whose filenames matched configured or spec-reserved names and were therefore ignored as concept documents; when no entries are written and reserved files were present, the stderr summary calls this out so users can distinguish an empty directory from one containing only reserved files. `write_conflict` is `null` when that directory's `index.md` was written (or left as-is because nothing changed) and a message string when a concurrent change to that file was detected between planning the write and applying it -- the existing `index.md` is left untouched in that case, the same as `okf move`'s stale-content conflict below. When `write_conflict` is set, `entries` is always `0`, regardless of how many candidate entries the discarded, never-written body would have contained -- the field never reports a count for entries that were not actually written. The stderr summary reflects the same rule: on a conflict, only the conflict message (and a "not written" note) is printed, never the `Wrote index.md ...` success line.
 
-Exits `1` if any entries were skipped or any scan problems occurred in any targeted directories; exits `0` on clean generation.
+Exits `1` if any entries were skipped, any scan problems occurred, or any directory's write was refused due to a conflict, in any targeted directories; exits `0` on clean generation.
 
 Use `--quiet` or `-q` to suppress command output and summary. Configuration/load errors (which exit with code `2`) are not suppressed.
 
@@ -267,7 +267,7 @@ This command interacts with the bundle's `stable_id_field` (which must be config
   - Resolves the concept ID to its path.
   - If a stable ID already exists in the frontmatter, it prints it to `stdout`.
   - If the stable ID is missing (or if `--force` is specified), it generates a new UUID4 and prints it to `stdout`.
-  - If `--write` is specified, it writes the new stable ID back to the concept file on disk, printing a confirmation message to `stderr`.
+  - If `--write` is specified, it writes the new stable ID back to the concept file on disk, printing a confirmation message to `stderr`. The write goes through the same plan/apply safety envelope as `okf move`: it exits `1` and leaves the file unchanged if a write-safety refusal applies, or if the file's content no longer matches what was read when the write was planned (including the target having been replaced by a symlink in the meantime).
 
 ### `okf move`
 
@@ -279,7 +279,7 @@ okf move SOURCE DEST [--config PATH] [--bundle NAME] [--dry-run]
 
 SOURCE and DEST are concept file paths, not concept IDs: relative to the bundle root, or absolute paths that resolve inside it. DEST must be a full path ending in a valid concept path; there is no shell-`mv`-style "move into a directory" shorthand. The concept file is relocated last, after every referring file's link has been rewritten, so a failure partway through always leaves the concept file at a well-defined location and the command is safe to re-run to completion. Moving a file to its own current path is a no-op. Exits `2` for an invalid SOURCE/DEST (wrong extension, reserved filename, escapes the bundle root); exits `1` for a missing source, an existing destination, a symlinked SOURCE/DEST argument, a write-safety refusal, or a stale-content conflict.
 
-If SOURCE's old directory and/or DEST's new directory already has an `index.md`, it is regenerated from a fresh scan to reflect the move (an index that doesn't already exist is never created as a side effect). `--dry-run` does not preview which indexes would be regenerated, since this refresh only runs after a real move.
+If SOURCE's old directory and/or DEST's new directory already has an `index.md`, it is regenerated from a fresh scan to reflect the move (an index that doesn't already exist is never created as a side effect). This refresh goes through the same plan/apply safety envelope as the concept file move itself, so a concurrent edit to an affected `index.md` between planning and applying the refresh is also reported as the same stale-content conflict, exiting `1` without overwriting it. `--dry-run` does not preview which indexes would be regenerated, since this refresh only runs after a real move.
 
 ### `okf graph-repair`
 

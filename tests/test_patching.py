@@ -14,6 +14,7 @@ from okf_core import (
     DocumentChangePlanningError,
     DocumentChangeSafetyError,
     apply_document_change,
+    change_envelope,
     patching,
     plan_document_change,
 )
@@ -363,14 +364,14 @@ def test_apply_rechecks_hash_before_replace(
     path = tmp_path / "topic.md"
     path.write_text("Original\n", encoding="utf-8")
     plan = plan_document_change(_bundle(tmp_path), path, "Proposed\n")
-    original_write = patching._write_temporary_file
+    original_write = change_envelope._write_temporary_file
 
     def concurrent_write(target: Path, content: bytes, mode: int) -> Path:
         temp_path = original_write(target, content, mode)
         target.write_text("Concurrent\n", encoding="utf-8")
         return temp_path
 
-    monkeypatch.setattr(patching, "_write_temporary_file", concurrent_write)
+    monkeypatch.setattr(change_envelope, "_write_temporary_file", concurrent_write)
 
     with pytest.raises(DocumentChangeConflictError):
         apply_document_change(_bundle(tmp_path), plan)
@@ -395,9 +396,9 @@ def test_apply_failure_preserves_original_and_cleans_temp(
         raise OSError(f"{failure_point} failed")
 
     if failure_point == "mkstemp":
-        monkeypatch.setattr(patching.tempfile, "mkstemp", fail)
+        monkeypatch.setattr(change_envelope.tempfile, "mkstemp", fail)
     else:
-        monkeypatch.setattr(patching.os, failure_point, fail)
+        monkeypatch.setattr(change_envelope.os, failure_point, fail)
 
     with pytest.raises(DocumentChangeApplyError, match="Could not apply"):
         apply_document_change(_bundle(tmp_path), plan)
@@ -550,14 +551,14 @@ def test_apply_rechecks_still_missing_before_replace(
     plan = plan_document_change(
         _bundle(tmp_path), path, "Created\n", allow_missing=True
     )
-    original_write = patching._write_temporary_file
+    original_write = change_envelope._write_temporary_file
 
     def concurrent_write(target: Path, content: bytes, mode: int) -> Path:
         temp_path = original_write(target, content, mode)
         target.write_text("Concurrent\n", encoding="utf-8")
         return temp_path
 
-    monkeypatch.setattr(patching, "_write_temporary_file", concurrent_write)
+    monkeypatch.setattr(change_envelope, "_write_temporary_file", concurrent_write)
 
     with pytest.raises(DocumentChangeConflictError):
         apply_document_change(_bundle(tmp_path), plan)

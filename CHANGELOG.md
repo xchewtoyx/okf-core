@@ -6,6 +6,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **`okf stable-id --write` and `okf index`/`move_concept`'s index refresh now go through the plan/apply safety envelope**: both previously wrote their target file directly, so a concurrent edit (or a target swapped for a symlink) between reading and writing could be silently discarded or written through. Both now refuse with a reported conflict and exit non-zero (`okf index`'s per-directory JSON result gains a `write_conflict` field) instead of overwriting unseen changes. As a side effect of routing through `apply_document_change`, `okf index` for a directory with zero entries and no pre-existing `index.md` now writes no file at all (an empty proposed body against a missing target is a no-op), where it previously always created an empty `index.md` unconditionally via `write_text`. (#194)
+- **`okf index`'s per-directory result no longer misreports a refused write as a success**: when `write_conflict` is set, `entries` now reports `0` instead of the discarded, never-written body's candidate count, and the stderr summary prints only the conflict (plus a "not written" note) instead of also printing the `Wrote index.md ...` success line alongside it. (#194)
+
 ### Added
 
 - **`log_concept_move` write primitive**: added `plan_log_concept_move`/`log_concept_move` to `logs.py`, recording a concept move as a `"Moved"`-labelled, dated `log.md` entry (`[old-concept-id](new-relative-path "moved to")`, capturing both the stable old ID and the literal new on-disk path) so a future fallback resolver (#130) can recover a concept's history after it moves. Re-logging an already-recorded move, or a no-op `old == new`, is idempotent rather than growing the log. This required extending `patching.py`'s `plan_document_change`/`apply_document_change` (#110) with an opt-in `allow_missing`/`original_exists` path so a bundle's very first move can be planned and applied against a `log.md` that doesn't exist yet, rather than requiring callers to pre-create an empty file. (#136)
