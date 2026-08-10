@@ -144,7 +144,7 @@ parsing/serialization deletion.
 ## Revisit trigger
 
 This ADR is itself revisited only if a future gate run
-(`[replan-requirements]` §3, the
+(`[replan-requirements] §3`, the
 inclusion gate) finds that R-C1/R-C2/R-C3 no longer hold as the operative
 requirements — for example, if a future consumer demonstrates a real need
 for byte-level preservation that passes the gate on its own evidence, not

@@ -118,7 +118,7 @@ section is documented direction, not yet binding.
 rule — the idea that document content is only ever touched through one
 documented path per format, rather than through format-specific ad hoc
 logic scattered across modules — is anticipated by
-`[replan-analysis]` §4 but is **staged as
+`[replan-analysis] §4` but is **staged as
 pending issue #199**, not adopted here. Do not treat it as binding until
 #199 lands its own ADR or AGENTS.md update.
 

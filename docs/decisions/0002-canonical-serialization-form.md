@@ -21,7 +21,7 @@ corpus style uniform without an agent spending tokens on formatting
 (`[replan-requirements]` R-C1
 rationale).
 
-`[replan-requirements]` §4 (R-C) states the shape of that replacement
+`[replan-requirements] §4` (R-C) states the shape of that replacement
 contract as requirements, not a specific library choice. This ADR is where
 those requirements become a concrete decision for each format.
 
