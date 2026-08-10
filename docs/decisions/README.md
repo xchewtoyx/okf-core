@@ -6,8 +6,7 @@ resurfaces in a new issue. It exists because the instruction set alone
 (`AGENTS.md`, `.claude/agents/*.md`) enforces *how* to write code, but had no
 place to record *why* a direction was chosen over its alternatives, or what
 would have to change for that choice to be revisited. See
-`docs/proposals/v0.5.0-replan/03-codebase-analysis.md` §4 for the analysis
-that motivated this directory.
+`[replan-analysis] §4` for the analysis that motivated this directory.
 
 Every agent role planning or reviewing design/architecture work must read
 this index and the ADRs it lists before starting. See `AGENTS.md`'s
@@ -63,3 +62,15 @@ into the ADR that governs their current adoption status:
 ADR) of `request_changes` review rounds, used to detect recurring bug
 categories across issues. See that file for its format and the three-strikes
 rule.
+
+## Citing external documents
+
+Citations of the `docs/proposals/v0.5.0-replan/` document family — the
+source family registered in `references.md` — in `docs/decisions/` and the
+instruction files that cite the same sources use an inline bracket slug
+convention (never a bare path to that family, aside from the single
+sanctioned exception `references.md` records). See `references.md` in this
+directory for the citation rules and the canonical registry of slugs. This
+convention does not govern same-repo file pointers to other paths, such as
+the `docs/spikes/*.md` references in "Registered spike-era decisions" above,
+which are cited by ordinary bare path.

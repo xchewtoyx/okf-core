@@ -21,8 +21,9 @@ context). Do the following:
    the Code Structure section (collector-loop delegation, thin CLI commands,
    complexity budget), the Testing Guidelines, and the Delivery Rules
    (doc-update-in-same-commit requirements, changelog conventions).
-4. **Read `docs/proposals/v0.5.0-replan/02-editing-requirements.md`** (the
-   editing/patching/maintenance requirements for the v0.5.0 re-plan) and
+4. **Read `[replan-requirements]`** (the
+   editing/patching/maintenance requirements for the v0.5.0 re-plan — see
+   `docs/decisions/references.md` for what this bracket-slug cites) and
    **scan `docs/decisions/`** (read `docs/decisions/README.md`'s index, then
    any ADR whose subject looks relevant to this issue) before planning any
    issue — not only ones that look editing-related on the surface. This is
