@@ -259,6 +259,42 @@ whole corpus, which no agent context can hold.
   and attribution is what un-bundles them. *Fit:* every mutating API
   returns a structured result naming the change; nothing writes silently.
 
+### R-G. Reserved-file structure maintenance
+
+The spec's reserved files (`index.md` §8, `log.md` §9) are pure
+*structure*: reverse chronology, date headings, entry line formats,
+section grouping. Structure maintenance is the niche in its clearest
+form — LLM-maintained hub files are observably incomplete, inconsistently
+formatted, and accrete cruft, while the content decisions involved are
+trivial. The division: **the agent supplies meaning; the library owns the
+file.**
+
+- **R-G1 — Structure-free log append.** An agent can record a log entry
+  by supplying only content (and optionally a date and kind) — without
+  reading the log, knowing its conventions, or maintaining its structure.
+  The library locates or creates the correct date section, preserves
+  reverse chronology, leaves all other entries semantically untouched,
+  and emits the canonical form. *Rationale:* log.md grows without bound,
+  so inline appending costs tokens proportional to corpus age for a task
+  with zero judgment content; structure conformance is exactly what
+  agents get inconsistently wrong. Gate 4 passes with growing margin
+  over time. *Fit:* appending to any conformant (or absent) log yields a
+  conformant log with the entry under the right date; property test:
+  entries appended in arbitrary date order always yield reverse-
+  chronological sections; the agent-supplied content round-trips.
+- **R-G2 — Indexes are generated, never authored.** Where a consumer
+  wants `index.md`, the library is the only writer: deterministic
+  generation from frontmatter (existing capability), plus a validation
+  check reporting drift between a committed index and the directory it
+  describes — missing entries, entries for absent files, stale
+  descriptions — as structured problems. *Rationale:* incompleteness and
+  cruft in a hand-maintained index are silent failures (the corpus still
+  reads fine); silent failures are where deterministic checks belong.
+  Because generation is canonical, drift detection reduces to a semantic
+  comparison against regeneration. *Fit:* seeded drift (added file,
+  removed file, changed description) is reported; a freshly generated
+  index reports clean.
+
 ## 5. Explicit non-requirements
 
 Recorded so they cannot re-enter as assumptions (each failed gate check
@@ -275,10 +311,25 @@ noted):
   templated edits across many files — that is a new gate evaluation with
   its own recorded rationale, likely satisfiable as read-modify-write of
   the whole body under R-A.)
-- **N3 — Generation/maintenance of `index.md` and `log.md` beyond what
-  exists.** The spec makes both optional; the reference corpus bans both
-  as hub mechanisms. Existing support is retained and maintained;
-  further investment fails gate 1 until a consumer demonstrates demand.
+- **N3 — LLM authorship of reserved files.** Inverted from earlier
+  drafts: the exclusion is not the *features* (see R-G) but the *author*.
+  Agents never hand-write or hand-edit `index.md`/`log.md` content
+  structure; consumers that want neither file (the reference corpus bans
+  both inside bundles as hub mechanisms) simply don't call R-G. What
+  remains excluded is speculative hub tooling with no consumer demand —
+  e.g. tag-view files, multi-level index rollups — pending a gate run.
+- **N6 — Move-tracking resolver infrastructure ahead of demonstrated
+  need.** The stable-id/tombstone/`id_history`/log-scan resolver chain
+  (#128/#130/#131/#143/#144) is deferred, with the honest rationale: the
+  reference corpus's flat-bundle rule is a deliberate guardrail against
+  speculative taxonomy — the disease that causes later reorganization —
+  so reorganization pressure is low *by design*, not by accident;
+  `okf move` already repairs inbound links transactionally at move time,
+  making post-hoc resolution a remedy for bypassing the sanctioned path;
+  and the stable-id concept itself is an unproven premise the project
+  owner is not yet convinced by. Two-way door: the hookspec has shipped,
+  and a consumer without the flat guardrail re-runs the gate with a real
+  N.
 - **N4 — A better Markdown/YAML implementation than the ecosystem's.**
   Format parsing/serialization is commodity infrastructure with zero
   differentiating value ("should not exist" quadrant of build-vs-buy;
@@ -306,6 +357,8 @@ where library operations must return control:
 - Trust judgments themselves: the library stamps `verified` records
   (R-B2); *deciding* something is verified is the actor's claim, and the
   library must never synthesize one.
+- What a log entry *says* (R-G1): the library owns chronology, headings,
+  and format; the sentence is the agent's.
 
 ## 7. Open questions for review
 
