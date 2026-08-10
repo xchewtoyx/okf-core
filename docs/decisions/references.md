@@ -15,3 +15,10 @@ one.
   - `[replan-plan: design-it-twice]` — item 2
   - `[replan-plan: cross-issue-failure-ledger]` — item 3
   - `[replan-plan: one-sanctioned-content-path]` — item 4
+
+## Exceptions
+
+- `01-draft1-requirements-assessment.md` (`docs/proposals/v0.5.0-replan/`)
+  predates this registry and has no slug — cite it by bare path if ever
+  needed, rather than registering a full slug for a document that is
+  otherwise cited nowhere in `docs/decisions/`.

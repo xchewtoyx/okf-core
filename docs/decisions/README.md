@@ -65,7 +65,12 @@ rule.
 
 ## Citing external documents
 
-Citations in `docs/decisions/` and the instruction files that cite the same
-sources use an inline bracket slug convention (never a bare path). See
-`references.md` in this directory for the citation rules and the canonical
-registry of slugs.
+Citations of the `docs/proposals/v0.5.0-replan/` document family — the
+source family registered in `references.md` — in `docs/decisions/` and the
+instruction files that cite the same sources use an inline bracket slug
+convention (never a bare path to that family, aside from the single
+sanctioned exception `references.md` records). See `references.md` in this
+directory for the citation rules and the canonical registry of slugs. This
+convention does not govern same-repo file pointers to other paths, such as
+the `docs/spikes/*.md` references in "Registered spike-era decisions" above,
+which are cited by ordinary bare path.

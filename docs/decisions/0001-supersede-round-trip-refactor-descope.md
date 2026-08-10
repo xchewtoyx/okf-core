@@ -5,7 +5,10 @@
   decision to close #148 as not planned and keep `patching.py`'s hand-rolled
   splice engines).
 - **Related:** ADR-0002 (canonical serialization form); the v0.5.0 re-plan
-  document set in `docs/proposals/v0.5.0-replan/` (files `01` through `04`).
+  document set — `01-draft1-requirements-assessment.md` (predates
+  `references.md`'s registry; cited by bare path per the sanctioned
+  exception recorded there), `[replan-requirements]`, `[replan-analysis]`,
+  and `[replan-plan]`.
 
 ## Context
 
