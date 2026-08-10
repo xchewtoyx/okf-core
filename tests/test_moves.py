@@ -326,20 +326,27 @@ def test_move_concept_index_refresh_refuses_on_conflict(
         moves_module, "plan_document_change", racing_plan_document_change
     )
 
+    sub1_index = tmp_path / "sub1" / "index.md"
+    sub2_index = tmp_path / "sub2" / "index.md"
+    sub2_index_content_before = sub2_index.read_text(encoding="utf-8")
+    sub2_index_mtime_before = sub2_index.stat().st_mtime_ns
+
     with pytest.raises(DocumentChangeConflictError):
         move_concept(_bundle(tmp_path), old, new)
 
     # Index regeneration runs after the file move and link rewrites, so
     # those already-applied steps stand even though the index refresh itself
-    # was refused; the raced index.md is left exactly as the "concurrent
-    # edit" left it, not silently overwritten.
+    # was refused. `_regenerate_affected_indexes` processes directories in
+    # sorted order, so "sub1" (source) is planned -- and raced -- before
+    # "sub2" (dest) is ever reached: the raise happens on sub1's apply, and
+    # the loop never gets to sub2 at all.
     assert new.exists()
     assert not old.exists()
-    assert (tmp_path / "sub1" / "index.md").read_text(
-        encoding="utf-8"
-    ) == "concurrently modified\n" or (tmp_path / "sub2" / "index.md").read_text(
-        encoding="utf-8"
-    ) == "concurrently modified\n"
+    assert sub1_index.read_text(encoding="utf-8") == "concurrently modified\n"
+    # sub2/index.md is never touched by the refused refresh -- both its
+    # content and its mtime must be exactly what they were beforehand.
+    assert sub2_index.read_text(encoding="utf-8") == sub2_index_content_before
+    assert sub2_index.stat().st_mtime_ns == sub2_index_mtime_before
 
 
 def test_move_concept_does_not_create_index_where_none_existed(

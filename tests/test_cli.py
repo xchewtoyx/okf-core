@@ -1190,6 +1190,53 @@ def test_index_reports_write_conflict_and_does_not_overwrite(
     assert "changed after planning" in payload["write_conflict"]
 
 
+def test_index_reports_clean_error_when_symlink_swapped_before_planning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`okf index` must exit(1) cleanly, not crash, when index.md is replaced
+    by a symlink between the earlier informational scan and the real
+    planning call -- this raises DocumentChangePlanningError rather than
+    DocumentChangeConflictError, and both must be caught the same way."""
+    if not _can_symlink():
+        pytest.skip("System does not support symlinks or requires elevated privileges")
+
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "example.md", title="Example")
+    index_path = tmp_path / "index.md"
+    index_path.write_text("stale placeholder\n", encoding="utf-8")
+    other_path = tmp_path / "other.md"
+    other_path.write_text("Other\n", encoding="utf-8", newline="\n")
+
+    real_plan_document_change = cli_module.plan_document_change
+
+    def racing_plan_document_change(
+        bundle: Any, path: Path, proposed_content: str, **kwargs: Any
+    ):
+        # Simulate the target being replaced by a symlink between the
+        # earlier informational scan and this, the real planning call --
+        # this makes plan_document_change itself raise
+        # DocumentChangePlanningError (from _resolve_existing_target's own
+        # symlink check), not DocumentChangeConflictError.
+        Path(path).unlink()
+        Path(path).symlink_to(other_path)
+        return real_plan_document_change(bundle, path, proposed_content, **kwargs)
+
+    monkeypatch.setattr(cli_module, "plan_document_change", racing_plan_document_change)
+
+    result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    payload = json.loads(result.stdout)
+    assert payload["write_conflict"] is not None
+    assert "symbolic link" in payload["write_conflict"]
+    assert index_path.is_symlink()
+    assert index_path.resolve() == other_path.resolve()
+    assert other_path.read_text(encoding="utf-8") == "Other\n"
+
+
 def test_index_writes_root_okf_version_when_configured(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
@@ -2035,6 +2082,56 @@ def test_cli_stable_id_write_refuses_symlinked_target(
 
     assert result.exit_code == 1
     assert "changed after planning" in result.stderr
+    assert concept_path.is_symlink()
+    assert concept_path.resolve() == other_path.resolve()
+    assert other_path.read_text(encoding="utf-8") == "Other\n"
+
+
+def test_cli_stable_id_write_reports_clean_error_when_symlink_swapped_before_planning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`okf stable-id --write` must exit(1) cleanly, not crash, when the
+    target is replaced by a symlink between the informational read at the
+    top of the command and the real planning call -- this raises
+    DocumentChangePlanningError rather than DocumentChangeConflictError, and
+    both must be caught the same way."""
+    if not _can_symlink():
+        pytest.skip("System does not support symlinks or requires elevated privileges")
+
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[bundles.default]\nbundle_root = "{tmp_path}"\nstable_id_field = "id"\n',
+        encoding="utf-8",
+        newline="\n",
+    )
+    concept_path = tmp_path / "a.md"
+    _write_concept(concept_path, title="Alpha")
+    other_path = tmp_path / "other.md"
+    other_path.write_text("Other\n", encoding="utf-8", newline="\n")
+
+    real_plan_from_reader = cli_module.plan_document_change_from_reader
+
+    def racing_plan_from_reader(bundle: Any, path: Path, build_proposed_content: Any):
+        # Simulate the target being replaced by a symlink between the
+        # informational read/parse at the top of stable_id_cmd and this, the
+        # real planning call -- this makes plan_document_change_from_reader
+        # itself raise DocumentChangePlanningError (from
+        # _resolve_existing_target's own symlink check), not
+        # DocumentChangeConflictError.
+        path.unlink()
+        path.symlink_to(other_path)
+        return real_plan_from_reader(bundle, path, build_proposed_content)
+
+    monkeypatch.setattr(
+        cli_module, "plan_document_change_from_reader", racing_plan_from_reader
+    )
+
+    result = _runner().invoke(
+        cli, ["stable-id", "a", "--config", str(config_path), "--write"]
+    )
+
+    assert result.exit_code == 1
+    assert "symbolic link" in result.stderr
     assert concept_path.is_symlink()
     assert concept_path.resolve() == other_path.resolve()
     assert other_path.read_text(encoding="utf-8") == "Other\n"

@@ -17,10 +17,7 @@ from okf_core import (
     ConceptManifestEntry,
     ConceptPathError,
     ConfigError,
-    DocumentChangeApplyError,
-    DocumentChangeConflictError,
     DocumentChangeError,
-    DocumentChangeSafetyError,
     ManifestProblem,
     ProfileConfig,
     SearchConfigError,
@@ -180,7 +177,12 @@ def _index_one_directory(
     try:
         plan = plan_document_change(bundle, index_path, body, allow_missing=True)
         apply_document_change(bundle, plan)
-    except (DocumentChangeConflictError, DocumentChangeApplyError) as exc:
+    except DocumentChangeError as exc:
+        # Catch the base class, not an enumerated subset: a target replaced
+        # by a symlink between the earlier informational scan and this
+        # planning call surfaces as DocumentChangePlanningError, which must
+        # be reported the same clean way as a conflict or apply failure
+        # rather than propagating as an uncaught traceback.
         write_conflict = str(exc)
 
     return {
@@ -811,16 +813,13 @@ def stable_id_cmd(
                 bundle, path, build_proposed_content
             )
             apply_document_change(bundle, plan)
-        except (
-            DocumentChangeConflictError,
-            DocumentChangeSafetyError,
-            DocumentChangeApplyError,
-        ) as exc:
-            # A symlinked target swapped in after planning surfaces here as
-            # DocumentChangeConflictError (apply_document_change's own
-            # re-check), the same as any other concurrent-mutation race --
-            # not as DocumentChangePlanningError, since concept_id_to_path
-            # already resolves through any symlink present at planning time.
+        except DocumentChangeError as exc:
+            # Catch the base class, not an enumerated subset: a target
+            # replaced by a symlink between the informational read above and
+            # this call's own planning re-resolution of the path surfaces as
+            # DocumentChangePlanningError, not DocumentChangeConflictError --
+            # it must still exit(1) with a clean message like any other
+            # concurrent-mutation race caught here.
             click.echo(str(exc), err=True)
             sys.exit(1)
         click.echo(new_id)
