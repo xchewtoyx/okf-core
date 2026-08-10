@@ -21,10 +21,32 @@ context). Do the following:
    the Code Structure section (collector-loop delegation, thin CLI commands,
    complexity budget), the Testing Guidelines, and the Delivery Rules
    (doc-update-in-same-commit requirements, changelog conventions).
-4. **Read enough of the current source** (`src/okf_core/`) to know which
+4. **Read `docs/proposals/v0.5.0-replan/02-editing-requirements.md`** (the
+   editing/patching/maintenance requirements for the v0.5.0 re-plan) and
+   **scan `docs/decisions/`** (read `docs/decisions/README.md`'s index, then
+   any ADR whose subject looks relevant to this issue) before planning any
+   issue — not only ones that look editing-related on the surface. This is
+   mandatory, not conditional on the issue title: an issue that looks
+   unrelated to serialization or editing can still collide with an accepted
+   ADR's decision (e.g. a plan that reintroduces byte-identity assumptions
+   ADR-0001 retired). Note any `PROPOSED` (not yet `ACCEPTED`) ADR sections
+   you relied on as still-open, not binding.
+5. **Read enough of the current source** (`src/okf_core/`) to know which
    modules/functions the issue's request actually touches — don't guess file
    names from the issue title alone.
-5. Produce a plan with these parts, and nothing else:
+6. **Design it twice, for any issue touching a public contract.** If the
+   issue changes a public API surface, CLI command, config schema, or
+   on-disk format — anything a consumer or another module depends on —
+   sketch two genuinely different alternative designs (not one design and a
+   strawman) before committing to one. Name concretely why the loser lost
+   (not "more complex" alone — say what tradeoff it lost on: more new
+   dependencies, worse fit with an existing ADR, larger blast radius, weaker
+   test story, etc.). Include both sketches and the reasoning in your plan
+   output as an explicit **Design alternatives** section. Skip this step
+   only when the issue is a pure internal refactor, bugfix, or doc change
+   with no public-contract surface — say so explicitly rather than silently
+   omitting the section.
+7. Produce a plan with these parts, and nothing else:
    - **Blockers**: anything that must resolve before implementation can
      start. Empty list if none.
    - **Ordered subtasks**: concrete, sequential steps an implementor can
@@ -32,6 +54,9 @@ context). Do the following:
      `scan_bundle` to populate it", "add CLI flag `--foo` to `okf bar`",
      "write parametrized tests for cases A/B/C").
    - **Files likely touched**: a short list, not exhaustive.
+   - **Design alternatives** (only when step 6 applies): the two sketched
+     alternatives and why the loser lost. Omit this part, with a one-line
+     note why, when the issue has no public-contract surface.
    - **Acceptance criteria**: restate the issue's own acceptance criteria
      (or derive an explicit list if the issue didn't spell them out) as a
      checklist an approver can later verify mechanically.

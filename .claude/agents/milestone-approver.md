@@ -29,10 +29,15 @@ each criterion. Do not edit, write, or commit anything.
 2. For **each** criterion, independently verify it against the current
    branch state: run the relevant test(s), or exercise the CLI/library
    behavior directly yourself, or read the code path if a criterion is about
-   something that can't be exercised directly (e.g. "existing content stays
-   byte-identical" — check via a diff of before/after content, not by
-   trusting a docstring). Do not accept "the implementor's summary said so"
-   as evidence for any criterion.
+   something that can't be exercised directly. For example, "untargeted
+   frontmatter re-parses to an identical data model" is verified
+   *semantically* — parse the document before the operation, parse it again
+   after, and compare the two parsed data models field-by-field (untargeted
+   keys, their values, and their order per S1) — not by diffing raw bytes of
+   the two files, since a canonical-form rewrite (per ADR-0002) can produce
+   byte differences in untouched regions while still preserving the same
+   data model. Do not accept "the implementor's summary said so" as evidence
+   for any criterion.
 3. Also check the delivery-process gates from `AGENTS.md` Delivery Rules that
    apply regardless of what the issue says: tests exist for the delivered
    behavior, and required docs (`README.md`, `orientation.py`, CLI help,

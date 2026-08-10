@@ -1,5 +1,11 @@
 # Spike #177 — A repeatable delivery-loop postmortem pattern
 
+> **Status: design-only, not superseded.** No ADR under
+> [`docs/decisions/`](../decisions/README.md) currently governs this spike;
+> it stands as-is pending the follow-up implementation issue named in its
+> own "Follow-ups" section below. Check `docs/decisions/` for any ADR that
+> may have since adopted or superseded it.
+
 - **Issue:** [#177](https://github.com/xchewtoyx/okf-core/issues/177) (`type:design`)
 - **Epic:** [#164](https://github.com/xchewtoyx/okf-core/issues/164) Continuous Improvement: Delivery-loop process & tooling
 - **Blocks:** nothing directly — this spike's output is a design that a future
