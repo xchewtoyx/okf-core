@@ -256,6 +256,21 @@ def test_unknown_sibling_frontmatter_keys_untouched(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_plan_rejects_document_with_unparseable_frontmatter(tmp_path: Path) -> None:
+    """A document whose frontmatter fails to parse at all (not just its
+    `sources` value) must also be refused before any write, not just the
+    narrower "sources value itself is malformed" case."""
+    path = tmp_path / "topic.md"
+    original = "---\ntype: [unterminated\n---\nBody\n"
+    _write(path, original)
+    bundle = _bundle(tmp_path)
+
+    with pytest.raises(DocumentChangePlanningError, match="parse"):
+        plan_source_upsert(bundle, path, {"resource": "https://example.com/a"})
+
+    assert path.read_text(encoding="utf-8") == original
+
+
 def test_plan_rejects_non_list_existing_sources(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     original = "---\ntype: concept\nsources: not-a-list\n---\nBody\n"
