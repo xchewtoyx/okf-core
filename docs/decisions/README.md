@@ -66,10 +66,6 @@ rule.
 ## Citing external documents
 
 Citations in `docs/decisions/` and the instruction files that cite the same
-sources use an inline bracket slug, e.g. `[replan-plan]` or
-`[replan-plan: characterization-first]` for a specific named item within a
-plain (non-heading) numbered list — never a bare path, a list position
-number ("item 1"), or an unqualified section number. Slugs are permanent
-text identifiers: add a new slug for a new source, never renumber or reuse
-one. `references.md` in this directory is the canonical bibliography and
-registry of slugs — add an entry there before citing a new external source.
+sources use an inline bracket slug convention (never a bare path). See
+`references.md` in this directory for the citation rules and the canonical
+registry of slugs.

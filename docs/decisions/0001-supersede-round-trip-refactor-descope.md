@@ -5,8 +5,7 @@
   decision to close #148 as not planned and keep `patching.py`'s hand-rolled
   splice engines).
 - **Related:** ADR-0002 (canonical serialization form); the v0.5.0 re-plan
-  set (`docs/proposals/v0.5.0-replan/01-draft1-requirements-assessment.md`
-  through `[replan-plan]`).
+  document set in `docs/proposals/v0.5.0-replan/` (files `01` through `04`).
 
 ## Context
 
@@ -30,9 +29,9 @@ codebase analysis) independently quantifies the cost of keeping the
 byte-identity contract: nine hand-rolled parsing/span implementations across
 six modules, four inconsistent Markdown-escaping rules, and roughly 850 of
 `patching.py`'s 1,632 lines existing solely to guarantee byte-identity of
-untouched regions (`[replan-analysis]` §3.1, §3.2). Separately, the delivery loop's own
+untouched regions (`[replan-analysis] §3.1, §3.2`). Separately, the delivery loop's own
 change-engineering metric shows ~30% of all commits across the milestone are
-review-fix commits (`[replan-analysis]` §4) — evidence of real, ongoing rework cost, though not
+review-fix commits (`[replan-analysis] §4`) — evidence of real, ongoing rework cost, though not
 yet attributed to this specific machinery (see below).
 
 This ADR does not re-run #148's evidence gathering. The spike prototypes,
@@ -59,8 +58,8 @@ not merely to overrule them.
 **Partially met, and the reason it was only partial is the actual finding.**
 The evidence for recurring cost is real: nine hand-rolled parsers, four
 inconsistent Markdown-escaping rules, and a ~30% review-fix commit rate (see
-`[replan-analysis]` §3.2 for the parser
-count and escaping-rule count, and `[replan-analysis]` §4 for the review-fix rate). But #148's
+`[replan-analysis] §3.2` for the parser
+count and escaping-rule count, and `[replan-analysis] §4` for the review-fix rate). But #148's
 criterion assumed a mechanism that would *track* recurring cost across
 issues so it could be recognized as recurring rather than re-litigated as a
 fresh point-fix each time — and no such mechanism existed. The 30%
@@ -101,18 +100,18 @@ requirement it was testing for is no longer the one in force.
 ### The retired byte-identity test suite becomes a characterization baseline, not a correctness oracle
 
 `patching.py`'s ~850 byte-identity-guaranteeing lines
-(`[replan-analysis]` §3.1) and the
+(`[replan-analysis] §3.1`) and the
 ~40-45 tests (~1,000 lines, concentrated in `test_section_patching.py` and
 `test_frontmatter_patching.py`) that assert full byte-exact output — see
-`[replan-analysis]` §3.4 — were written as *correctness* oracles ("bytes
+`[replan-analysis] §3.4` — were written as *correctness* oracles ("bytes
 must not change"). They are retired **deliberately**, not silently: per
-`[replan-analysis]` §3.4's framing, they become *characterization baselines* ("has behavior
+`[replan-analysis] §3.4`'s framing, they become *characterization baselines* ("has behavior
 changed from the pinned snapshot?") during each extraction step of the
 refactor, then their byte-exactness assertions are consciously dropped once
 each extraction step lands, rather than being carried forward as the
 project's actual correctness contract. The distinction matters for anyone
 touching this code during the refactor: a failing byte-pinning assertion
-during Step 1-2 of the refactor (per `[replan-analysis]` §5's dependency-ordered runway) is
+during Step 1-2 of the refactor (per `[replan-analysis] §5`'s dependency-ordered runway) is
 expected drift being characterized, not a regression to fix by restoring
 byte-identical output. See AGENTS.md's "characterization-first" rule (added
 by issue #193) for the same principle applied prospectively to any future
@@ -136,7 +135,7 @@ parsing/serialization deletion.
   than re-deriving it.
 - **Supersede #148 silently by just proceeding with the refactor.**
   Rejected: `requirements-architecture/architectural-decision-capture`
-  (cited in `[replan-analysis]` §4) is explicit that the rationale is
+  (cited in `[replan-analysis] §4`) is explicit that the rationale is
   the knowledge that goes missing first. A future planner re-reading
   `docs/spikes/148-round-trip-refactor-descope.md` without this ADR would
   see an accepted "not planned" decision and have to re-derive why it no
