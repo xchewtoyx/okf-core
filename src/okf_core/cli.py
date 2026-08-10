@@ -23,6 +23,7 @@ from okf_core import (
     SearchConfigError,
     TaxonomyConfig,
     __version__,
+    apply_document_change,
     backlinks_to,
     build_bundle_graph,
     build_context_pack,
@@ -35,6 +36,8 @@ from okf_core import (
     neighborhood,
     okf_version_for_index_write,
     parse_concept_document,
+    plan_document_change,
+    plan_document_change_from_reader,
     render_index_document,
     scan_bundle,
     search_concepts,
@@ -131,8 +134,14 @@ def _index_one_directory(
     """Generate and write ``index.md`` for a single directory ``d``.
 
     Returns the JSON-serializable result dict for ``d`` (``path``, ``entries``,
-    ``problems``, ``scan_problems``, ``excluded_reserved_files``). Callers own
-    all CLI echoing and exit-code decisions.
+    ``problems``, ``scan_problems``, ``excluded_reserved_files``,
+    ``write_conflict``). ``write_conflict`` is ``None`` when the write
+    succeeded and a message string when a concurrent change (or a failure
+    while installing the new content) was caught while writing -- the
+    directory's ``index.md`` is left unchanged in that case. When
+    ``write_conflict`` is set, ``entries`` is reported as ``0`` rather than
+    the count from the generated-but-discarded body, since nothing was
+    actually written. Callers own all CLI echoing and exit-code decisions.
     """
     direct_entries = concepts_by_parent.get(d, [])
     subdirs = sorted(child for child in concept_dirs if child.parent == d)
@@ -165,11 +174,28 @@ def _index_one_directory(
         okf_version=okf_version_for_index_write(bundle, d, force),
     )
     index_path.parent.mkdir(parents=True, exist_ok=True)
-    index_path.write_text(body, encoding="utf-8", newline="\n")
+
+    write_conflict: str | None = None
+    try:
+        plan = plan_document_change(bundle, index_path, body, allow_missing=True)
+        apply_document_change(bundle, plan)
+    except DocumentChangeError as exc:
+        # Catch the base class, not an enumerated subset: a target replaced
+        # by a symlink between the earlier informational scan and this
+        # planning call surfaces as DocumentChangePlanningError, which must
+        # be reported the same clean way as a conflict or apply failure
+        # rather than propagating as an uncaught traceback.
+        write_conflict = str(exc)
+
+    # entries_written above counts candidates in the generated-but-possibly-
+    # discarded body. When the write was refused, that body never reached
+    # disk, so reporting entries_written here would claim entries were
+    # written when they were not; report 0 instead.
+    reported_entries = 0 if write_conflict is not None else entries_written
 
     return {
         "path": str(index_path),
-        "entries": entries_written,
+        "entries": reported_entries,
         "problems": [
             {"concept_id": p.concept_id, "message": p.message}
             for p in generated.problems
@@ -179,7 +205,64 @@ def _index_one_directory(
             for p in scan_problems_in_dir
         ],
         "excluded_reserved_files": excluded_reserved_files,
+        "write_conflict": write_conflict,
     }
+
+
+def _index_result_has_problems(dir_result: dict[str, Any]) -> bool:
+    """Return whether a single directory's index result should fail the command."""
+
+    return bool(
+        dir_result["problems"]
+        or dir_result["scan_problems"]
+        or dir_result["write_conflict"]
+    )
+
+
+def _echo_index_result(
+    bundle: BundleConfig,
+    d: Path,
+    dir_result: dict[str, Any],
+    *,
+    recurse: bool,
+) -> None:
+    """Echo the per-directory status line(s) for one ``_index_one_directory`` result."""
+
+    if recurse:
+        rel_path = d.relative_to(bundle.bundle_root).as_posix()
+        d_str = f" at {rel_path!r}" if rel_path and rel_path != "." else ""
+    else:
+        d_str = ""
+
+    if dir_result["write_conflict"]:
+        # A conflict means index.md was NOT written -- echo only the conflict
+        # (plus an explicit "not written" note), never the success-style
+        # "Wrote index.md" line below, which would contradict it.
+        click.echo(dir_result["write_conflict"], err=True)
+        click.echo(
+            f"index.md for bundle {bundle.name!r}{d_str} was not written "
+            "due to the conflict above; the existing file is left unchanged.",
+            err=True,
+        )
+        return
+
+    entries_written = dir_result["entries"]
+    click.echo(
+        f"Wrote index.md for bundle {bundle.name!r}{d_str}: "
+        f"{entries_written} entries, {len(dir_result['problems'])} problems, "
+        f"{len(dir_result['scan_problems'])} scan errors",
+        err=True,
+    )
+
+    excluded_reserved_files = dir_result["excluded_reserved_files"]
+    if entries_written == 0 and excluded_reserved_files:
+        filenames = ", ".join(item["filename"] for item in excluded_reserved_files)
+        click.echo(
+            "No index entries were written; "
+            f"{len(excluded_reserved_files)} file(s) in the target directory "
+            f"were excluded by reserved_filenames: {filenames}",
+            err=True,
+        )
 
 
 @click.group()
@@ -732,17 +815,30 @@ def stable_id_cmd(
     new_id = str(uuid.uuid4())
 
     if write:
-        write_safety_problem = check_bundle_write_safety(bundle)
-        if write_safety_problem is not None:
-            click.echo(write_safety_problem.message, err=True)
-            sys.exit(1)
+        stable_id_field = bundle.stable_id_field
 
-        document.frontmatter[bundle.stable_id_field] = new_id
+        def build_proposed_content(_resolved_path: Path, original_content: str) -> str:
+            # Re-parses the plan's own frozen original_content (not the
+            # `document` read above, which only informed the has_valid_id
+            # check) so a concurrent edit between that read and this one is
+            # caught by the plan's hash check instead of silently discarded.
+            parsed_document = parse_concept_document(original_content)
+            parsed_document.frontmatter[stable_id_field] = new_id
+            return serialize_concept_document(parsed_document)
+
         try:
-            serialized = serialize_concept_document(document)
-            path.write_text(serialized, encoding="utf-8", newline="\n")
-        except Exception as exc:  # noqa: BLE001 - CLI error boundary, report and exit
-            click.echo(f"Error writing concept document: {exc}", err=True)
+            plan = plan_document_change_from_reader(
+                bundle, path, build_proposed_content
+            )
+            apply_document_change(bundle, plan)
+        except DocumentChangeError as exc:
+            # Catch the base class, not an enumerated subset: a target
+            # replaced by a symlink between the informational read above and
+            # this call's own planning re-resolution of the path surfaces as
+            # DocumentChangePlanningError, not DocumentChangeConflictError --
+            # it must still exit(1) with a clean message like any other
+            # concurrent-mutation race caught here.
+            click.echo(str(exc), err=True)
             sys.exit(1)
         click.echo(new_id)
         click.echo(f"Wrote stable ID {new_id} to {path}", err=True)
@@ -1049,6 +1145,7 @@ def index_cmd(
                 ],
                 "scan_problems": [],
                 "excluded_reserved_files": [],
+                "write_conflict": None,
             }
             click.echo(
                 json.dumps([result] if recurse else result, cls=_Encoder, indent=2)
@@ -1101,39 +1198,11 @@ def index_cmd(
         )
         results.append(dir_result)
 
-        entries_written = dir_result["entries"]
-        excluded_reserved_files = dir_result["excluded_reserved_files"]
-
-        if dir_result["problems"] or dir_result["scan_problems"]:
+        if _index_result_has_problems(dir_result):
             has_any_problems = True
 
         if not quiet:
-            if recurse:
-                rel_path = d.relative_to(bundle.bundle_root).as_posix()
-                d_str = f" at {rel_path!r}" if rel_path and rel_path != "." else ""
-                click.echo(
-                    f"Wrote index.md for bundle {bundle.name!r}{d_str}: "
-                    f"{entries_written} entries, {len(dir_result['problems'])} problems, "
-                    f"{len(dir_result['scan_problems'])} scan errors",
-                    err=True,
-                )
-            else:
-                click.echo(
-                    f"Wrote index.md for bundle {bundle.name!r}: "
-                    f"{entries_written} entries, {len(dir_result['problems'])} problems, "
-                    f"{len(dir_result['scan_problems'])} scan errors",
-                    err=True,
-                )
-            if entries_written == 0 and excluded_reserved_files:
-                filenames = ", ".join(
-                    item["filename"] for item in excluded_reserved_files
-                )
-                click.echo(
-                    "No index entries were written; "
-                    f"{len(excluded_reserved_files)} file(s) in the target directory "
-                    f"were excluded by reserved_filenames: {filenames}",
-                    err=True,
-                )
+            _echo_index_result(bundle, d, dir_result, recurse=recurse)
 
     if not quiet:
         output_data = results if recurse else results[0]

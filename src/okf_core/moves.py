@@ -28,6 +28,7 @@ from okf_core.patching import (
     apply_document_change,
     apply_file_move,
     link_target_for_new_location,
+    plan_document_change,
     plan_file_move,
     plan_markdown_link_rewrite,
 )
@@ -240,7 +241,13 @@ def _regenerate_affected_indexes(
     (that's a separate ``okf validate``/``okf index --profile`` concern,
     orthogonal to keeping an existing index's concept listing in sync with a
     move); this only affects which non-fatal IndexProblem entries would be
-    reported, not what gets written.
+    reported, not what gets written. Each refresh goes through
+    ``plan_document_change``/``apply_document_change`` (no ``allow_missing``,
+    since the ``is_file()`` filter above already requires the target to
+    exist): a concurrent edit to that ``index.md`` between planning and
+    applying the refresh raises ``DocumentChangeConflictError`` rather than
+    silently overwriting it, propagating out of ``move_concept`` like any
+    other step's failure.
     """
 
     existing = sorted(d for d in directories if (d / "index.md").is_file())
@@ -262,7 +269,13 @@ def _regenerate_affected_indexes(
             okf_version=okf_version_for_index_write(bundle, directory, force=False),
         )
         index_path = directory / "index.md"
-        index_path.write_text(body, encoding="utf-8", newline="\n")
+        # No allow_missing=True: the `is_file()` filter above already
+        # requires an existing index.md, and a target that vanished between
+        # that check and here must surface as a conflict, not silently
+        # create one -- a move should never opt a directory into index
+        # generation it never had.
+        plan = plan_document_change(bundle, index_path, body)
+        apply_document_change(bundle, plan)
         regenerated.append(index_path)
 
     return tuple(regenerated)

@@ -59,3 +59,5 @@ boundaries, which no single review round can see on its own.
 ## Log
 
 <!-- Entries appended below, oldest first. -->
+
+2026-08-10 | #194 | 1 | narrow-except | stable_id_cmd and _index_one_directory catch only a subset of DocumentChangeError subclasses (missing DocumentChangePlanningError, and DocumentChangeSafetyError in the index path), unlike move_cmd/graph_repair_cmd's existing catch-the-base-class pattern, so a planning-time race (e.g. symlink swapped in right before plan_document_change[_from_reader] reads the target) crashes with an unhandled traceback instead of the documented graceful exit(1)
