@@ -16,7 +16,7 @@ import yaml
 from markdown_it import MarkdownIt
 from ruamel.yaml import YAML
 from ruamel.yaml import YAMLError as RuamelYAMLError
-from ruamel.yaml.comments import CommentedMap
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
 from yaml.nodes import MappingNode
 
 from okf_core.change_envelope import (
@@ -86,9 +86,15 @@ def _make_frontmatter_yaml() -> YAML:
     construction cost is negligible for file-at-a-time frontmatter
     operations (see the #117 spike).
 
-    Round-trip mode keeps comments, key order, anchors/aliases, and
-    per-node flow/block style on any key a merge does not touch; ADR-0002
-    documents the resulting canonical form. `preserve_quotes` keeps
+    Round-trip mode keeps comments, key order, and anchors/aliases on any
+    key a merge does not touch; ADR-0002 documents the resulting canonical
+    form. Per-node flow/block style hints the loader also preserves are
+    deliberately cleared before dump (see `_normalize_container_style`) so
+    an untouched flow-style collection still converges to block form on the
+    document's first edit, rather than surviving indefinitely -- forcing
+    `default_flow_style=False` here alone does not achieve this, since a
+    loaded node's own preserved style hint takes priority over the
+    dumper-level default (confirmed empirically). `preserve_quotes` keeps
     original quote style on untouched scalars; `width` is set high so long
     scalars are not hard-wrapped mid-value.
     """
@@ -478,12 +484,15 @@ def plan_frontmatter_merge(
     Frontmatter is parsed with a round-trip YAML loader, mutated in place
     (targeted keys are replaced, missing keys are appended in update order),
     and re-serialized in `okf-core`'s documented canonical form (ADR-0002):
-    key order and comments on untouched keys are preserved, output uses
-    block style and LF line endings regardless of the source document's
-    style, and quote style is not guaranteed to survive on a touched value.
-    A non-canonical but conformant input converges to canonical form on its
-    first edit; this may produce one-time formatting churn in that edit's
-    diff, which is expected rather than a defect.
+    key order and comments on untouched keys are preserved, the *whole*
+    document (including untouched sibling collections, not just targeted
+    keys) is emitted in block style with LF line endings regardless of the
+    source document's style, and quote style is not guaranteed to survive
+    on a touched value. A non-canonical but conformant input converges to
+    canonical form on its first edit; this may produce one-time formatting
+    churn in that edit's diff, which is expected rather than a defect. A
+    merge that resolves to a no-op never rewrites the file, so an untouched
+    document's formatting is unaffected until an edit actually happens.
 
     Update values may contain plain YAML-oriented scalars, dates, datetimes,
     lists, and string-keyed dictionaries. An update whose value already
@@ -779,16 +788,56 @@ def _load_frontmatter(path: Path, yaml_source: str) -> CommentedMap:
     return CommentedMap() if data is None else data
 
 
+def _normalize_container_style(node: Any) -> None:
+    """Recursively clear preserved flow-style hints so every mapping/sequence
+    in *node* dumps in block form, regardless of the source document's style.
+
+    ADR-0002's convergence framework (R-C2/R-C3) is per-document, on first
+    touch: touching any part of a non-canonical document brings the *whole*
+    document to canonical form, not just the keys an edit targets. ruamel's
+    round-trip loader records each mapping/sequence's original flow-vs-block
+    style as a per-node hint (`.fa`) that survives into the dumped output
+    independently of the `YAML` instance's own `default_flow_style` setting
+    -- empirically, setting `default_flow_style=False` on the dumper does
+    *not* override a loaded node's own preserved style hint, so an untouched
+    flow-style sibling would otherwise survive an edit unchanged forever.
+    Explicitly clearing the hint on every mapping/sequence node (loaded or
+    freshly assigned by an update) is the only way to make that happen.
+    Only container *style* is touched here; comments, key order, and quote
+    style on untouched scalars are unaffected.
+    """
+
+    if isinstance(node, CommentedMap):
+        node.fa.set_block_style()
+        for value in node.values():
+            _normalize_container_style(value)
+    elif isinstance(node, CommentedSeq):
+        node.fa.set_block_style()
+        for item in node:
+            _normalize_container_style(item)
+    elif isinstance(node, dict):
+        for value in node.values():
+            _normalize_container_style(value)
+    elif isinstance(node, list):
+        for item in node:
+            _normalize_container_style(item)
+
+
 def _dump_frontmatter(path: Path, data: CommentedMap) -> str:
     """Dump a frontmatter ``CommentedMap`` in `okf-core`'s canonical form.
 
     Block style and LF line endings are the round-trip dumper's own
-    defaults; no post-processing is applied, per ADR-0002. Uses a fresh
-    `YAML` instance (see `_make_frontmatter_yaml`) so a dump failure here
-    raises cleanly instead of leaving a shared instance poisoned for the
-    next, unrelated document's merge.
+    defaults for any node without its own preserved style hint;
+    `_normalize_container_style` clears hints preserved from the source
+    document so the *whole* document -- not just the keys this dump's
+    caller touched -- converges to block form, per ADR-0002. No other
+    post-processing is applied. Uses a fresh `YAML` instance (see
+    `_make_frontmatter_yaml`) so a dump failure here raises cleanly instead
+    of leaving a shared instance poisoned for the next, unrelated
+    document's merge.
     """
 
+    _normalize_container_style(data)
     buffer = io.StringIO()
     try:
         _make_frontmatter_yaml().dump(data, buffer)
@@ -897,32 +946,21 @@ def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
         raise DocumentChangePlanningError(path, "Merged frontmatter is not a mapping")
 
 
-# ruamel's round-trip loader returns str/int/float/bool *subclasses*
-# (e.g. SingleQuotedScalarString, ScalarInt, ScalarBoolean) that carry
-# source formatting alongside the plain value. `_yaml_values_equal` is a
-# semantic (data-model) comparison, so these formatting subclasses must be
-# normalized to their plain base type before comparing -- otherwise a
-# round-tripped value would never compare equal to the plain Python literal
-# an update supplies, and every no-op check on a quoted/formatted scalar
-# would spuriously report "changed". Only ruamel's own formatting
-# subclasses are normalized here; real semantic types (bool vs int, date vs
-# str) keep their own distinct type and are unaffected. `bool` is checked
-# before `int` because `bool` is itself an `int` subclass in Python.
-def _normalize_yaml_scalar_type(value: Any) -> type:
-    if isinstance(value, bool):
-        return bool
-    if isinstance(value, str):
-        return str
-    if isinstance(value, int):
-        return int
-    if isinstance(value, float):
-        return float
-    return type(value)
-
-
+# `_yaml_values_equal` compares `document.frontmatter` (PyYAML's plain-dict
+# parse, used for no-op detection in `_merge_frontmatter`) against an
+# update value already constrained to plain builtin types by
+# `_validate_frontmatter_update_value`. Neither side is ever a value loaded
+# by the ruamel round-trip engine -- that engine's `CommentedMap`/`data` is
+# mutated directly and never routed through this comparison -- so a plain
+# `type(...) is not type(...)` check is sufficient here; there is no
+# ruamel-specific formatting subclass (e.g. `SingleQuotedScalarString`,
+# `ScalarInt`) for this comparison to ever see. Do not reintroduce
+# subclass normalization without first tracing a real call path that
+# passes a ruamel-loaded value here, per AGENTS.md's guidance against
+# defensive handling for scenarios that cannot happen.
 def _yaml_values_equal(left: Any, right: Any) -> bool:
-    left_type = _normalize_yaml_scalar_type(left)
-    if left_type is not _normalize_yaml_scalar_type(right):
+    left_type = type(left)
+    if left_type is not type(right):
         return False
     if left_type is dict:
         if left.keys() != right.keys():

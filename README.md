@@ -427,8 +427,12 @@ empty updates produce a no-op; `None` is written as YAML `null`.
 A frontmatter block that is non-canonical but otherwise conformant (e.g. a
 flow-style list, or non-block indentation) is accepted with no
 precondition to canonicalize the file first; its first edit converges the
-touched value(s) to canonical form, which can produce one-time formatting
-churn in that edit's diff — this is expected, not a defect, per ADR-0002.
+*whole document* to canonical form — including untouched sibling
+collections, not just the key(s) the edit targets — which can produce
+one-time formatting churn in that edit's diff. This is expected, not a
+defect, per ADR-0002; a no-op merge (nothing actually changes) never
+rewrites the file, so an unedited document's formatting is untouched until
+an edit actually happens.
 
 Requested values may use plain `str`, `bool`, `int`, finite `float`, `None`,
 `datetime.date`, and `datetime.datetime` values, plus recursively nested plain

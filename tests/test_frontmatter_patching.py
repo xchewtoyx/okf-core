@@ -201,6 +201,45 @@ def test_merge_canonicalizes_noncanonical_input_on_first_edit(tmp_path: Path) ->
     assert parsed.frontmatter["tags"] == ["alpha", "beta", "gamma"]
 
 
+def test_merge_canonicalizes_untouched_flow_style_sibling(tmp_path: Path) -> None:
+    """ADR-0002's "first touch canonicalizes the whole document" convergence
+    (R-C2/R-C3) applies document-wide, not just to the key(s) an edit
+    targets: editing `owner` here must also bring the untouched, sibling
+    `tags` flow-style list to block form, not leave it flow-style forever.
+    """
+    path = tmp_path / "topic.md"
+    path.write_text(
+        "---\ntype: concept\ntags: [alpha, beta]\nowner: old\n---\nBody\n",
+        encoding="utf-8",
+    )
+
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"owner": "new"})
+
+    assert plan.changed is True
+    assert "tags:\n- alpha\n- beta\n" in plan.proposed_content
+    parsed = parse_concept_document(plan.proposed_content)
+    assert parsed.frontmatter["tags"] == ["alpha", "beta"]
+    assert parsed.frontmatter["owner"] == "new"
+
+
+def test_merge_noop_does_not_canonicalize_untouched_flow_style_sibling(
+    tmp_path: Path,
+) -> None:
+    """Convergence is per-document *on first edit*, never a precondition
+    (ADR-0002 framework point 5 / R-C2): a merge that resolves to a no-op
+    (every requested value already matches) must not rewrite the document
+    at all, so an untouched flow-style collection stays exactly as written
+    until an edit actually touches the document."""
+    path = tmp_path / "topic.md"
+    original = "---\ntype: concept\ntags: [alpha, beta]\nowner: team\n---\nBody\n"
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"owner": "team"})
+
+    assert plan.changed is False
+    assert plan.proposed_content == original
+
+
 def test_merge_returns_noop_for_type_equivalent_nested_values(
     tmp_path: Path,
 ) -> None:
@@ -224,6 +263,39 @@ def test_merge_returns_noop_for_type_equivalent_nested_values(
 
     assert plan.changed is False
     assert plan.proposed_content == original
+
+
+def test_merge_replaces_nested_mapping_with_new_values(tmp_path: Path) -> None:
+    """Semantic successor to the retired byte-exact
+    `test_merge_replaces_block_mapping_with_preserved_indentation` (dropped
+    when the span-splice engine was replaced, per #195 round-1 review): a
+    nested mapping value that is genuinely *different* takes effect
+    correctly on reparse, and an unrelated sibling key is left untouched.
+    Not byte-exact, since the canonical-form engine no longer promises the
+    old engine's preserved-indentation byte shape (ADR-0002)."""
+    path = tmp_path / "topic.md"
+    path.write_text(
+        "---\n"
+        "type: concept\n"
+        "meta:\n"
+        "  owner: old\n"
+        "  count: 1\n"
+        "next: keep\n"
+        "---\n"
+        "Body\n",
+        encoding="utf-8",
+    )
+
+    plan = plan_frontmatter_merge(
+        _bundle(tmp_path),
+        path,
+        {"meta": {"owner": "new", "count": 2}},
+    )
+
+    assert plan.changed is True
+    parsed = parse_concept_document(plan.proposed_content)
+    assert parsed.frontmatter["meta"] == {"owner": "new", "count": 2}
+    assert parsed.frontmatter["next"] == "keep"
 
 
 def test_merge_does_not_treat_boolean_and_integer_as_equivalent(
@@ -656,39 +728,15 @@ def test_merge_frontmatter_failure_on_one_document_does_not_affect_next(
 
 
 # ---------------------------------------------------------------------------
-# _yaml_values_equal -- ruamel round-trip scalar subtype normalization (#195)
+# _yaml_values_equal -- semantic no-op comparison (#195)
+#
+# Both sides this function ever actually compares (`document.frontmatter`,
+# PyYAML's plain-dict parse, vs. a validated update value) are plain
+# builtin types -- never a ruamel round-trip formatting subclass, since the
+# ruamel-loaded `CommentedMap` is mutated directly and never routed through
+# this comparison. See the comment above `_yaml_values_equal` in
+# patching.py for the full trace.
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("yaml_source", "key", "plain_value"),
-    [
-        ('value: "quoted"\n', "value", "quoted"),
-        ("value: 'quoted'\n", "value", "quoted"),
-        ("value: 0x10\n", "value", 16),
-        ("value: 1_000\n", "value", 1000),
-        ("value: 1.5\n", "value", 1.5),
-    ],
-)
-def test_yaml_values_equal_normalizes_ruamel_scalar_subtypes(
-    yaml_source: str,
-    key: str,
-    plain_value: Any,
-) -> None:
-    """A ruamel round-trip scalar (e.g. ``DoubleQuotedScalarString``,
-    ``HexInt``) must compare equal to the plain Python value it represents.
-
-    Without normalizing these formatting subclasses to their base type
-    first, ``type(left) is not type(right)`` rejects every one of these
-    pairs even though they are the same value -- exactly the bug this test
-    pins: re-applying an update whose value already matches, just via a
-    differently-formatted source scalar, must stay a no-op.
-    """
-    data = _load_frontmatter(Path("frontmatter.yaml"), yaml_source)
-    loaded_value = data[key]
-
-    assert type(loaded_value) is not type(plain_value)
-    assert _yaml_values_equal(loaded_value, plain_value) is True
 
 
 @pytest.mark.parametrize(
@@ -704,8 +752,9 @@ def test_yaml_values_equal_preserves_real_type_distinctions(
     left: Any,
     right: Any,
 ) -> None:
-    """Normalizing ruamel's formatting subclasses must not blur the
-    semantic type distinctions the merge contract already relies on."""
+    """Semantically distinct types (bool vs int, date vs str) must never
+    compare equal even though one is a subtype/related representation of
+    the other."""
     assert _yaml_values_equal(left, right) is False
 
 
