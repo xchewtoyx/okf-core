@@ -16,6 +16,23 @@ overhead for this narrow, well-scoped syntax. Scanning only ``text`` inline
 children (mirroring ``_markdown_inline.py``'s ``code_inline`` exclusion)
 keeps labels inside fenced/inline code or link destinations from being
 mistaken for prose citations.
+
+The parser instance below has CommonMark's ``reference`` block rule
+disabled. Without that, whenever a ``[^label]: text`` definition's *text*
+happens to parse as a valid link destination (a bare URL is the natural
+case, following a source-citation footnote), markdown-it's block-level
+reference-definition rule silently consumes that line as a genuine link
+reference definition -- no ``inline`` token is ever emitted for it -- and
+then rewrites *every* other ``[^label]`` occurrence anywhere in the
+document into a ``link_open``/text/``link_close`` span, since it now
+resolves as a shortcut reference link. Either way the occurrence never
+reaches the ``text``-child regex scan below: the definition line vanishes
+silently, and every reference to that label vanishes with it. Disabling
+``reference`` leaves ``[^label]``/``[^label]:`` as literal text in both
+positions regardless of what the definition text looks like, while leaving
+the ``link`` inline rule (real ``[text](url)`` links) and code-span/fenced
+handling untouched -- there is no known reference-definition-shaped input
+this scanner needs to treat as opaque.
 """
 
 from __future__ import annotations
@@ -30,7 +47,7 @@ from markdown_it import MarkdownIt
 from okf_core._markdown_inline import token_line
 from okf_core.documents import ValidationFinding
 
-_MARKDOWN = MarkdownIt("commonmark")
+_MARKDOWN = MarkdownIt("commonmark").disable("reference")
 
 # A footnote label stops at the first "]" or whitespace; an immediately
 # following ":" distinguishes a definition ("[^label]: text") from a
