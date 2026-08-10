@@ -20,5 +20,5 @@ one.
 
 - `01-draft1-requirements-assessment.md` (`docs/proposals/v0.5.0-replan/`)
   predates this registry and has no slug — cite it by bare path if ever
-  needed, rather than registering a full slug for a document that is
-  otherwise cited nowhere in `docs/decisions/`.
+  needed. It is cited only in ADR-0001's Related line via this sanctioned
+  exception, so a full slug/registry entry isn't warranted.
