@@ -367,7 +367,12 @@ def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
         findings_dict: dict[str, list[dict[str, Any]]] = {}
         for path, path_findings in findings.items():
             findings_dict[str(path)] = [
-                {"severity": f.severity, "message": f.message, "field": f.field}
+                {
+                    "severity": f.severity,
+                    "message": f.message,
+                    "field": f.field,
+                    "line": f.line,
+                }
                 for f in path_findings
             ]
             for f in path_findings:

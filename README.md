@@ -156,9 +156,11 @@ Validates all concept documents against the configured profile:
 okf validate [--config PATH] [--bundle NAME] [--quiet]
 ```
 
-Output: `{"bundle": "...", "findings": {"path": [{"severity": "...", "message": "...", "field": "..."}]}}`
+Output: `{"bundle": "...", "findings": {"path": [{"severity": "...", "message": "...", "field": "...", "line": ...}]}}`
 
-Only paths with findings appear as keys. Exits `1` if any error-severity findings are present; exits `0` if there are only warnings or no findings.
+Only paths with findings appear as keys. `line` is the 1-based source line the finding pertains to when known (e.g. a footnote occurrence in the body), and `null` otherwise (e.g. a frontmatter-only finding). Exits `1` if any error-severity findings are present; exits `0` if there are only warnings or no findings.
+
+Findings include an attribution consistency check (spec §5.1): a `[^label]` footnote reference or `[^label]:` definition in the body whose label has no matching `sources[].id` in frontmatter is an error, and a declared `sources[].id` that no footnote ever cites is a warning (an unreferenced source is legal, so this is advisory rather than an error). A document with neither footnotes nor `sources` reports nothing from this check.
 
 Use `--quiet` or `-q` to suppress validation findings (on stdout) and the validation summary (on stderr), leaving the exit code as the sole signal for validation success/failure. Note that configuration/load errors (which exit with code `2`) are still printed to stderr.
 
@@ -536,7 +538,9 @@ Matching is driven entirely by parsing the document with `markdown-it-py`: each 
 - Undocumented custom frontmatter fields (warnings if present but not defined in the profile or standard OKF fields; skipped if `is_directory_meta=True`).
 - Taxonomy type rules (errors if type violates profile/project `allowed_types`, warnings if type violates `known_types`). Note that if `is_directory_meta=True` is provided and the document type starts with an underscore (such as `_directory`), taxonomy checks are bypassed to accommodate local directory metadata without taxonomy configuration changes.
 
-`validate_bundle(bundle, config)` scans a bundle and validates all of its concept documents against the configured profile, returning a mapping of file paths to their respective validation findings. Any scan or parsing failures are reported as validation errors.
+`validate_bundle(bundle, config)` scans a bundle and validates all of its concept documents against the configured profile, returning a mapping of file paths to their respective validation findings. Any scan or parsing failures are reported as validation errors. It also runs `check_attribution_consistency()` (below) against every concept unconditionally, since the check is base spec behavior rather than profile-specific.
+
+`check_attribution_consistency(frontmatter, body)` joins the per-claim attribution footnotes in a concept's `body` against its `sources[].id` frontmatter (spec §5.1), returning a tuple of `ValidationFinding` objects. A `[^label]` footnote reference or `[^label]:` definition whose label has no matching `sources[].id` is an `"error"` finding with `field` set to the label and `line` set to its 1-based source line. A `sources[].id` that no footnote (reference or definition) ever cites is a `"warning"` finding with `field` set to the source id (`line` is `None`, since an unreferenced source has no single occurrence to point at) -- an unreferenced source is legal, so this is advisory rather than an error. A `sources` entry without an `id` is not a join candidate (`id` is optional per §5.1) and is silently skipped. `extract_footnote_occurrences(body)` returns the underlying `FootnoteOccurrence` tuple (`label`, `line`, `is_definition`) that `check_attribution_consistency()` joins against `sources[].id`; it is exported for callers that want the raw occurrences without the join.
 
 ### Concept ID and Path Resolution
 
