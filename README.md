@@ -484,7 +484,10 @@ path, or free-text scope description) and any of the optional §5.1 fields:
 label for per-claim attribution), `title`, and the credibility signals
 `author`, `usage_count`, `last_modified`, plus a per-entry `usage_window`
 override. Fields beyond this base shape are not otherwise validated or
-interpreted. `DocumentChangePlanningError` is raised for a malformed
+interpreted. An explicit `id: None` is treated the same as omitting `id`
+entirely, including in the stored shape: it is stripped before writing, so
+the persisted entry never carries a literal `id: null`.
+`DocumentChangePlanningError` is raised for a malformed
 `source` argument, and -- before any write -- for a document whose existing
 `sources` frontmatter value is not a list, or whose entries don't meet the
 same shape.

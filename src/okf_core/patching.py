@@ -606,10 +606,13 @@ def _validate_source_entry(
     distinguishes the two in the raised message. §5.1 requires ``resource``
     to be a non-empty string; ``id``, when present, must also be a
     non-empty string, since it doubles as a Markdown footnote label.
-    ``None`` for ``id`` is treated the same as its absence. Every other key
-    is optional and returned as-is, unvalidated: per AGENTS.md, this
-    operation deliberately does not enforce a schema on ``title`` or the
-    credibility signals beyond this base shape.
+    ``None`` for ``id`` is treated the same as its absence: an explicit
+    ``id: None`` is stripped from the returned mapping so a caller never
+    gets a literal ``id: null`` written into frontmatter, matching §5.1's
+    "present with a value, or fully omitted" shape for the optional
+    field. Every other key is optional and returned as-is, unvalidated:
+    per AGENTS.md, this operation deliberately does not enforce a schema
+    on ``title`` or the credibility signals beyond this base shape.
     """
     if not isinstance(source, Mapping):
         raise DocumentChangePlanningError(
@@ -629,6 +632,8 @@ def _validate_source_entry(
             f"{context} sources entry 'id' must be a non-empty string when "
             f"present: {source!r}",
         )
+    if "id" in source and entry_id is None:
+        return {key: value for key, value in source.items() if key != "id"}
     return source
 
 

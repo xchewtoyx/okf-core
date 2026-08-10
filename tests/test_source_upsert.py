@@ -376,7 +376,9 @@ def test_plan_rejects_candidate_with_invalid_id(
 
 
 def test_plan_accepts_candidate_with_none_id(tmp_path: Path) -> None:
-    """`id: None` is treated the same as `id` being absent."""
+    """`id: None` is treated the same as `id` being absent -- including in
+    the stored shape: the serialized frontmatter must omit `id` entirely
+    rather than store a literal `id: null`."""
     path = tmp_path / "topic.md"
     _write(path, "---\ntype: concept\n---\nBody\n")
     bundle = _bundle(tmp_path)
@@ -386,6 +388,10 @@ def test_plan_accepts_candidate_with_none_id(tmp_path: Path) -> None:
     )
 
     assert plan.changed is True
+    parsed = parse_concept_document(plan.proposed_content)
+    stored_entry = parsed.frontmatter["sources"][0]
+    assert "id" not in stored_entry
+    assert stored_entry == {"resource": "https://example.com/a"}
 
 
 def test_plan_rejects_malformed_candidate_before_reading_target(
