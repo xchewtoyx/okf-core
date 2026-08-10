@@ -74,15 +74,28 @@ __all__ = [
 
 _MARKDOWN = MarkdownIt("commonmark")
 
-# The frontmatter engine: a single shared round-trip YAML instance used to
-# load, mutate in place, and dump frontmatter mappings. Round-trip mode keeps
-# comments, key order, anchors/aliases, and per-node flow/block style on any
-# key a merge does not touch; ADR-0002 documents the resulting canonical
-# form. `preserve_quotes` keeps original quote style on untouched scalars;
-# `width` is set high so long scalars are not hard-wrapped mid-value.
-_FRONTMATTER_YAML = YAML(typ="rt")
-_FRONTMATTER_YAML.preserve_quotes = True
-_FRONTMATTER_YAML.width = 10_000
+
+def _make_frontmatter_yaml() -> YAML:
+    """Build a fresh round-trip YAML instance for one frontmatter operation.
+
+    A new instance is constructed on every call rather than shared, because
+    ``ruamel.yaml``'s ``YAML.dump``/``dump_all`` stash internal state on the
+    instance for the duration of a call and only clear it on the success
+    path: a failed dump on one document would otherwise leave a shared
+    instance poisoned for the next, unrelated document's merge. Per-call
+    construction cost is negligible for file-at-a-time frontmatter
+    operations (see the #117 spike).
+
+    Round-trip mode keeps comments, key order, anchors/aliases, and
+    per-node flow/block style on any key a merge does not touch; ADR-0002
+    documents the resulting canonical form. `preserve_quotes` keeps
+    original quote style on untouched scalars; `width` is set high so long
+    scalars are not hard-wrapped mid-value.
+    """
+    instance = YAML(typ="rt")
+    instance.preserve_quotes = True
+    instance.width = 10_000
+    return instance
 
 
 def plan_markdown_section_patch(
@@ -689,7 +702,7 @@ def _merge_frontmatter(
     if not changed:
         return content
 
-    proposed = f"---\n{_dump_frontmatter(data)}---\n{body}"
+    proposed = f"---\n{_dump_frontmatter(path, data)}---\n{body}"
     _validate_merged_frontmatter(path, proposed)
     return proposed
 
@@ -716,7 +729,35 @@ def _validated_frontmatter_update_items(
                 "leading or trailing whitespace",
             )
         _validate_frontmatter_update_value(path, value, seen_containers)
+        _validate_frontmatter_update_value_dumpable(path, key, value)
     return update_items
+
+
+def _validate_frontmatter_update_value_dumpable(
+    path: Path, key: str, value: Any
+) -> None:
+    """Fail fast if ``value`` cannot round-trip through the YAML dumper.
+
+    ``_validate_frontmatter_update_value`` only checks that ``value`` uses a
+    supported Python type; it cannot rule out every value ``ruamel.yaml``'s
+    round-trip dumper will still refuse (a `RepresenterError` or similar).
+    Probing with a real dump here catches a genuinely undumpable value
+    before any write-path work proceeds -- restoring the guard the old
+    span-splice engine's `_dump_yaml` pre-flight call used to provide --
+    rather than surfacing it only from the final `_dump_frontmatter` call
+    once ``key`` has already been merged into the target document's data.
+    """
+
+    probe = CommentedMap()
+    probe[key] = value
+    try:
+        _make_frontmatter_yaml().dump(probe, io.StringIO())
+    except (RuamelYAMLError, TypeError, ValueError) as exc:
+        raise DocumentChangePlanningError(
+            path,
+            f"Frontmatter update value for {key!r} cannot be represented "
+            f"as YAML: {exc}",
+        ) from exc
 
 
 def _load_frontmatter(path: Path, yaml_source: str) -> CommentedMap:
@@ -724,11 +765,13 @@ def _load_frontmatter(path: Path, yaml_source: str) -> CommentedMap:
 
     An empty source (no frontmatter block, or an empty block) loads as an
     empty map so callers have one code path for "populate absent frontmatter"
-    and "edit existing frontmatter" alike.
+    and "edit existing frontmatter" alike. Uses a fresh `YAML` instance (see
+    `_make_frontmatter_yaml`) so this call can never be corrupted by, or
+    corrupt, state from another document's load or dump.
     """
 
     try:
-        data = _FRONTMATTER_YAML.load(yaml_source)
+        data = _make_frontmatter_yaml().load(yaml_source)
     except RuamelYAMLError as exc:
         raise DocumentChangePlanningError(
             path, f"Could not parse document frontmatter: {exc}"
@@ -736,15 +779,23 @@ def _load_frontmatter(path: Path, yaml_source: str) -> CommentedMap:
     return CommentedMap() if data is None else data
 
 
-def _dump_frontmatter(data: CommentedMap) -> str:
+def _dump_frontmatter(path: Path, data: CommentedMap) -> str:
     """Dump a frontmatter ``CommentedMap`` in `okf-core`'s canonical form.
 
     Block style and LF line endings are the round-trip dumper's own
-    defaults; no post-processing is applied, per ADR-0002.
+    defaults; no post-processing is applied, per ADR-0002. Uses a fresh
+    `YAML` instance (see `_make_frontmatter_yaml`) so a dump failure here
+    raises cleanly instead of leaving a shared instance poisoned for the
+    next, unrelated document's merge.
     """
 
     buffer = io.StringIO()
-    _FRONTMATTER_YAML.dump(data, buffer)
+    try:
+        _make_frontmatter_yaml().dump(data, buffer)
+    except (RuamelYAMLError, TypeError, ValueError) as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not represent merged frontmatter as YAML: {exc}"
+        ) from exc
     return buffer.getvalue()
 
 

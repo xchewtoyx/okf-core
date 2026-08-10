@@ -19,7 +19,13 @@ from okf_core import (
     parse_concept_document,
     plan_frontmatter_merge,
 )
-from okf_core.patching import _dump_frontmatter, _load_frontmatter, _yaml_values_equal
+from okf_core.patching import (
+    _dump_frontmatter,
+    _load_frontmatter,
+    _merge_frontmatter,
+    _validate_frontmatter_update_value_dumpable,
+    _yaml_values_equal,
+)
 
 
 def _bundle(root: Path) -> BundleConfig:
@@ -536,6 +542,120 @@ def test_load_frontmatter_wraps_ruamel_parse_errors_narrowly() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Shared-mutable-state regression (#195 round-2 review): a dump failure for
+# one document must never corrupt another, unrelated document's dump.
+# ---------------------------------------------------------------------------
+
+
+class _Unrepresentable:
+    """A value no YAML representer -- ruamel's or otherwise -- ever handles."""
+
+
+def test_dump_frontmatter_wraps_ruamel_representer_errors() -> None:
+    """`_dump_frontmatter` catches ruamel's representer-error hierarchy and
+    reports it through `DocumentChangePlanningError`, mirroring
+    `_load_frontmatter`'s narrow-except convention, rather than letting a
+    raw `RepresenterError` escape uncaught (#195 round-2 review)."""
+    data = CommentedMap()
+    data["broken"] = _Unrepresentable()
+
+    with pytest.raises(DocumentChangePlanningError, match="cannot represent"):
+        _dump_frontmatter(Path("frontmatter.yaml"), data)
+
+
+def test_dump_frontmatter_failure_does_not_poison_a_later_dump() -> None:
+    """Pins the #195 round-2 concurrency/state-leak bug directly at its
+    source: a dump failure for one document's frontmatter must never leave
+    state behind that corrupts a later, unrelated document's dump.
+
+    Before the fix, `_dump_frontmatter` reused a single module-level `YAML`
+    instance across every call. `ruamel.yaml`'s round-trip `dump` stashes
+    internal state on the instance for the call's duration and only clears
+    it on the success path, so a failed dump left that shared instance
+    poisoned; the very next dump on a fresh, valid document then silently
+    returned `""` instead of the correct YAML (empirically reproduced while
+    diagnosing this bug). `""` parses back to an empty mapping, which
+    `_validate_merged_frontmatter` accepts as valid -- a plan that would
+    silently wipe the second document's frontmatter. Constructing a fresh
+    `YAML` instance per call (this fix) means the two calls below share no
+    state at all, so this must fail against the pre-fix shared-instance
+    code and pass here.
+    """
+    broken = CommentedMap()
+    broken["broken"] = _Unrepresentable()
+    with pytest.raises(DocumentChangePlanningError):
+        _dump_frontmatter(Path("a.yaml"), broken)
+
+    healthy = CommentedMap()
+    healthy["title"] = "Unaffected"
+    assert _dump_frontmatter(Path("b.yaml"), healthy) == "title: Unaffected\n"
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["plain string", 42, [1, 2, {"nested": "ok"}]],
+)
+def test_validate_frontmatter_update_value_dumpable_accepts_supported_values(
+    value: Any,
+) -> None:
+    """The pre-flight dumpability guard is a no-op for values that already
+    round-trip through the YAML dumper cleanly."""
+    _validate_frontmatter_update_value_dumpable(Path("frontmatter.yaml"), "key", value)
+
+
+def test_validate_frontmatter_update_value_dumpable_rejects_unrepresentable_value() -> (
+    None
+):
+    """Restores the guard the old span-splice engine's `_dump_yaml`
+    pre-flight call used to provide, dropped when the ruamel engine
+    replaced it (#195 round-2 review): a genuinely undumpable update value
+    must be rejected before any merge/write-path work happens, naming the
+    offending key."""
+    with pytest.raises(
+        DocumentChangePlanningError, match=r"'broken'.*cannot be represented"
+    ):
+        _validate_frontmatter_update_value_dumpable(
+            Path("frontmatter.yaml"), "broken", _Unrepresentable()
+        )
+
+
+def test_merge_frontmatter_failure_on_one_document_does_not_affect_next(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end reproduction of the #195 round-2 bug through
+    `_merge_frontmatter`. Every value type `_validate_frontmatter_update_value`
+    currently allows is representable, so an unrepresentable value can only
+    reach the merge/dump path by slipping past that gate -- simulated here
+    by bypassing it directly, matching the review's own "an unrepresentable
+    value slips through" framing. What matters is what happens next: this
+    must raise a clean, structured error for document A and leave document
+    B's merge completely unaffected, not silently hand back a corrupted,
+    frontmatter-wiping plan for B.
+    """
+    monkeypatch.setattr(
+        "okf_core.patching._validate_frontmatter_update_value", lambda *a, **k: None
+    )
+
+    doc_a = tmp_path / "a.md"
+    doc_a.write_text("---\ntype: concept\ntitle: A\n---\nBody A\n", encoding="utf-8")
+    with pytest.raises(DocumentChangePlanningError):
+        _merge_frontmatter(doc_a, doc_a.read_text(), {"broken": _Unrepresentable()})
+
+    doc_b = tmp_path / "b.md"
+    doc_b.write_text(
+        "---\ntype: concept\ntitle: B\nowner: docs\n---\nBody B\n", encoding="utf-8"
+    )
+    result = _merge_frontmatter(doc_b, doc_b.read_text(), {"owner": "platform"})
+
+    parsed_b = parse_concept_document(result)
+    assert parsed_b.frontmatter == {
+        "type": "concept",
+        "title": "B",
+        "owner": "platform",
+    }
+
+
+# ---------------------------------------------------------------------------
 # _yaml_values_equal -- ruamel round-trip scalar subtype normalization (#195)
 # ---------------------------------------------------------------------------
 
@@ -661,8 +781,8 @@ _FRONTMATTER_VALUE = st.recursive(
 def test_frontmatter_dump_is_idempotent(data: dict[str, Any]) -> None:
     """``serialize(parse(serialize(x))) == serialize(x)`` (ADR-0002):
     re-serializing already-canonical frontmatter output is a fixed point."""
-    once = _dump_frontmatter(CommentedMap(data))
+    once = _dump_frontmatter(Path("frontmatter.yaml"), CommentedMap(data))
     reloaded = _load_frontmatter(Path("frontmatter.yaml"), once)
-    twice = _dump_frontmatter(reloaded)
+    twice = _dump_frontmatter(Path("frontmatter.yaml"), reloaded)
 
     assert twice == once
