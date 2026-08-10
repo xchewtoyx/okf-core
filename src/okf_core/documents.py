@@ -64,9 +64,32 @@ class ConceptDocument:
 def parse_concept_document(markdown: str) -> ConceptDocument:
     """Parse Markdown into frontmatter and body, rejecting duplicate YAML keys."""
 
+    yaml_source, body = _split_frontmatter(markdown)
+    if yaml_source is None:
+        return ConceptDocument(frontmatter={}, body=body)
+
+    frontmatter = _parse_frontmatter(yaml_source)
+    return ConceptDocument(frontmatter=frontmatter, body=body)
+
+
+def _split_frontmatter(markdown: str) -> tuple[str | None, str]:
+    """Split *markdown* into its raw YAML frontmatter source and body.
+
+    Returns ``(yaml_source, body)``. ``yaml_source`` is ``None`` when the
+    document has no opening ``---`` delimiter line at all, in which case
+    ``body`` is the entire document, unchanged. Otherwise ``yaml_source`` is
+    the raw text between the opening and closing ``---`` delimiter lines
+    (empty when the block itself is empty) and ``body`` is everything after
+    the closing delimiter line.
+
+    This is the single scan for the frontmatter delimiter block; both
+    ``parse_concept_document`` and ``patching.py``'s frontmatter merge share
+    it rather than each re-implementing the same line scan.
+    """
+
     lines = markdown.splitlines(keepends=True)
     if not lines or lines[0].rstrip("\r\n") != "---":
-        return ConceptDocument(frontmatter={}, body=markdown)
+        return None, markdown
 
     closing_index = _find_frontmatter_close(lines)
     if closing_index is None:
@@ -74,8 +97,7 @@ def parse_concept_document(markdown: str) -> ConceptDocument:
 
     yaml_source = "".join(lines[1:closing_index])
     body = "".join(lines[closing_index + 1 :])
-    frontmatter = _parse_frontmatter(yaml_source)
-    return ConceptDocument(frontmatter=frontmatter, body=body)
+    return yaml_source, body
 
 
 def serialize_concept_document(document: ConceptDocument) -> str:
