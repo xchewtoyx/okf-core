@@ -5,7 +5,7 @@
   work; see "Markdown side" below.
 - **Depends on:** ADR-0001 (supersedes the byte-identity contract that made
   this decision unnecessary before).
-- **Related:** `docs/proposals/v0.5.0-replan/02-editing-requirements.md`
+- **Related:** `[replan-requirements]`
   (R-C1/R-C2/R-C3), `docs/spikes/issue-117-yaml-frontmatter-editing.md`,
   `docs/spikes/149-markdown-round-trip.md`.
 
@@ -18,10 +18,10 @@ ADR-0001 retires byte-level preservation as the operative contract for
 deterministic answer to "what bytes does this operation actually produce?"
 — determinism is what makes diffs reviewable, no-op detection sound, and
 corpus style uniform without an agent spending tokens on formatting
-(`docs/proposals/v0.5.0-replan/02-editing-requirements.md` R-C1
+(`[replan-requirements]` R-C1
 rationale).
 
-`02-editing-requirements.md` §4 (R-C) states the shape of that replacement
+`[replan-requirements] §4` (R-C) states the shape of that replacement
 contract as requirements, not a specific library choice. This ADR is where
 those requirements become a concrete decision for each format.
 
@@ -154,7 +154,7 @@ for going forward.
 ## Alternatives rejected
 
 - **Make both YAML and Markdown firm now, reusing #149's Strategy A
-  recommendation directly.** Rejected: `02-editing-requirements.md`'s
+  recommendation directly.** Rejected: `[replan-requirements]`'s
   R-C3 reversibility note treats the canonical form as a one-way door
   specifically because changing it later requires a new recorded decision
   — that deliberation budget is exactly why #198 exists as a separate,
