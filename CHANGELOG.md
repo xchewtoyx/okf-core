@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0-alpha.1] - 2026-08-10
+
 ### Fixed
 
 - **`plan_frontmatter_merge` now canonicalizes untouched flow-style siblings on edit, not just targeted keys**: ADR-0002's "first touch canonicalizes the whole document" convergence guarantee (R-C2/R-C3) was only reaching the keys an update targeted — an untouched flow-style collection elsewhere in the same document survived unchanged indefinitely, because ruamel.yaml's round-trip loader records each mapping/sequence's original flow-vs-block style as a per-node hint that the dumper's own `default_flow_style` setting does not override. Frontmatter dumps now explicitly clear that hint across the whole loaded document before writing, so any edit brings the entire document to canonical block form as documented, while a merge that resolves to a no-op still never rewrites the file. (#195)
@@ -178,7 +180,8 @@ Initial release.
 - **`generate_index()` / `parse_index()`**: produce and parse conformant `index.md` files; entries grouped by type and sorted alphabetically; round-trips without loss.
 - **CLI (`okf`)**: `scan`, `validate`, `index` commands. JSON to stdout, summary to stderr, exit 2 on config/usage errors.
 
-[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.5.0-alpha.1...HEAD
+[0.5.0-alpha.1]: https://github.com/xchewtoyx/okf-core/compare/v0.4.2...v0.5.0-alpha.1
 [0.4.2]: https://github.com/xchewtoyx/okf-core/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/xchewtoyx/okf-core/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/xchewtoyx/okf-core/compare/v0.3.0...v0.4.0
