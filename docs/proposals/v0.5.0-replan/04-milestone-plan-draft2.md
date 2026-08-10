@@ -1,10 +1,17 @@
 # Draft 2 — v0.5.0 milestone plan
 
-- **Status:** draft for review (document 4 of the v0.5.0 re-plan set).
-  Supersedes the draft-1 re-plan recorded in the #148 closing comment and
-  epic #11 comment of 2026-08-10. No tickets have been changed to match
-  this draft yet; the disposition table in §5 is the proposed ticket
-  update set.
+- **Status:** accepted and executed 2026-08-10 (document 4 of the v0.5.0
+  re-plan set). Supersedes the draft-1 re-plan recorded in the #148
+  closing comment and epic #11 comment of 2026-08-10. Tickets are cut:
+  item 1 → #193, item 2 → #194, item 3 → #195, item 4 → #196,
+  item 5 → #113 (rewritten), item 6 → #197, item 7 → #50,
+  item 8 → #101 (rewritten), item 9 → #198, item 10 → #199,
+  item 11 → #200, item 12 → #61 (stretch). Deferrals to v0.6.0 and the
+  #146 absorption are applied per §5. The three-alpha checkpoint
+  structure was reviewed and kept: alpha.1 ends at the contract-changing
+  engine swap (human checkpoint before value stacks on it), and short
+  milestones are the steer points against the loop's demonstrated
+  long-runway drift.
 - **Inputs:** `02-editing-requirements.md` (what to build),
   `03-codebase-analysis.md` (the runway), and the existing open backlog.
 
