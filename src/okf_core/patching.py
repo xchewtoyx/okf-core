@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -13,8 +14,10 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import yaml
 from markdown_it import MarkdownIt
-from yaml.nodes import MappingNode, Node
-from yaml.tokens import AliasToken
+from ruamel.yaml import YAML
+from ruamel.yaml import YAMLError as RuamelYAMLError
+from ruamel.yaml.comments import CommentedMap, CommentedSeq
+from yaml.nodes import MappingNode
 
 from okf_core.change_envelope import (
     DocumentChangeApplyError,
@@ -35,7 +38,11 @@ from okf_core.change_envelope import (
     plan_file_move,
 )
 from okf_core.config import BundleConfig
-from okf_core.documents import DocumentParseError, parse_concept_document
+from okf_core.documents import (
+    DocumentParseError,
+    _split_frontmatter,
+    parse_concept_document,
+)
 
 if TYPE_CHECKING:
     from markdown_it.rules_core.state_core import StateCore
@@ -66,6 +73,35 @@ __all__ = [
 ]
 
 _MARKDOWN = MarkdownIt("commonmark")
+
+
+def _make_frontmatter_yaml() -> YAML:
+    """Build a fresh round-trip YAML instance for one frontmatter operation.
+
+    A new instance is constructed on every call rather than shared, because
+    ``ruamel.yaml``'s ``YAML.dump``/``dump_all`` stash internal state on the
+    instance for the duration of a call and only clear it on the success
+    path: a failed dump on one document would otherwise leave a shared
+    instance poisoned for the next, unrelated document's merge. Per-call
+    construction cost is negligible for file-at-a-time frontmatter
+    operations (see the #117 spike).
+
+    Round-trip mode keeps comments, key order, and anchors/aliases on any
+    key a merge does not touch; ADR-0002 documents the resulting canonical
+    form. Per-node flow/block style hints the loader also preserves are
+    deliberately cleared before dump (see `_normalize_container_style`) so
+    an untouched flow-style collection still converges to block form on the
+    document's first edit, rather than surviving indefinitely -- forcing
+    `default_flow_style=False` here alone does not achieve this, since a
+    loaded node's own preserved style hint takes priority over the
+    dumper-level default (confirmed empirically). `preserve_quotes` keeps
+    original quote style on untouched scalars; `width` is set high so long
+    scalars are not hard-wrapped mid-value.
+    """
+    instance = YAML(typ="rt")
+    instance.preserve_quotes = True
+    instance.width = 10_000
+    return instance
 
 
 def plan_markdown_section_patch(
@@ -443,13 +479,26 @@ def plan_frontmatter_merge(
     path: Path | str,
     updates: Mapping[str, Any],
 ) -> DocumentChangePlan:
-    """Plan a shallow, byte-preserving merge of top-level frontmatter fields.
+    """Plan a shallow merge of top-level frontmatter fields into canonical form.
 
-    Existing values are replaced at their YAML source spans and missing fields
-    are appended in update order. Update values may contain plain YAML-oriented
-    scalars, dates, datetimes, lists, and string-keyed dictionaries. Untargeted
-    YAML aliases are preserved; fields participating in alias relationships
-    cannot be changed safely and are rejected.
+    Frontmatter is parsed with a round-trip YAML loader, mutated in place
+    (targeted keys are replaced, missing keys are appended in update order),
+    and re-serialized in `okf-core`'s documented canonical form (ADR-0002):
+    key order and comments on untouched keys are preserved, the *whole*
+    document (including untouched sibling collections, not just targeted
+    keys) is emitted in block style with LF line endings regardless of the
+    source document's style, and quote style is not guaranteed to survive
+    on a touched value. A non-canonical but conformant input converges to
+    canonical form on its first edit; this may produce one-time formatting
+    churn in that edit's diff, which is expected rather than a defect. A
+    merge that resolves to a no-op never rewrites the file, so an untouched
+    document's formatting is unaffected until an edit actually happens.
+
+    Update values may contain plain YAML-oriented scalars, dates, datetimes,
+    lists, and string-keyed dictionaries. An update whose value already
+    equals the current one (by data model, not by source bytes) is a no-op.
+    Untargeted YAML aliases are preserved; fields participating in alias
+    relationships cannot be changed safely and are rejected.
     """
 
     return _plan_document_change(
@@ -629,6 +678,48 @@ def _merge_frontmatter(
     content: str,
     updates: Mapping[str, Any],
 ) -> str:
+    update_items = _validated_frontmatter_update_items(path, updates)
+    if not update_items:
+        return content
+
+    try:
+        document = parse_concept_document(content)
+    except DocumentParseError as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not parse document frontmatter: {exc}"
+        ) from exc
+
+    yaml_source, body = _split_frontmatter(content)
+    data = _load_frontmatter(path, yaml_source or "")
+    alias_linked_keys = _alias_linked_keys(
+        _compose_frontmatter(path, yaml_source or "")
+    )
+
+    changed = False
+    for key, value in update_items:
+        current = document.frontmatter.get(key, _MISSING)
+        if current is not _MISSING and _yaml_values_equal(current, value):
+            continue
+        if current is not _MISSING and key in alias_linked_keys:
+            raise DocumentChangePlanningError(
+                path,
+                f"Frontmatter field {key!r} is a YAML alias and cannot be changed",
+            )
+        data[key] = value
+        changed = True
+
+    if not changed:
+        return content
+
+    proposed = f"---\n{_dump_frontmatter(path, data)}---\n{body}"
+    _validate_merged_frontmatter(path, proposed)
+    return proposed
+
+
+def _validated_frontmatter_update_items(
+    path: Path,
+    updates: Mapping[str, Any],
+) -> tuple[tuple[str, Any], ...]:
     if not isinstance(updates, Mapping):
         raise DocumentChangePlanningError(path, "Frontmatter updates must be a mapping")
     update_items = tuple(updates.items())
@@ -647,73 +738,114 @@ def _merge_frontmatter(
                 "leading or trailing whitespace",
             )
         _validate_frontmatter_update_value(path, value, seen_containers)
-        _dump_yaml(path, value, flow_style=False)
+        _validate_frontmatter_update_value_dumpable(path, key, value)
+    return update_items
 
-    if not update_items:
-        return content
+
+def _validate_frontmatter_update_value_dumpable(
+    path: Path, key: str, value: Any
+) -> None:
+    """Fail fast if ``value`` cannot round-trip through the YAML dumper.
+
+    ``_validate_frontmatter_update_value`` only checks that ``value`` uses a
+    supported Python type; it cannot rule out every value ``ruamel.yaml``'s
+    round-trip dumper will still refuse (a `RepresenterError` or similar).
+    Probing with a real dump here catches a genuinely undumpable value
+    before any write-path work proceeds -- restoring the guard the old
+    span-splice engine's `_dump_yaml` pre-flight call used to provide --
+    rather than surfacing it only from the final `_dump_frontmatter` call
+    once ``key`` has already been merged into the target document's data.
+    """
+
+    probe = CommentedMap()
+    probe[key] = value
+    try:
+        _make_frontmatter_yaml().dump(probe, io.StringIO())
+    except (RuamelYAMLError, TypeError, ValueError) as exc:
+        raise DocumentChangePlanningError(
+            path,
+            f"Frontmatter update value for {key!r} cannot be represented "
+            f"as YAML: {exc}",
+        ) from exc
+
+
+def _load_frontmatter(path: Path, yaml_source: str) -> CommentedMap:
+    """Load raw frontmatter YAML into a mutable round-trip ``CommentedMap``.
+
+    An empty source (no frontmatter block, or an empty block) loads as an
+    empty map so callers have one code path for "populate absent frontmatter"
+    and "edit existing frontmatter" alike. Uses a fresh `YAML` instance (see
+    `_make_frontmatter_yaml`) so this call can never be corrupted by, or
+    corrupt, state from another document's load or dump.
+    """
 
     try:
-        document = parse_concept_document(content)
-    except DocumentParseError as exc:
+        data = _make_frontmatter_yaml().load(yaml_source)
+    except RuamelYAMLError as exc:
         raise DocumentChangePlanningError(
             path, f"Could not parse document frontmatter: {exc}"
         ) from exc
+    return CommentedMap() if data is None else data
 
-    bounds = _frontmatter_bounds(content)
-    line_ending = _first_line_ending(content)
-    if bounds is None:
-        generated = _dump_yaml_mapping(path, update_items, line_ending)
-        proposed = f"---{line_ending}{generated}---{line_ending}{content}"
-        _validate_merged_frontmatter(path, proposed)
-        return proposed
 
-    yaml_start, yaml_end = bounds
-    yaml_source = content[yaml_start:yaml_end]
-    root = _compose_frontmatter(path, yaml_source)
-    nodes = _top_level_nodes(root)
-    alias_linked_keys = _alias_linked_keys(root)
+def _normalize_container_style(node: Any) -> None:
+    """Recursively clear preserved flow-style hints so every mapping/sequence
+    in *node* dumps in block form, regardless of the source document's style.
 
-    replacements: list[tuple[int, int, str]] = []
-    additions: list[tuple[str, Any]] = []
-    for key, value in update_items:
-        current = document.frontmatter.get(key, _MISSING)
-        if current is not _MISSING and _yaml_values_equal(current, value):
-            continue
-        value_node = nodes.get(key)
-        if value_node is None:
-            additions.append((key, value))
-            continue
-        if key in alias_linked_keys:
-            raise DocumentChangePlanningError(
-                path,
-                f"Frontmatter field {key!r} is a YAML alias and cannot be changed",
-            )
-        key_line = _node_key_line(root, key)
-        start = value_node.start_mark.index
-        end = value_node.end_mark.index
-        original_value_source = yaml_source[start:end]
-        inline = value_node.start_mark.line == key_line
-        replacement = _serialize_replacement_value(
-            path,
-            value,
-            column=value_node.start_mark.column,
-            inline=inline,
-            preserve_final_line_ending=original_value_source.endswith(("\n", "\r")),
-            line_ending=line_ending,
-        )
-        if start == end:
-            replacement = f" {replacement}"
-        replacements.append((start, end, replacement))
+    ADR-0002's convergence framework (R-C2/R-C3) is per-document, on first
+    touch: touching any part of a non-canonical document brings the *whole*
+    document to canonical form, not just the keys an edit targets. ruamel's
+    round-trip loader records each mapping/sequence's original flow-vs-block
+    style as a per-node hint (`.fa`) that survives into the dumped output
+    independently of the `YAML` instance's own `default_flow_style` setting
+    -- empirically, setting `default_flow_style=False` on the dumper does
+    *not* override a loaded node's own preserved style hint, so an untouched
+    flow-style sibling would otherwise survive an edit unchanged forever.
+    Explicitly clearing the hint on every mapping/sequence node (loaded or
+    freshly assigned by an update) is the only way to make that happen.
+    Only container *style* is touched here; comments, key order, and quote
+    style on untouched scalars are unaffected.
+    """
 
-    merged_yaml = yaml_source
-    for start, end, replacement in sorted(replacements, reverse=True):
-        merged_yaml = f"{merged_yaml[:start]}{replacement}{merged_yaml[end:]}"
-    if additions:
-        merged_yaml += _dump_yaml_mapping(path, additions, line_ending)
+    if isinstance(node, CommentedMap):
+        node.fa.set_block_style()
+        for value in node.values():
+            _normalize_container_style(value)
+    elif isinstance(node, CommentedSeq):
+        node.fa.set_block_style()
+        for item in node:
+            _normalize_container_style(item)
+    elif isinstance(node, dict):
+        for value in node.values():
+            _normalize_container_style(value)
+    elif isinstance(node, list):
+        for item in node:
+            _normalize_container_style(item)
 
-    proposed = f"{content[:yaml_start]}{merged_yaml}{content[yaml_end:]}"
-    _validate_merged_frontmatter(path, proposed)
-    return proposed
+
+def _dump_frontmatter(path: Path, data: CommentedMap) -> str:
+    """Dump a frontmatter ``CommentedMap`` in `okf-core`'s canonical form.
+
+    Block style and LF line endings are the round-trip dumper's own
+    defaults for any node without its own preserved style hint;
+    `_normalize_container_style` clears hints preserved from the source
+    document so the *whole* document -- not just the keys this dump's
+    caller touched -- converges to block form, per ADR-0002. No other
+    post-processing is applied. Uses a fresh `YAML` instance (see
+    `_make_frontmatter_yaml`) so a dump failure here raises cleanly instead
+    of leaving a shared instance poisoned for the next, unrelated
+    document's merge.
+    """
+
+    _normalize_container_style(data)
+    buffer = io.StringIO()
+    try:
+        _make_frontmatter_yaml().dump(data, buffer)
+    except (RuamelYAMLError, TypeError, ValueError) as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not represent merged frontmatter as YAML: {exc}"
+        ) from exc
+    return buffer.getvalue()
 
 
 _MISSING = object()
@@ -767,19 +899,6 @@ def _validate_frontmatter_update_value(
         _validate_frontmatter_update_value(path, item, seen_containers)
 
 
-def _frontmatter_bounds(content: str) -> tuple[int, int] | None:
-    lines = content.splitlines(keepends=True)
-    if not lines or lines[0].rstrip("\r\n") != "---":
-        return None
-    yaml_start = len(lines[0])
-    position = yaml_start
-    for line in lines[1:]:
-        if line.rstrip("\r\n") == "---":
-            return yaml_start, position
-        position += len(line)
-    return None
-
-
 def _compose_frontmatter(path: Path, yaml_source: str) -> MappingNode | None:
     try:
         root = yaml.compose(yaml_source, Loader=yaml.SafeLoader)
@@ -792,12 +911,6 @@ def _compose_frontmatter(path: Path, yaml_source: str) -> MappingNode | None:
     if not isinstance(root, MappingNode):
         raise DocumentChangePlanningError(path, "YAML frontmatter must be a mapping")
     return root
-
-
-def _top_level_nodes(root: MappingNode | None) -> dict[str, Node]:
-    if root is None:
-        return {}
-    return {key_node.value: value_node for key_node, value_node in root.value}
 
 
 def _alias_linked_keys(root: MappingNode | None) -> set[str]:
@@ -819,95 +932,6 @@ def _alias_linked_keys(root: MappingNode | None) -> set[str]:
     }
 
 
-def _node_key_line(root: MappingNode | None, target_key: str) -> int:
-    assert root is not None
-    for key_node, _ in root.value:
-        if key_node.value == target_key:
-            return key_node.start_mark.line
-    raise AssertionError(f"Missing composed frontmatter key: {target_key}")
-
-
-def _serialize_replacement_value(
-    path: Path,
-    value: Any,
-    *,
-    column: int,
-    inline: bool,
-    preserve_final_line_ending: bool,
-    line_ending: str,
-) -> str:
-    dumped = _dump_yaml(path, value, flow_style=inline)
-    dumped = _strip_yaml_document_end(dumped)
-    dumped = dumped.removesuffix("\n")
-    dumped = dumped.replace("\n", f"\n{' ' * column}")
-    dumped = dumped.replace("\n", line_ending)
-    if preserve_final_line_ending:
-        dumped += line_ending
-    return dumped
-
-
-def _dump_yaml(path: Path, value: Any, *, flow_style: bool) -> str:
-    try:
-        dumped = yaml.safe_dump(
-            value,
-            allow_unicode=True,
-            default_flow_style=flow_style,
-            sort_keys=False,
-            width=10_000,
-        )
-    except (yaml.YAMLError, TypeError, ValueError) as exc:
-        raise DocumentChangePlanningError(
-            path, f"Frontmatter value cannot be represented as safe YAML: {exc}"
-        ) from exc
-    _reject_generated_yaml_aliases(path, dumped)
-    return dumped
-
-
-def _dump_yaml_mapping(
-    path: Path,
-    items: Sequence[tuple[str, Any]],
-    line_ending: str,
-) -> str:
-    if not items:
-        return ""
-    try:
-        dumped = yaml.safe_dump(
-            dict(items),
-            allow_unicode=True,
-            default_flow_style=False,
-            sort_keys=False,
-            width=10_000,
-        )
-    except (yaml.YAMLError, TypeError, ValueError) as exc:
-        raise DocumentChangePlanningError(
-            path, f"Frontmatter updates cannot be represented as safe YAML: {exc}"
-        ) from exc
-    _reject_generated_yaml_aliases(path, dumped)
-    return dumped.replace("\n", line_ending)
-
-
-def _strip_yaml_document_end(dumped: str) -> str:
-    if dumped.endswith("\n...\n"):
-        return dumped[:-4]
-    return dumped
-
-
-def _reject_generated_yaml_aliases(path: Path, yaml_source: str) -> None:
-    try:
-        has_alias = any(
-            isinstance(token, AliasToken)
-            for token in yaml.scan(yaml_source, Loader=yaml.SafeLoader)
-        )
-    except yaml.YAMLError as exc:
-        raise DocumentChangePlanningError(
-            path, f"Could not scan document frontmatter: {exc}"
-        ) from exc
-    if has_alias:
-        raise DocumentChangePlanningError(
-            path, "Generated frontmatter updates must not contain YAML aliases"
-        )
-
-
 def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
     try:
         document = parse_concept_document(proposed)
@@ -915,23 +939,36 @@ def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
         raise DocumentChangePlanningError(
             path, f"Merged frontmatter is invalid: {exc}"
         ) from exc
-    bounds = _frontmatter_bounds(proposed)
-    if bounds is None:
+    yaml_source, _ = _split_frontmatter(proposed)
+    if yaml_source is None:
         raise DocumentChangePlanningError(path, "Merged frontmatter is missing")
     if not isinstance(document.frontmatter, dict):
         raise DocumentChangePlanningError(path, "Merged frontmatter is not a mapping")
 
 
+# `_yaml_values_equal` compares `document.frontmatter` (PyYAML's plain-dict
+# parse, used for no-op detection in `_merge_frontmatter`) against an
+# update value already constrained to plain builtin types by
+# `_validate_frontmatter_update_value`. Neither side is ever a value loaded
+# by the ruamel round-trip engine -- that engine's `CommentedMap`/`data` is
+# mutated directly and never routed through this comparison -- so a plain
+# `type(...) is not type(...)` check is sufficient here; there is no
+# ruamel-specific formatting subclass (e.g. `SingleQuotedScalarString`,
+# `ScalarInt`) for this comparison to ever see. Do not reintroduce
+# subclass normalization without first tracing a real call path that
+# passes a ruamel-loaded value here, per AGENTS.md's guidance against
+# defensive handling for scenarios that cannot happen.
 def _yaml_values_equal(left: Any, right: Any) -> bool:
-    if type(left) is not type(right):
+    left_type = type(left)
+    if left_type is not type(right):
         return False
-    if type(left) is dict:
+    if left_type is dict:
         if left.keys() != right.keys():
             return False
         return all(_yaml_values_equal(left[key], right[key]) for key in left)
-    if type(left) is list:
+    if left_type is list:
         return len(left) == len(right) and all(
             _yaml_values_equal(left_item, right_item)
             for left_item, right_item in zip(left, right)
         )
-    return left == right
+    return bool(left == right)

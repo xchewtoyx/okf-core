@@ -30,6 +30,7 @@ dependencies = [
   "pluggy >= 1.0, < 2",
   "pydantic >= 2, < 3",
   "PyYAML >= 6, < 7",
+  "ruamel.yaml >= 0.18, < 0.20",
   'tomli >= 2.0.0 ; python_version < "3.11"',
 ]
 
