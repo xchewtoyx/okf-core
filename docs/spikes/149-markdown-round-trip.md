@@ -1,5 +1,10 @@
 # Spike #149 — Formatting-preserving Markdown round-trip editing
 
+> **Status: superseded.** The Strategy A adoption below was descoped when #148
+> was closed as not planned — see
+> [`148-round-trip-refactor-descope.md`](148-round-trip-refactor-descope.md).
+> The evidence remains valid; the existing splice engine stays.
+
 - **Issue:** [#149](https://github.com/xchewtoyx/okf-core/issues/149) (`type:design`)
 - **Epic:** [#11](https://github.com/xchewtoyx/okf-core/issues/11) safe patch operations
 - **Blocks:** [#148](https://github.com/xchewtoyx/okf-core/issues/148) (round-trip refactor), which unblocks [#113](https://github.com/xchewtoyx/okf-core/issues/113) (citations) and [#61](https://github.com/xchewtoyx/okf-core/issues/61) (link suggestions)
