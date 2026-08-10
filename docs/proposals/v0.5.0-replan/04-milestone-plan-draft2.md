@@ -97,6 +97,15 @@ span arithmetic.
 | #101 log.md append support | none | **Rewrite** as item 8 (structure-free log append, alpha.2) | R-G1: structure maintenance is the niche — the agent supplies content, the library owns chronology and format, and inline appending costs grow with corpus age. Read/parse support already shipped (#145). |
 | #146 log entry generator (v0.6.0) | 0.6.0 | **Absorbed** by item 8; residue is CLI sugar or closes | Its core is R-G1. |
 
+**Evidence note from the first client (`bedrock-tpo`):** its corpus
+independently corroborates the R-G additions (two invented log dialects;
+stale and hand-edited indexes despite an instruction mandating
+generated-only) and tempers the N6 deferral — an agent there hand-rolled
+a repo-wide regex mover with redirect stubs when bundle-scoped `okf move`
+didn't fit. The 0.6.0 gate run for the deferred move work should
+therefore start from "widen `okf move` to repo scope, offer a
+redirect-stub option" rather than from the stable-id/tombstone chain.
+
 Net 0.5.0 issue count after re-cut: **12 items across three alphas**
 (7 new, #50 kept, #113 and #101 rewritten, #61 stretch), versus 10
 previously — but with the five infra deferrals removed, the milestone's

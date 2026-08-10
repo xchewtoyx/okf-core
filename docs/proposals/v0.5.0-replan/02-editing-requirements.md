@@ -41,6 +41,20 @@ Editing therefore happens in two distinct modes:
   judged against the previous state, never against the original baseline;
   no single agent can see the cumulative delta).
 
+A second corpus corroborates this from the opposite direction:
+`xchewtoyx/bedrock-tpo`, okf-core's first client, is hierarchical,
+26-bundle, and index/log-heavy — structurally unlike the reference wiki,
+and (per its owner) not a source of practices to adopt. Its value is as
+failure-mode evidence: its logs record a knowingly-stale index
+("`index.md` for this bundle has not been regenerated") and a hand-edited
+one; it contains two independently invented log-entry dialects; its agent
+instructions already mandate generated-only indexes with no enforcement
+mechanism; and when the library's bundle-scoped move didn't fit, an agent
+hand-rolled a repo-wide regex-based mover. Where the reference corpus
+shows what a disciplined agent wiki *doesn't* need, the first client
+shows what an undisciplined corpus *does to itself* without deterministic
+support.
+
 **okf-core's niche is the second mode plus the safety envelope around the
 first.** The dividing test, stated once and applied throughout:
 
@@ -278,10 +292,13 @@ file.**
   so inline appending costs tokens proportional to corpus age for a task
   with zero judgment content; structure conformance is exactly what
   agents get inconsistently wrong. Gate 4 passes with growing margin
-  over time. *Fit:* appending to any conformant (or absent) log yields a
-  conformant log with the entry under the right date; property test:
-  entries appended in arbitrary date order always yield reverse-
-  chronological sections; the agent-supplied content round-trips.
+  over time. *Observed:* the first client corpus contains two
+  independently invented log-entry dialects — the predicted
+  inconsistency, in production. *Fit:* appending to any conformant (or
+  absent) log yields a conformant log with the entry under the right
+  date; property test: entries appended in arbitrary date order always
+  yield reverse-chronological sections; the agent-supplied content
+  round-trips.
 - **R-G2 — Indexes are generated, never authored.** Where a consumer
   wants `index.md`, the library is the only writer: deterministic
   generation from frontmatter (existing capability), plus a validation
@@ -291,9 +308,12 @@ file.**
   cruft in a hand-maintained index are silent failures (the corpus still
   reads fine); silent failures are where deterministic checks belong.
   Because generation is canonical, drift detection reduces to a semantic
-  comparison against regeneration. *Fit:* seeded drift (added file,
-  removed file, changed description) is reported; a freshly generated
-  index reports clean.
+  comparison against regeneration. *Observed:* the first client corpus
+  carries both a knowingly-stale index (logged as "has not been
+  regenerated") and a hand-edited one, and its agent instructions already
+  mandate generated-only indexes — R-G2 is the enforcement that mandate
+  lacks. *Fit:* seeded drift (added file, removed file, changed
+  description) is reported; a freshly generated index reports clean.
 
 ## 5. Explicit non-requirements
 
@@ -327,9 +347,16 @@ noted):
   `okf move` already repairs inbound links transactionally at move time,
   making post-hoc resolution a remedy for bypassing the sanctioned path;
   and the stable-id concept itself is an unproven premise the project
-  owner is not yet convinced by. Two-way door: the hookspec has shipped,
-  and a consumer without the flat guardrail re-runs the gate with a real
-  N.
+  owner is not yet convinced by (the first client's ULID-filename
+  experiment is its origin; the reference corpus's descriptive-slug rule
+  reads as the lesson learned from it). Two-way door: the hookspec has
+  shipped, and a consumer without the flat guardrail re-runs the gate
+  with a real N. One tempering observation from the first client: when
+  bundle-scoped `okf move` didn't cover a repo-wide reorganization, an
+  agent hand-rolled a regex-based mover with redirect stubs — so real
+  move demand exists at *repo scope*, and a future gate run should
+  evaluate widening `okf move`'s coverage before building id-based
+  resolution infrastructure on top of it.
 - **N4 — A better Markdown/YAML implementation than the ecosystem's.**
   Format parsing/serialization is commodity infrastructure with zero
   differentiating value ("should not exist" quadrant of build-vs-buy;
