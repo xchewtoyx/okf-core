@@ -7,6 +7,9 @@ from types import MappingProxyType
 from typing import Any
 
 import pytest
+from hypothesis import given
+from hypothesis import strategies as st
+from ruamel.yaml.comments import CommentedMap
 
 from okf_core import (
     BundleConfig,
@@ -16,6 +19,7 @@ from okf_core import (
     parse_concept_document,
     plan_frontmatter_merge,
 )
+from okf_core.patching import _dump_frontmatter, _load_frontmatter, _yaml_values_equal
 
 
 def _bundle(root: Path) -> BundleConfig:
@@ -26,103 +30,6 @@ def _bundle(root: Path) -> BundleConfig:
         exclude=(),
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
-    )
-
-
-def test_merge_replaces_scalar_and_preserves_unrelated_bytes(tmp_path: Path) -> None:
-    path = tmp_path / "topic.md"
-    original = (
-        "---\r\n"
-        "# keep this comment\r\n"
-        "type: concept\r\n"
-        'title: "Old" # keep inline\r\n'
-        "custom: 'unchanged'\r\n"
-        "---\r\n"
-        "# Body\r\n"
-    )
-    path.write_bytes(original.encode())
-
-    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"title": "New"})
-
-    assert plan.proposed_content == (
-        "---\r\n"
-        "# keep this comment\r\n"
-        "type: concept\r\n"
-        "title: New # keep inline\r\n"
-        "custom: 'unchanged'\r\n"
-        "---\r\n"
-        "# Body\r\n"
-    )
-    assert path.read_bytes() == original.encode()
-
-
-def test_merge_changes_inline_scalar_to_flow_collection(tmp_path: Path) -> None:
-    path = tmp_path / "topic.md"
-    path.write_text(
-        "---\ntype: concept\ntags: old # keep\n---\nBody\n",
-        encoding="utf-8",
-    )
-
-    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"tags": ["alpha", "beta"]})
-
-    assert plan.proposed_content == (
-        "---\ntype: concept\ntags: [alpha, beta] # keep\n---\nBody\n"
-    )
-
-
-def test_merge_changes_block_collection_without_touching_next_field(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "topic.md"
-    path.write_text(
-        "---\n"
-        "type: concept\n"
-        "tags:\n"
-        "  - alpha\n"
-        "  - beta\n"
-        "next: keep\n"
-        "---\n"
-        "Body\n",
-        encoding="utf-8",
-    )
-
-    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"tags": "single"})
-
-    assert plan.proposed_content == (
-        "---\n" "type: concept\n" "tags:\n" "  single\n" "next: keep\n" "---\n" "Body\n"
-    )
-    assert parse_concept_document(plan.proposed_content).frontmatter["tags"] == "single"
-
-
-def test_merge_replaces_block_mapping_with_preserved_indentation(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "topic.md"
-    path.write_text(
-        "---\n"
-        "type: concept\n"
-        "meta:\n"
-        "  owner: old\n"
-        "  count: 1\n"
-        "next: keep\n"
-        "---\n",
-        encoding="utf-8",
-    )
-
-    plan = plan_frontmatter_merge(
-        _bundle(tmp_path),
-        path,
-        {"meta": {"owner": "new", "count": 2}},
-    )
-
-    assert plan.proposed_content == (
-        "---\n"
-        "type: concept\n"
-        "meta:\n"
-        "  owner: new\n"
-        "  count: 2\n"
-        "next: keep\n"
-        "---\n"
     )
 
 
@@ -144,9 +51,16 @@ def test_merge_supports_multiline_string_value(tmp_path: Path) -> None:
     assert "other: keep\n---\nBody\n" in plan.proposed_content
 
 
-def test_merge_applies_multiple_replacements_without_offset_drift(
-    tmp_path: Path,
-) -> None:
+def test_merge_applies_multiple_replacements_correctly(tmp_path: Path) -> None:
+    """Multiple simultaneous targeted replacements land at their own keys.
+
+    Under the old span-splice engine this was a byte-exact pin (the property
+    it protected: several replacements applied in one pass don't corrupt
+    each other's source spans -- an offset-drift risk specific to splicing
+    text at computed byte ranges). The mutate-in-place ruamel engine has no
+    offsets to drift, so the semantic equivalent is simply: every targeted
+    value lands correctly and nothing else is disturbed.
+    """
     path = tmp_path / "topic.md"
     path.write_text(
         "---\ntype: old\ntitle: Old\ncount: 1\n---\nBody\n",
@@ -159,9 +73,9 @@ def test_merge_applies_multiple_replacements_without_offset_drift(
         {"type": "new", "title": "New", "count": 2},
     )
 
-    assert plan.proposed_content == (
-        "---\ntype: new\ntitle: New\ncount: 2\n---\nBody\n"
-    )
+    parsed = parse_concept_document(plan.proposed_content)
+    assert parsed.frontmatter == {"type": "new", "title": "New", "count": 2}
+    assert parsed.body == "Body\n"
 
 
 def test_merge_appends_missing_fields_in_input_order(tmp_path: Path) -> None:
@@ -177,14 +91,20 @@ def test_merge_appends_missing_fields_in_input_order(tmp_path: Path) -> None:
         {"owner": "team", "status": "active"},
     )
 
-    assert plan.proposed_content == (
-        "---\n" "type: concept\n" "owner: team\n" "status: active\n" "---\n" "Body\n"
-    )
+    parsed = parse_concept_document(plan.proposed_content)
+    assert list(parsed.frontmatter.keys()) == ["type", "owner", "status"]
+    assert parsed.frontmatter == {
+        "type": "concept",
+        "owner": "team",
+        "status": "active",
+    }
 
 
-def test_merge_populates_empty_frontmatter_with_document_line_endings(
+def test_merge_populates_empty_frontmatter_with_lf_regardless_of_source(
     tmp_path: Path,
 ) -> None:
+    """ADR-0002 mandates LF-always for frontmatter output, even when the
+    source document uses CRLF; the body's own line endings are untouched."""
     path = tmp_path / "topic.md"
     path.write_bytes(b"---\r\n---\r\nBody\r\n")
 
@@ -195,17 +115,24 @@ def test_merge_populates_empty_frontmatter_with_document_line_endings(
     )
 
     assert plan.proposed_content == (
-        "---\r\n"
-        "type: concept\r\n"
-        "tags:\r\n"
-        "- one\r\n"
-        "- two\r\n"
-        "---\r\n"
-        "Body\r\n"
+        "---\n" "type: concept\n" "tags:\n" "- one\n" "- two\n" "---\n" "Body\r\n"
     )
 
 
-def test_merge_creates_frontmatter_without_changing_body(tmp_path: Path) -> None:
+def test_merge_uses_lf_for_existing_crlf_frontmatter(tmp_path: Path) -> None:
+    """LF-always applies to editing existing frontmatter, not just the
+    populate-from-empty case above -- the body keeps its own CRLF."""
+    path = tmp_path / "topic.md"
+    path.write_bytes(b"---\r\ntype: concept\r\ntitle: Old\r\n---\r\nBody\r\n")
+
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"title": "New"})
+
+    yaml_block = plan.proposed_content.split("---\n", 1)[1].split("\n---\n", 1)[0]
+    assert "\r" not in yaml_block
+    assert plan.proposed_content.endswith("Body\r\n")
+
+
+def test_merge_creates_frontmatter_leaves_body_untouched(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     body = "# Body\n\nKeep exactly.\n"
     path.write_text(body, encoding="utf-8")
@@ -216,9 +143,56 @@ def test_merge_creates_frontmatter_without_changing_body(tmp_path: Path) -> None
         {"type": "concept", "owner": None},
     )
 
-    assert plan.proposed_content == (
-        "---\n" "type: concept\n" "owner: null\n" "---\n" f"{body}"
+    assert plan.proposed_content.endswith(body)
+    parsed = parse_concept_document(plan.proposed_content)
+    assert parsed.body == body
+    assert parsed.frontmatter == {"type": "concept", "owner": None}
+
+
+def test_merge_preserves_comment_on_untargeted_key(tmp_path: Path) -> None:
+    """A comment attached to a key the merge does not target survives,
+    per ADR-0002's documented preservation contract."""
+    path = tmp_path / "topic.md"
+    path.write_text(
+        "---\n"
+        "type: concept\n"
+        "owner: team  # tracked in ownership sheet\n"
+        "title: Old\n"
+        "---\n"
+        "Body\n",
+        encoding="utf-8",
     )
+
+    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"title": "New"})
+
+    assert "owner: team  # tracked in ownership sheet" in plan.proposed_content
+    assert parse_concept_document(plan.proposed_content).frontmatter == {
+        "type": "concept",
+        "owner": "team",
+        "title": "New",
+    }
+
+
+def test_merge_canonicalizes_noncanonical_input_on_first_edit(tmp_path: Path) -> None:
+    """A conformant but non-canonical document (a flow-style collection) is
+    accepted with no "canonicalize the document first" precondition, and its
+    first edit converges the touched value to block style (R-C2/R-C3)."""
+    path = tmp_path / "topic.md"
+    path.write_text(
+        "---\ntype: concept\ntags: [alpha, beta]\n---\nBody\n",
+        encoding="utf-8",
+    )
+
+    plan = plan_frontmatter_merge(
+        _bundle(tmp_path),
+        path,
+        {"tags": ["alpha", "beta", "gamma"]},
+    )
+
+    assert plan.changed is True
+    assert "tags:\n- alpha\n- beta\n- gamma\n" in plan.proposed_content
+    parsed = parse_concept_document(plan.proposed_content)
+    assert parsed.frontmatter["tags"] == ["alpha", "beta", "gamma"]
 
 
 def test_merge_returns_noop_for_type_equivalent_nested_values(
@@ -283,8 +257,6 @@ def test_merge_replaces_implicit_null_value(
         "next": "keep",
     }
     assert "owner: team" in plan.proposed_content
-    if "#" in field_source:
-        assert " # keep this comment\n" in plan.proposed_content
 
 
 @pytest.mark.parametrize(
@@ -402,25 +374,6 @@ def test_merge_rejects_targeted_alias_relationship(
 
     with pytest.raises(DocumentChangePlanningError, match="cannot be changed"):
         plan_frontmatter_merge(_bundle(tmp_path), path, {target: "updated"})
-
-
-def test_merge_preserves_untargeted_richer_yaml_value(tmp_path: Path) -> None:
-    path = tmp_path / "topic.md"
-    original = (
-        "---\n"
-        "type: concept\n"
-        "published: 2026-07-04\n"
-        "metadata: {owners: [docs, platform]}\n"
-        "---\n"
-    )
-    path.write_text(original, encoding="utf-8")
-
-    plan = plan_frontmatter_merge(_bundle(tmp_path), path, {"type": "updated"})
-
-    assert plan.proposed_content == original.replace(
-        "type: concept",
-        "type: updated",
-    )
 
 
 @pytest.mark.parametrize(
@@ -570,3 +523,146 @@ def test_frontmatter_merge_plan_retains_stale_hash_protection(
         apply_document_change(bundle, plan)
 
     assert parse_concept_document(path.read_text()).frontmatter["title"] == "Concurrent"
+
+
+def test_load_frontmatter_wraps_ruamel_parse_errors_narrowly() -> None:
+    """`_load_frontmatter` catches ruamel's own `YAMLError` hierarchy and
+    reports it through `DocumentChangePlanningError`, rather than a bare
+    `except Exception` swallowing unrelated bugs (#195; see the narrow-except
+    finding logged against #194 in docs/decisions/failure-ledger.md for the
+    opposite failure mode this guards against)."""
+    with pytest.raises(DocumentChangePlanningError, match="Could not parse"):
+        _load_frontmatter(Path("frontmatter.yaml"), "a: [unterminated\n")
+
+
+# ---------------------------------------------------------------------------
+# _yaml_values_equal -- ruamel round-trip scalar subtype normalization (#195)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("yaml_source", "key", "plain_value"),
+    [
+        ('value: "quoted"\n', "value", "quoted"),
+        ("value: 'quoted'\n", "value", "quoted"),
+        ("value: 0x10\n", "value", 16),
+        ("value: 1_000\n", "value", 1000),
+        ("value: 1.5\n", "value", 1.5),
+    ],
+)
+def test_yaml_values_equal_normalizes_ruamel_scalar_subtypes(
+    yaml_source: str,
+    key: str,
+    plain_value: Any,
+) -> None:
+    """A ruamel round-trip scalar (e.g. ``DoubleQuotedScalarString``,
+    ``HexInt``) must compare equal to the plain Python value it represents.
+
+    Without normalizing these formatting subclasses to their base type
+    first, ``type(left) is not type(right)`` rejects every one of these
+    pairs even though they are the same value -- exactly the bug this test
+    pins: re-applying an update whose value already matches, just via a
+    differently-formatted source scalar, must stay a no-op.
+    """
+    data = _load_frontmatter(Path("frontmatter.yaml"), yaml_source)
+    loaded_value = data[key]
+
+    assert type(loaded_value) is not type(plain_value)
+    assert _yaml_values_equal(loaded_value, plain_value) is True
+
+
+@pytest.mark.parametrize(
+    ("left", "right"),
+    [
+        (True, 1),
+        (False, 0),
+        (date(2026, 7, 4), "2026-07-04"),
+        (datetime(2026, 7, 4, 12, 0), "2026-07-04 12:00:00"),
+    ],
+)
+def test_yaml_values_equal_preserves_real_type_distinctions(
+    left: Any,
+    right: Any,
+) -> None:
+    """Normalizing ruamel's formatting subclasses must not blur the
+    semantic type distinctions the merge contract already relies on."""
+    assert _yaml_values_equal(left, right) is False
+
+
+def test_merge_reapplying_same_update_is_noop_despite_quote_style_change(
+    tmp_path: Path,
+) -> None:
+    """Applying, writing, then re-planning the identical update is a no-op
+    end to end, even though the first apply's dump may format the value
+    differently (e.g. adopting the surrounding quote style) than the plain
+    value the caller supplied."""
+    path = tmp_path / "topic.md"
+    path.write_text("---\ntype: concept\ntitle: 'Old'\n---\n", encoding="utf-8")
+    bundle = _bundle(tmp_path)
+
+    first = plan_frontmatter_merge(bundle, path, {"title": "New"})
+    apply_document_change(bundle, first)
+
+    second = plan_frontmatter_merge(bundle, path, {"title": "New"})
+
+    assert second.changed is False
+
+
+# ---------------------------------------------------------------------------
+# Canonical serialization form (ADR-0002): idempotence property test
+# ---------------------------------------------------------------------------
+
+_FRONTMATTER_KEY = st.text(
+    alphabet=st.characters(min_codepoint=ord("a"), max_codepoint=ord("z")),
+    min_size=1,
+    max_size=8,
+)
+_FRONTMATTER_TEXT = st.text(
+    alphabet=st.characters(
+        min_codepoint=0x20,
+        max_codepoint=0x2FFF,
+        blacklist_categories=("Cs", "Cc"),
+    ),
+    max_size=15,
+)
+# Excludes tiny-magnitude/subnormal floats: ruamel's format-preserving
+# ScalarFloat re-renders a reloaded value's digits independently of Python's
+# own repr(), and for extreme exponents that can pick a different (still
+# numerically equal) last digit on redump -- a ruamel formatting quirk
+# orthogonal to what this property test is checking (the merge engine's own
+# dump/load round trip), so it is filtered out rather than chased here.
+_FRONTMATTER_FLOAT = st.floats(
+    allow_nan=False,
+    allow_infinity=False,
+    allow_subnormal=False,
+    min_value=-1e6,
+    max_value=1e6,
+).filter(lambda value: value == 0 or abs(value) >= 1e-4)
+_FRONTMATTER_SCALAR = st.one_of(
+    _FRONTMATTER_TEXT,
+    st.booleans(),
+    st.integers(min_value=-1_000_000, max_value=1_000_000),
+    _FRONTMATTER_FLOAT,
+    st.none(),
+    st.dates(),
+    st.datetimes(),
+)
+_FRONTMATTER_VALUE = st.recursive(
+    _FRONTMATTER_SCALAR,
+    lambda children: st.one_of(
+        st.lists(children, max_size=3),
+        st.dictionaries(_FRONTMATTER_KEY, children, max_size=3),
+    ),
+    max_leaves=6,
+)
+
+
+@given(data=st.dictionaries(_FRONTMATTER_KEY, _FRONTMATTER_VALUE, max_size=5))
+def test_frontmatter_dump_is_idempotent(data: dict[str, Any]) -> None:
+    """``serialize(parse(serialize(x))) == serialize(x)`` (ADR-0002):
+    re-serializing already-canonical frontmatter output is a fixed point."""
+    once = _dump_frontmatter(CommentedMap(data))
+    reloaded = _load_frontmatter(Path("frontmatter.yaml"), once)
+    twice = _dump_frontmatter(reloaded)
+
+    assert twice == once

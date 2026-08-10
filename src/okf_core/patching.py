@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -13,8 +14,10 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import yaml
 from markdown_it import MarkdownIt
-from yaml.nodes import MappingNode, Node
-from yaml.tokens import AliasToken
+from ruamel.yaml import YAML
+from ruamel.yaml import YAMLError as RuamelYAMLError
+from ruamel.yaml.comments import CommentedMap
+from yaml.nodes import MappingNode
 
 from okf_core.change_envelope import (
     DocumentChangeApplyError,
@@ -35,7 +38,11 @@ from okf_core.change_envelope import (
     plan_file_move,
 )
 from okf_core.config import BundleConfig
-from okf_core.documents import DocumentParseError, parse_concept_document
+from okf_core.documents import (
+    DocumentParseError,
+    _split_frontmatter,
+    parse_concept_document,
+)
 
 if TYPE_CHECKING:
     from markdown_it.rules_core.state_core import StateCore
@@ -66,6 +73,16 @@ __all__ = [
 ]
 
 _MARKDOWN = MarkdownIt("commonmark")
+
+# The frontmatter engine: a single shared round-trip YAML instance used to
+# load, mutate in place, and dump frontmatter mappings. Round-trip mode keeps
+# comments, key order, anchors/aliases, and per-node flow/block style on any
+# key a merge does not touch; ADR-0002 documents the resulting canonical
+# form. `preserve_quotes` keeps original quote style on untouched scalars;
+# `width` is set high so long scalars are not hard-wrapped mid-value.
+_FRONTMATTER_YAML = YAML(typ="rt")
+_FRONTMATTER_YAML.preserve_quotes = True
+_FRONTMATTER_YAML.width = 10_000
 
 
 def plan_markdown_section_patch(
@@ -443,13 +460,23 @@ def plan_frontmatter_merge(
     path: Path | str,
     updates: Mapping[str, Any],
 ) -> DocumentChangePlan:
-    """Plan a shallow, byte-preserving merge of top-level frontmatter fields.
+    """Plan a shallow merge of top-level frontmatter fields into canonical form.
 
-    Existing values are replaced at their YAML source spans and missing fields
-    are appended in update order. Update values may contain plain YAML-oriented
-    scalars, dates, datetimes, lists, and string-keyed dictionaries. Untargeted
-    YAML aliases are preserved; fields participating in alias relationships
-    cannot be changed safely and are rejected.
+    Frontmatter is parsed with a round-trip YAML loader, mutated in place
+    (targeted keys are replaced, missing keys are appended in update order),
+    and re-serialized in `okf-core`'s documented canonical form (ADR-0002):
+    key order and comments on untouched keys are preserved, output uses
+    block style and LF line endings regardless of the source document's
+    style, and quote style is not guaranteed to survive on a touched value.
+    A non-canonical but conformant input converges to canonical form on its
+    first edit; this may produce one-time formatting churn in that edit's
+    diff, which is expected rather than a defect.
+
+    Update values may contain plain YAML-oriented scalars, dates, datetimes,
+    lists, and string-keyed dictionaries. An update whose value already
+    equals the current one (by data model, not by source bytes) is a no-op.
+    Untargeted YAML aliases are preserved; fields participating in alias
+    relationships cannot be changed safely and are rejected.
     """
 
     return _plan_document_change(
@@ -629,6 +656,48 @@ def _merge_frontmatter(
     content: str,
     updates: Mapping[str, Any],
 ) -> str:
+    update_items = _validated_frontmatter_update_items(path, updates)
+    if not update_items:
+        return content
+
+    try:
+        document = parse_concept_document(content)
+    except DocumentParseError as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not parse document frontmatter: {exc}"
+        ) from exc
+
+    yaml_source, body = _split_frontmatter(content)
+    data = _load_frontmatter(path, yaml_source or "")
+    alias_linked_keys = _alias_linked_keys(
+        _compose_frontmatter(path, yaml_source or "")
+    )
+
+    changed = False
+    for key, value in update_items:
+        current = document.frontmatter.get(key, _MISSING)
+        if current is not _MISSING and _yaml_values_equal(current, value):
+            continue
+        if current is not _MISSING and key in alias_linked_keys:
+            raise DocumentChangePlanningError(
+                path,
+                f"Frontmatter field {key!r} is a YAML alias and cannot be changed",
+            )
+        data[key] = value
+        changed = True
+
+    if not changed:
+        return content
+
+    proposed = f"---\n{_dump_frontmatter(data)}---\n{body}"
+    _validate_merged_frontmatter(path, proposed)
+    return proposed
+
+
+def _validated_frontmatter_update_items(
+    path: Path,
+    updates: Mapping[str, Any],
+) -> tuple[tuple[str, Any], ...]:
     if not isinstance(updates, Mapping):
         raise DocumentChangePlanningError(path, "Frontmatter updates must be a mapping")
     update_items = tuple(updates.items())
@@ -647,73 +716,36 @@ def _merge_frontmatter(
                 "leading or trailing whitespace",
             )
         _validate_frontmatter_update_value(path, value, seen_containers)
-        _dump_yaml(path, value, flow_style=False)
+    return update_items
 
-    if not update_items:
-        return content
+
+def _load_frontmatter(path: Path, yaml_source: str) -> CommentedMap:
+    """Load raw frontmatter YAML into a mutable round-trip ``CommentedMap``.
+
+    An empty source (no frontmatter block, or an empty block) loads as an
+    empty map so callers have one code path for "populate absent frontmatter"
+    and "edit existing frontmatter" alike.
+    """
 
     try:
-        document = parse_concept_document(content)
-    except DocumentParseError as exc:
+        data = _FRONTMATTER_YAML.load(yaml_source)
+    except RuamelYAMLError as exc:
         raise DocumentChangePlanningError(
             path, f"Could not parse document frontmatter: {exc}"
         ) from exc
+    return CommentedMap() if data is None else data
 
-    bounds = _frontmatter_bounds(content)
-    line_ending = _first_line_ending(content)
-    if bounds is None:
-        generated = _dump_yaml_mapping(path, update_items, line_ending)
-        proposed = f"---{line_ending}{generated}---{line_ending}{content}"
-        _validate_merged_frontmatter(path, proposed)
-        return proposed
 
-    yaml_start, yaml_end = bounds
-    yaml_source = content[yaml_start:yaml_end]
-    root = _compose_frontmatter(path, yaml_source)
-    nodes = _top_level_nodes(root)
-    alias_linked_keys = _alias_linked_keys(root)
+def _dump_frontmatter(data: CommentedMap) -> str:
+    """Dump a frontmatter ``CommentedMap`` in `okf-core`'s canonical form.
 
-    replacements: list[tuple[int, int, str]] = []
-    additions: list[tuple[str, Any]] = []
-    for key, value in update_items:
-        current = document.frontmatter.get(key, _MISSING)
-        if current is not _MISSING and _yaml_values_equal(current, value):
-            continue
-        value_node = nodes.get(key)
-        if value_node is None:
-            additions.append((key, value))
-            continue
-        if key in alias_linked_keys:
-            raise DocumentChangePlanningError(
-                path,
-                f"Frontmatter field {key!r} is a YAML alias and cannot be changed",
-            )
-        key_line = _node_key_line(root, key)
-        start = value_node.start_mark.index
-        end = value_node.end_mark.index
-        original_value_source = yaml_source[start:end]
-        inline = value_node.start_mark.line == key_line
-        replacement = _serialize_replacement_value(
-            path,
-            value,
-            column=value_node.start_mark.column,
-            inline=inline,
-            preserve_final_line_ending=original_value_source.endswith(("\n", "\r")),
-            line_ending=line_ending,
-        )
-        if start == end:
-            replacement = f" {replacement}"
-        replacements.append((start, end, replacement))
+    Block style and LF line endings are the round-trip dumper's own
+    defaults; no post-processing is applied, per ADR-0002.
+    """
 
-    merged_yaml = yaml_source
-    for start, end, replacement in sorted(replacements, reverse=True):
-        merged_yaml = f"{merged_yaml[:start]}{replacement}{merged_yaml[end:]}"
-    if additions:
-        merged_yaml += _dump_yaml_mapping(path, additions, line_ending)
-
-    proposed = f"{content[:yaml_start]}{merged_yaml}{content[yaml_end:]}"
-    _validate_merged_frontmatter(path, proposed)
-    return proposed
+    buffer = io.StringIO()
+    _FRONTMATTER_YAML.dump(data, buffer)
+    return buffer.getvalue()
 
 
 _MISSING = object()
@@ -767,19 +799,6 @@ def _validate_frontmatter_update_value(
         _validate_frontmatter_update_value(path, item, seen_containers)
 
 
-def _frontmatter_bounds(content: str) -> tuple[int, int] | None:
-    lines = content.splitlines(keepends=True)
-    if not lines or lines[0].rstrip("\r\n") != "---":
-        return None
-    yaml_start = len(lines[0])
-    position = yaml_start
-    for line in lines[1:]:
-        if line.rstrip("\r\n") == "---":
-            return yaml_start, position
-        position += len(line)
-    return None
-
-
 def _compose_frontmatter(path: Path, yaml_source: str) -> MappingNode | None:
     try:
         root = yaml.compose(yaml_source, Loader=yaml.SafeLoader)
@@ -792,12 +811,6 @@ def _compose_frontmatter(path: Path, yaml_source: str) -> MappingNode | None:
     if not isinstance(root, MappingNode):
         raise DocumentChangePlanningError(path, "YAML frontmatter must be a mapping")
     return root
-
-
-def _top_level_nodes(root: MappingNode | None) -> dict[str, Node]:
-    if root is None:
-        return {}
-    return {key_node.value: value_node for key_node, value_node in root.value}
 
 
 def _alias_linked_keys(root: MappingNode | None) -> set[str]:
@@ -819,95 +832,6 @@ def _alias_linked_keys(root: MappingNode | None) -> set[str]:
     }
 
 
-def _node_key_line(root: MappingNode | None, target_key: str) -> int:
-    assert root is not None
-    for key_node, _ in root.value:
-        if key_node.value == target_key:
-            return key_node.start_mark.line
-    raise AssertionError(f"Missing composed frontmatter key: {target_key}")
-
-
-def _serialize_replacement_value(
-    path: Path,
-    value: Any,
-    *,
-    column: int,
-    inline: bool,
-    preserve_final_line_ending: bool,
-    line_ending: str,
-) -> str:
-    dumped = _dump_yaml(path, value, flow_style=inline)
-    dumped = _strip_yaml_document_end(dumped)
-    dumped = dumped.removesuffix("\n")
-    dumped = dumped.replace("\n", f"\n{' ' * column}")
-    dumped = dumped.replace("\n", line_ending)
-    if preserve_final_line_ending:
-        dumped += line_ending
-    return dumped
-
-
-def _dump_yaml(path: Path, value: Any, *, flow_style: bool) -> str:
-    try:
-        dumped = yaml.safe_dump(
-            value,
-            allow_unicode=True,
-            default_flow_style=flow_style,
-            sort_keys=False,
-            width=10_000,
-        )
-    except (yaml.YAMLError, TypeError, ValueError) as exc:
-        raise DocumentChangePlanningError(
-            path, f"Frontmatter value cannot be represented as safe YAML: {exc}"
-        ) from exc
-    _reject_generated_yaml_aliases(path, dumped)
-    return dumped
-
-
-def _dump_yaml_mapping(
-    path: Path,
-    items: Sequence[tuple[str, Any]],
-    line_ending: str,
-) -> str:
-    if not items:
-        return ""
-    try:
-        dumped = yaml.safe_dump(
-            dict(items),
-            allow_unicode=True,
-            default_flow_style=False,
-            sort_keys=False,
-            width=10_000,
-        )
-    except (yaml.YAMLError, TypeError, ValueError) as exc:
-        raise DocumentChangePlanningError(
-            path, f"Frontmatter updates cannot be represented as safe YAML: {exc}"
-        ) from exc
-    _reject_generated_yaml_aliases(path, dumped)
-    return dumped.replace("\n", line_ending)
-
-
-def _strip_yaml_document_end(dumped: str) -> str:
-    if dumped.endswith("\n...\n"):
-        return dumped[:-4]
-    return dumped
-
-
-def _reject_generated_yaml_aliases(path: Path, yaml_source: str) -> None:
-    try:
-        has_alias = any(
-            isinstance(token, AliasToken)
-            for token in yaml.scan(yaml_source, Loader=yaml.SafeLoader)
-        )
-    except yaml.YAMLError as exc:
-        raise DocumentChangePlanningError(
-            path, f"Could not scan document frontmatter: {exc}"
-        ) from exc
-    if has_alias:
-        raise DocumentChangePlanningError(
-            path, "Generated frontmatter updates must not contain YAML aliases"
-        )
-
-
 def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
     try:
         document = parse_concept_document(proposed)
@@ -915,23 +839,47 @@ def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
         raise DocumentChangePlanningError(
             path, f"Merged frontmatter is invalid: {exc}"
         ) from exc
-    bounds = _frontmatter_bounds(proposed)
-    if bounds is None:
+    yaml_source, _ = _split_frontmatter(proposed)
+    if yaml_source is None:
         raise DocumentChangePlanningError(path, "Merged frontmatter is missing")
     if not isinstance(document.frontmatter, dict):
         raise DocumentChangePlanningError(path, "Merged frontmatter is not a mapping")
 
 
+# ruamel's round-trip loader returns str/int/float/bool *subclasses*
+# (e.g. SingleQuotedScalarString, ScalarInt, ScalarBoolean) that carry
+# source formatting alongside the plain value. `_yaml_values_equal` is a
+# semantic (data-model) comparison, so these formatting subclasses must be
+# normalized to their plain base type before comparing -- otherwise a
+# round-tripped value would never compare equal to the plain Python literal
+# an update supplies, and every no-op check on a quoted/formatted scalar
+# would spuriously report "changed". Only ruamel's own formatting
+# subclasses are normalized here; real semantic types (bool vs int, date vs
+# str) keep their own distinct type and are unaffected. `bool` is checked
+# before `int` because `bool` is itself an `int` subclass in Python.
+def _normalize_yaml_scalar_type(value: Any) -> type:
+    if isinstance(value, bool):
+        return bool
+    if isinstance(value, str):
+        return str
+    if isinstance(value, int):
+        return int
+    if isinstance(value, float):
+        return float
+    return type(value)
+
+
 def _yaml_values_equal(left: Any, right: Any) -> bool:
-    if type(left) is not type(right):
+    left_type = _normalize_yaml_scalar_type(left)
+    if left_type is not _normalize_yaml_scalar_type(right):
         return False
-    if type(left) is dict:
+    if left_type is dict:
         if left.keys() != right.keys():
             return False
         return all(_yaml_values_equal(left[key], right[key]) for key in left)
-    if type(left) is list:
+    if left_type is list:
         return len(left) == len(right) and all(
             _yaml_values_equal(left_item, right_item)
             for left_item, right_item in zip(left, right)
         )
-    return left == right
+    return bool(left == right)

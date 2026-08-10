@@ -331,15 +331,15 @@ graph = build_bundle_graph(config.bundles["default"], manifest)
 
 ### Safe Document Changes
 
-The primitives below currently preserve untouched content byte-for-byte —
-this is the shipped, true behavior described in this section. The project's
-longer-term serialization-contract direction has changed, however: see
-`docs/decisions/` (ADR-0001 and ADR-0002) for the recorded decision to move
-toward one documented canonical output form per format instead of
-byte-identical preservation of untouched regions, tracked for YAML by issue
-#195 and for Markdown by issue #198. This section will be rewritten to match
-once that work lands; until then, treat the byte-preservation behavior
-documented below as current and accurate.
+The YAML frontmatter primitive (`plan_frontmatter_merge`) below has moved to
+`okf-core`'s documented canonical output form, per `docs/decisions/` (ADR-0001
+and ADR-0002) — see that primitive's own paragraphs for the specifics. The
+Markdown-body primitives (`plan_markdown_section_patch`,
+`plan_markdown_link_rewrite`, and friends) still preserve untouched content
+byte-for-byte; that engine has not moved yet, pending issue #198's
+Markdown-side re-verification of ADR-0002's canonical-form direction. Treat
+the byte-preservation behavior documented below for those primitives as
+current and accurate until #198 lands.
 
 `plan_document_change(bundle, path, proposed_content, *, allow_missing=False)`
 prepares an inspectable full-content change for one UTF-8 file under a
@@ -412,11 +412,23 @@ content produces a no-op plan. Applying the plan uses
 `apply_document_change()` and retains its stale-content protection.
 
 `plan_frontmatter_merge(bundle, path, updates)` builds a safe plan for a
-shallow merge of selected top-level YAML frontmatter fields. Existing fields
-are replaced and missing fields are appended in update order. Unselected
-frontmatter—including unknown fields, comments, quoting, whitespace, and
-ordering—and the Markdown body remain byte-identical. Equivalent values and
+shallow merge of selected top-level YAML frontmatter fields. Frontmatter is
+parsed with a round-trip YAML engine (`ruamel.yaml`), mutated in place, and
+re-serialized in `okf-core`'s documented canonical form (ADR-0002): key order
+is preserved, missing fields are appended in update order, comments attached
+to keys the merge does not target survive, output uses block style (not
+flow) regardless of the source document's style, and frontmatter always ends
+with LF line endings regardless of the source document's line-ending style —
+the Markdown body's own line endings are untouched. Quote style on a *touched*
+value is not guaranteed to survive; untouched scalars generally keep their
+original quoting. Equivalent values (by data model, not by source bytes) and
 empty updates produce a no-op; `None` is written as YAML `null`.
+
+A frontmatter block that is non-canonical but otherwise conformant (e.g. a
+flow-style list, or non-block indentation) is accepted with no
+precondition to canonicalize the file first; its first edit converges the
+touched value(s) to canonical form, which can produce one-time formatting
+churn in that edit's diff — this is expected, not a defect, per ADR-0002.
 
 Requested values may use plain `str`, `bool`, `int`, finite `float`, `None`,
 `datetime.date`, and `datetime.datetime` values, plus recursively nested plain
@@ -427,11 +439,11 @@ from a YAML date, and a boolean differs from an integer.
 
 These restrictions apply only to values supplied for mutation; they do not
 narrow OKF conformance or general frontmatter consumption. Richer untargeted
-values and YAML aliases are preserved byte-for-byte. A targeted field that
-participates in an alias relationship is rejected because changing a shared
-node cannot preserve its semantics locally. Malformed or non-mapping
-frontmatter, duplicate mapping keys, and invalid update keys are also reported
-through `DocumentChangePlanningError`. The merge does not delete fields or
+values and YAML aliases are preserved. A targeted field that participates in
+an alias relationship is rejected because changing a shared node cannot
+preserve its semantics locally. Malformed or non-mapping frontmatter,
+duplicate mapping keys, and invalid update keys are also reported through
+`DocumentChangePlanningError`. The merge does not delete fields or
 recursively merge nested mappings. Applying its plan uses
 `apply_document_change()` and retains the same stale-content protection.
 
