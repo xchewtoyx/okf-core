@@ -1188,6 +1188,11 @@ def test_index_reports_write_conflict_and_does_not_overwrite(
     payload = json.loads(result.stdout)
     assert payload["write_conflict"] is not None
     assert "changed after planning" in payload["write_conflict"]
+    # The generated body had one candidate entry ("example"), but it was
+    # never written -- entries must not claim that discarded count.
+    assert payload["entries"] == 0
+    assert "not written" in result.stderr
+    assert "Wrote index.md" not in result.stderr
 
 
 def test_index_reports_clean_error_when_symlink_swapped_before_planning(
@@ -1232,9 +1237,12 @@ def test_index_reports_clean_error_when_symlink_swapped_before_planning(
     payload = json.loads(result.stdout)
     assert payload["write_conflict"] is not None
     assert "symbolic link" in payload["write_conflict"]
+    assert payload["entries"] == 0
     assert index_path.is_symlink()
     assert index_path.resolve() == other_path.resolve()
     assert other_path.read_text(encoding="utf-8") == "Other\n"
+    assert "not written" in result.stderr
+    assert "Wrote index.md" not in result.stderr
 
 
 def test_index_writes_root_okf_version_when_configured(tmp_path: Path) -> None:

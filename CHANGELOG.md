@@ -9,6 +9,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Fixed
 
 - **`okf stable-id --write` and `okf index`/`move_concept`'s index refresh now go through the plan/apply safety envelope**: both previously wrote their target file directly, so a concurrent edit (or a target swapped for a symlink) between reading and writing could be silently discarded or written through. Both now refuse with a reported conflict and exit non-zero (`okf index`'s per-directory JSON result gains a `write_conflict` field) instead of overwriting unseen changes. As a side effect of routing through `apply_document_change`, `okf index` for a directory with zero entries and no pre-existing `index.md` now writes no file at all (an empty proposed body against a missing target is a no-op), where it previously always created an empty `index.md` unconditionally via `write_text`. (#194)
+- **`okf index`'s per-directory result no longer misreports a refused write as a success**: when `write_conflict` is set, `entries` now reports `0` instead of the discarded, never-written body's candidate count, and the stderr summary prints only the conflict (plus a "not written" note) instead of also printing the `Wrote index.md ...` success line alongside it. (#194)
 
 ### Added
 

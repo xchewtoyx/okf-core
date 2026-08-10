@@ -138,8 +138,10 @@ def _index_one_directory(
     ``write_conflict``). ``write_conflict`` is ``None`` when the write
     succeeded and a message string when a concurrent change (or a failure
     while installing the new content) was caught while writing -- the
-    directory's ``index.md`` is left unchanged in that case. Callers own all
-    CLI echoing and exit-code decisions.
+    directory's ``index.md`` is left unchanged in that case. When
+    ``write_conflict`` is set, ``entries`` is reported as ``0`` rather than
+    the count from the generated-but-discarded body, since nothing was
+    actually written. Callers own all CLI echoing and exit-code decisions.
     """
     direct_entries = concepts_by_parent.get(d, [])
     subdirs = sorted(child for child in concept_dirs if child.parent == d)
@@ -185,9 +187,15 @@ def _index_one_directory(
         # rather than propagating as an uncaught traceback.
         write_conflict = str(exc)
 
+    # entries_written above counts candidates in the generated-but-possibly-
+    # discarded body. When the write was refused, that body never reached
+    # disk, so reporting entries_written here would claim entries were
+    # written when they were not; report 0 instead.
+    reported_entries = 0 if write_conflict is not None else entries_written
+
     return {
         "path": str(index_path),
-        "entries": entries_written,
+        "entries": reported_entries,
         "problems": [
             {"concept_id": p.concept_id, "message": p.message}
             for p in generated.problems
@@ -220,15 +228,25 @@ def _echo_index_result(
 ) -> None:
     """Echo the per-directory status line(s) for one ``_index_one_directory`` result."""
 
-    if dir_result["write_conflict"]:
-        click.echo(dir_result["write_conflict"], err=True)
-
-    entries_written = dir_result["entries"]
     if recurse:
         rel_path = d.relative_to(bundle.bundle_root).as_posix()
         d_str = f" at {rel_path!r}" if rel_path and rel_path != "." else ""
     else:
         d_str = ""
+
+    if dir_result["write_conflict"]:
+        # A conflict means index.md was NOT written -- echo only the conflict
+        # (plus an explicit "not written" note), never the success-style
+        # "Wrote index.md" line below, which would contradict it.
+        click.echo(dir_result["write_conflict"], err=True)
+        click.echo(
+            f"index.md for bundle {bundle.name!r}{d_str} was not written "
+            "due to the conflict above; the existing file is left unchanged.",
+            err=True,
+        )
+        return
+
+    entries_written = dir_result["entries"]
     click.echo(
         f"Wrote index.md for bundle {bundle.name!r}{d_str}: "
         f"{entries_written} entries, {len(dir_result['problems'])} problems, "
