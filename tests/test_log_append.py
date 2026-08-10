@@ -291,6 +291,32 @@ def test_plan_accepts_label_shaped_content_with_matching_kind(tmp_path: Path) ->
     assert entry.text == "looks labelled."
 
 
+def test_plan_rejects_content_that_tokenizes_differently_once_labelled(
+    tmp_path: Path,
+) -> None:
+    """A structurally-clean, correctly-labelled entry can still corrupt its
+    own content: splitting "**kind**: " + content into a label prefix and a
+    suffix does not always tokenize identically to parsing content alone,
+    because CommonMark's code-span backtick matching and bracket/link
+    matching are not local to a substring -- an unmatched backtick or
+    bracket elsewhere on the same line can change where a later one
+    resolves. This kind/content pair (found by fuzzing
+    _require_representable_log_entry with hypothesis; see
+    test_log_append_content_round_trips_when_representable) passes both the
+    structural check (one clean paragraph, no parse problems) and the label
+    check (kind round-trips as the recovered label) but still loses a
+    backslash once reparsed, exercising the final text-equality guard in
+    _require_representable_log_entry on its own, independent of the other
+    two checks.
+    """
+    bundle = _bundle(tmp_path)
+    kind = "[-"
+    content = "`1b\\!1_'`\"'[`!"
+
+    with pytest.raises(DocumentChangePlanningError, match="altering its meaning"):
+        plan_log_append(bundle, content, date=_TODAY, kind=kind)
+
+
 def test_plan_rejects_kind_that_cannot_survive_its_own_rendering(
     tmp_path: Path,
 ) -> None:
