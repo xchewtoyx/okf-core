@@ -46,6 +46,7 @@ from okf_core import (
 )
 from okf_core.logs import log_append, plan_log_append
 from okf_core.moves import move_concept, plan_move_concept
+from okf_core.patching import plan_source_upsert, source_upsert
 from okf_core.orientation import ORIENTATION_GUIDE
 from okf_core.repair import plan_graph_repair, repair_graph
 from okf_core.write_safety import check_bundle_write_safety
@@ -1036,6 +1037,167 @@ def log_append_cmd(
         )
     else:
         click.echo(f"Appended entry to {output['path']}", err=True)
+
+
+def _parsed_last_modified(last_modified_str: str | None) -> datetime.date | None:
+    if last_modified_str is None:
+        return None
+    try:
+        return datetime.date.fromisoformat(last_modified_str)
+    except ValueError as exc:
+        click.echo(
+            f"Invalid --last-modified value {last_modified_str!r}: {exc}", err=True
+        )
+        sys.exit(2)
+
+
+def _source_entry_from_options(
+    resource: str,
+    source_id: str | None,
+    title: str | None,
+    author: str | None,
+    usage_count: int | None,
+    last_modified: datetime.date | None,
+) -> dict[str, Any]:
+    source: dict[str, Any] = {"resource": resource}
+    if source_id is not None:
+        source["id"] = source_id
+    if title is not None:
+        source["title"] = title
+    if author is not None:
+        source["author"] = author
+    if usage_count is not None:
+        source["usage_count"] = usage_count
+    if last_modified is not None:
+        source["last_modified"] = last_modified
+    return source
+
+
+@cli.command("source-add")
+@click.argument("concept_path", metavar="PATH")
+@click.option(
+    "--resource",
+    required=True,
+    metavar="RESOURCE",
+    help="The source artifact or scope descriptor (URL, bundle-relative "
+    "path, or free-text scope). Required (OKF v0.2 §5.1).",
+)
+@click.option(
+    "--id",
+    "source_id",
+    default=None,
+    metavar="ID",
+    help="Stable identity key, also usable as a footnote label for "
+    "per-claim attribution. Falls back to --resource for identity "
+    "matching when omitted.",
+)
+@click.option(
+    "--title",
+    default=None,
+    metavar="TITLE",
+    help="Human-readable label for the source.",
+)
+@click.option(
+    "--author",
+    default=None,
+    metavar="ACTOR",
+    help="Who or what produced the source, in the actor convention "
+    "(e.g. human:alice, process:nightly-ingest).",
+)
+@click.option(
+    "--usage-count",
+    "usage_count",
+    type=int,
+    default=None,
+    metavar="N",
+    help="How often the source was exercised over its usage window.",
+)
+@click.option(
+    "--last-modified",
+    "last_modified_str",
+    default=None,
+    metavar="YYYY-MM-DD",
+    help="When the source itself last changed.",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show the planned sources entry without writing anything.",
+)
+def source_add_cmd(
+    concept_path: str,
+    resource: str,
+    source_id: str | None,
+    title: str | None,
+    author: str | None,
+    usage_count: int | None,
+    last_modified_str: str | None,
+    config_path: str | None,
+    bundle_name: str,
+    dry_run: bool,
+) -> None:
+    """Add one `sources` provenance entry to PATH's frontmatter (OKF v0.2 §5.1).
+
+    The library owns `sources` list bookkeeping: an absent list is created,
+    an existing list's order and content are preserved, and a source whose
+    identity (--id, falling back to --resource) already matches an entry
+    in the list is a no-op -- the existing entry is left completely
+    untouched rather than merged. Every other frontmatter key, including
+    the top-level `usage_window` sibling, is left untouched.
+    """
+    _, bundle = _load(config_path, bundle_name)
+    last_modified = _parsed_last_modified(last_modified_str)
+    source = _source_entry_from_options(
+        resource, source_id, title, author, usage_count, last_modified
+    )
+
+    try:
+        if dry_run:
+            plan = plan_source_upsert(bundle, concept_path, source)
+            output: dict[str, Any] = {
+                "bundle": bundle.name,
+                "path": str(plan.path),
+                "would_change": plan.changed,
+            }
+        else:
+            result = source_upsert(bundle, concept_path, source)
+            output = {
+                "bundle": bundle.name,
+                "path": str(result.path),
+                "changed": result.changed,
+            }
+    except DocumentChangeError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
+    if dry_run:
+        click.echo(
+            f"Dry run: would add sources entry to {output['path']}",
+            err=True,
+        )
+    elif output["changed"]:
+        click.echo(f"Added sources entry to {output['path']}", err=True)
+    else:
+        click.echo(
+            f"Source already represented in {output['path']}; nothing to do",
+            err=True,
+        )
 
 
 @cli.command("graph-repair")
