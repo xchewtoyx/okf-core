@@ -68,6 +68,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "orient" in result.stdout
     assert "move" in result.stdout
     assert "graph-repair" in result.stdout
+    assert "log-append" in result.stdout
 
 
 def test_scan_help_exits_zero() -> None:
@@ -2341,6 +2342,184 @@ def test_cli_move_source_escapes_bundle_root(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 2
+
+
+# ---------------------------------------------------------------------------
+# log-append
+# ---------------------------------------------------------------------------
+
+
+def test_log_append_help_exits_zero() -> None:
+    result = _runner().invoke(cli, ["log-append", "--help"])
+    assert result.exit_code == 0
+    assert "CONTENT" in result.stdout
+    assert "--date" in result.stdout
+    assert "--kind" in result.stdout
+
+
+def test_cli_log_append_creates_log_and_writes_entry(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "log-append",
+            "Did a thing.",
+            "--date",
+            "2026-07-25",
+            "--kind",
+            "Update",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is True
+    assert payload["path"] == str(tmp_path / "log.md")
+    assert "Appended entry" in result.stderr
+    log_text = (tmp_path / "log.md").read_text(encoding="utf-8")
+    assert "## 2026-07-25" in log_text
+    assert "* **Update**: Did a thing." in log_text
+
+
+def test_cli_log_append_default_date_and_kind(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+
+    result = _runner().invoke(
+        cli,
+        ["log-append", "Untimed entry.", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 0
+    log_text = (tmp_path / "log.md").read_text(encoding="utf-8")
+    assert "* Untimed entry." in log_text
+
+
+def test_cli_log_append_dry_run_does_not_write(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "log-append",
+            "Would-be entry.",
+            "--config",
+            str(config_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["would_change"] is True
+    assert not (tmp_path / "log.md").exists()
+    assert "Dry run" in result.stderr
+
+
+def test_cli_log_append_invalid_date_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "log-append",
+            "Some content.",
+            "--date",
+            "not-a-date",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid --date value" in result.stderr
+    assert not (tmp_path / "log.md").exists()
+
+
+def test_cli_log_append_rejects_unrepresentable_content(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "log-append",
+            "First paragraph.\n\nSecond paragraph.",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert not (tmp_path / "log.md").exists()
+
+
+def test_cli_log_append_stale_conflict_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`okf log-append` must not overwrite a log.md it never planned against.
+
+    Mirrors test_cli_stable_id_write_refuses_stale_content's technique:
+    log_append_cmd calls the library's log_append, not
+    plan_document_change_from_reader directly, so the race is injected by
+    patching that name inside okf_core.logs (where plan_log_append actually
+    calls it), not inside cli_module.
+    """
+    import okf_core.logs as logs_module
+
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    log_path = tmp_path / "log.md"
+    log_path.write_text(
+        "## 2020-01-01\n* **Update**: Original.\n", encoding="utf-8", newline="\n"
+    )
+
+    real_plan_from_reader = logs_module.plan_document_change_from_reader
+
+    def racing_plan_from_reader(
+        bundle: Any, path: Path, build_proposed_content: Any, **kwargs: Any
+    ):
+        plan = real_plan_from_reader(bundle, path, build_proposed_content, **kwargs)
+        # Simulate a concurrent edit landing between planning and apply.
+        Path(path).write_text(
+            "## 2020-01-01\n* **Update**: Concurrent edit.\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        return plan
+
+    monkeypatch.setattr(
+        logs_module, "plan_document_change_from_reader", racing_plan_from_reader
+    )
+
+    result = _runner().invoke(
+        cli,
+        ["log-append", "New entry.", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 1
+    assert "changed after planning" in result.stderr
+    assert log_path.read_text(encoding="utf-8") == (
+        "## 2020-01-01\n* **Update**: Concurrent edit.\n"
+    )
 
 
 def test_cli_graph_repair_dry_run_no_plugin_reports_unresolved(

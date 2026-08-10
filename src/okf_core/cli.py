@@ -44,6 +44,7 @@ from okf_core import (
     serialize_concept_document,
     validate_bundle,
 )
+from okf_core.logs import log_append, plan_log_append
 from okf_core.moves import move_concept, plan_move_concept
 from okf_core.orientation import ORIENTATION_GUIDE
 from okf_core.repair import plan_graph_repair, repair_graph
@@ -945,6 +946,96 @@ def move_cmd(
             f"{output['source']}",
             err=True,
         )
+
+
+@cli.command("log-append")
+@click.argument("content")
+@click.option(
+    "--date",
+    "date_str",
+    default=None,
+    metavar="YYYY-MM-DD",
+    help="Date section to append under (default: today, UTC).",
+)
+@click.option(
+    "--kind",
+    default=None,
+    metavar="LABEL",
+    help="Bold label convention word for the entry (e.g. Update, Creation).",
+)
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Show the planned entry without writing anything.",
+)
+def log_append_cmd(
+    content: str,
+    date_str: str | None,
+    kind: str | None,
+    config_path: str | None,
+    bundle_name: str,
+    dry_run: bool,
+) -> None:
+    """Append one agent-supplied entry to the bundle-root log.md.
+
+    CONTENT is the entry's prose; the library locates or creates the
+    correct date section, preserves reverse chronology, and leaves every
+    other entry untouched -- the caller never reads or parses log.md
+    itself. Unlike `okf move`'s log entries, appended entries are never
+    deduplicated: repeating the same CONTENT records it again.
+    """
+    _, bundle = _load(config_path, bundle_name)
+
+    parsed_date: datetime.date | None = None
+    if date_str is not None:
+        try:
+            parsed_date = datetime.date.fromisoformat(date_str)
+        except ValueError as exc:
+            click.echo(f"Invalid --date value {date_str!r}: {exc}", err=True)
+            sys.exit(2)
+
+    try:
+        if dry_run:
+            plan = plan_log_append(bundle, content, date=parsed_date, kind=kind)
+            output: dict[str, Any] = {
+                "bundle": bundle.name,
+                "path": str(plan.path),
+                "would_change": plan.changed,
+            }
+        else:
+            result = log_append(bundle, content, date=parsed_date, kind=kind)
+            output = {
+                "bundle": bundle.name,
+                "path": str(result.path),
+                "changed": result.changed,
+            }
+    except DocumentChangeError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
+    if dry_run:
+        click.echo(
+            f"Dry run: would append entry to {output['path']}",
+            err=True,
+        )
+    else:
+        click.echo(f"Appended entry to {output['path']}", err=True)
 
 
 @cli.command("graph-repair")

@@ -1042,37 +1042,61 @@ def _move_already_logged(
     )
 
 
-def _insert_entry_for_today(
-    parsed: ParsedLog, entry: LogEntry, today: datetime.date | None
+def _insert_entry_for_date(
+    parsed: ParsedLog, entry: LogEntry, target_date: datetime.date | None
 ) -> ParsedLog:
-    """Prepend ``entry`` into today's ``LogDateSection``, creating it if absent.
+    """Prepend ``entry`` into ``target_date``'s ``LogDateSection``, creating it if absent.
 
     Sections are re-sorted newest-first by ISO date string afterward rather
-    than assuming the existing top section already is today's -- a log with
-    only older dates (or one that is out of order for any reason) still ends
-    up with today's section in the right place. When ``today`` is not given,
-    "today" is UTC's current date rather than the local timezone's, so a
-    caller running near local midnight doesn't get a date that depends on
-    machine timezone configuration.
+    than assuming the existing sections are already in order relative to
+    ``target_date`` -- a log with only older dates, an explicit past or
+    future ``target_date`` landing mid-history, or a log that is out of
+    order for any reason still ends up with every section in
+    reverse-chronological position. When ``target_date`` is not given,
+    "today" (UTC's current date rather than the local timezone's) is used,
+    so a caller running near local midnight doesn't get a date that depends
+    on machine timezone configuration.
     """
-    resolved_today = (
-        today
-        if today is not None
+    resolved_date = (
+        target_date
+        if target_date is not None
         else datetime.datetime.now(tz=datetime.timezone.utc).date()
     )
-    today_str = resolved_today.isoformat()
+    date_str = resolved_date.isoformat()
     sections = list(parsed.sections)
     for index, section in enumerate(sections):
-        if section.date == today_str:
+        if section.date == date_str:
             sections[index] = LogDateSection(
-                date=today_str, entries=(entry, *section.entries)
+                date=date_str, entries=(entry, *section.entries)
             )
             break
     else:
-        sections.append(LogDateSection(date=today_str, entries=(entry,)))
+        sections.append(LogDateSection(date=date_str, entries=(entry,)))
 
     sections.sort(key=lambda section: section.date, reverse=True)
     return ParsedLog(title=parsed.title, sections=tuple(sections), problems=())
+
+
+def _require_log_reconstructable(parsed: ParsedLog, resolved_path: Path) -> None:
+    """Refuse to rewrite a log whose parse reported any ``LogParseProblem``.
+
+    ``render_log`` cannot reconstruct content ``parse_log`` couldn't
+    represent, so re-rendering a log in that state would silently drop it --
+    the shared fail-closed guard for every writer in this module that
+    re-renders the whole log (``plan_log_concept_move``,
+    ``plan_log_append``). ``log.md`` must be fixed (by hand, or via whatever
+    produced the unparseable content) before another entry can be safely
+    recorded in it.
+    """
+    if parsed.problems:
+        raise DocumentChangePlanningError(
+            resolved_path,
+            f"log.md has {len(parsed.problems)} unparseable block(s) "
+            "(see parse_log's LogParseProblem list) that render_log "
+            "cannot reconstruct; rewriting it now would silently drop "
+            "that content. Fix log.md before writing another entry "
+            "in it.",
+        )
 
 
 def _resolve_move_target(
@@ -1133,7 +1157,7 @@ def plan_log_concept_move(
     an identical move already recorded; if found, the returned plan is
     likewise unchanged -- re-logging the same move is idempotent. Otherwise a
     new ``"Moved"`` entry is inserted at the top of today's date section
-    (created if absent, per ``_insert_entry_for_today``) and the whole log is
+    (created if absent, per ``_insert_entry_for_date``) and the whole log is
     re-rendered. Either way, planning delegates to
     ``plan_document_change_from_reader(..., allow_missing=True)`` so a bundle
     with no ``log.md`` yet is planned as if starting from an empty document
@@ -1159,19 +1183,11 @@ def plan_log_concept_move(
 
     def build_proposed_content(resolved_path: Path, original_content: str) -> str:
         parsed = parse_log(original_content)
-        if parsed.problems:
-            raise DocumentChangePlanningError(
-                resolved_path,
-                f"log.md has {len(parsed.problems)} unparseable block(s) "
-                "(see parse_log's LogParseProblem list) that render_log "
-                "cannot reconstruct; rewriting it now would silently drop "
-                "that content. Fix log.md before recording another move "
-                "in it.",
-            )
+        _require_log_reconstructable(parsed, resolved_path)
         if _move_already_logged(parsed, old, new_relative_path):
             return original_content
         entry = _build_move_entry(old, new_relative_path)
-        updated = _insert_entry_for_today(parsed, entry, today)
+        updated = _insert_entry_for_date(parsed, entry, today)
         return render_log(updated)
 
     return plan_document_change_from_reader(
@@ -1196,4 +1212,242 @@ def log_concept_move(
     yet).
     """
     plan = plan_log_concept_move(bundle, old, new, today=today)
+    return apply_document_change(bundle, plan)
+
+
+# --- Structure-free log append (#101) ---------------------------------------
+#
+# Generalizes the move-entry writer above: an agent supplies free-form prose
+# (and an optional bold-label ``kind``) instead of this module building a
+# fixed-shape entry itself. Unlike ``plan_log_concept_move``, there is no
+# dedup here -- a general append has no natural identity to compare against
+# (a move entry's identity is the ``(old, new)`` pair; an arbitrary prose
+# entry has none), so repeating the same call records the entry again rather
+# than being treated as idempotent. Callers that need move-style dedup
+# should keep using ``plan_log_concept_move``.
+
+_LOG_APPEND_VALIDATION_DATE = "0001-01-01"
+"""Placeholder date heading used only to validate a candidate entry in
+isolation (see ``_require_representable_log_entry``) -- never written to
+disk. Any valid ISO 8601 date works; this one is chosen simply to be
+unmistakably not a real log date."""
+
+
+def _require_string_log_append_content(content: object, log_path: Path) -> str:
+    """Reject non-``str`` or blank/surrounding-whitespace ``content``.
+
+    Mirrors ``patching.py``'s ``_validate_section_request`` heading check:
+    a clear, specific message for the common mistakes (wrong type, empty
+    string, accidental leading/trailing whitespace) rather than letting
+    them fall through to the generic round-trip rejection in
+    ``_require_representable_log_entry``, whose message is about Markdown
+    representability, not input shape.
+    """
+    if (
+        not isinstance(content, str)
+        or not content.strip()
+        or content != content.strip()
+    ):
+        raise DocumentChangePlanningError(
+            log_path,
+            "content must be a non-empty string without surrounding " "whitespace",
+        )
+    return content
+
+
+def _require_valid_log_append_kind(kind: object, log_path: Path) -> str | None:
+    """Reject a ``kind`` that isn't ``None`` or a clean single-line label.
+
+    ``None`` means "no label" and is always accepted. A non-``None`` kind
+    must be a non-empty, single-line string without surrounding whitespace
+    -- the same shape ``_label_from_children`` expects to recover from a
+    rendered ``**kind**: `` prefix. Whether ``kind`` can actually be
+    rendered and parsed back unambiguously (e.g. a value containing ``**``
+    that would break its own bold delimiters) is checked separately by
+    ``_require_representable_log_entry``, since that requires the full
+    render/reparse round trip, not just a shape check.
+    """
+    if kind is None:
+        return None
+    if not isinstance(kind, str) or not kind.strip() or "\n" in kind or "\r" in kind:
+        raise DocumentChangePlanningError(
+            log_path,
+            "kind must be a non-empty, single-line string without "
+            "surrounding whitespace, or None",
+        )
+    return kind
+
+
+def _canonicalize_log_entry_prose(text: str) -> str:
+    """Render ``text`` the same way a round trip through ``parse_log`` would.
+
+    Used by ``_require_representable_log_entry`` to compare a candidate
+    entry's recovered text against what re-rendering canonicalizes ``text``
+    to on its own -- e.g. a link title's quote style, or a soft line break
+    collapsing to a single space -- rather than against ``text`` verbatim,
+    since that canonicalization is expected and allowed, not a
+    representability failure.
+    """
+    inline_tokens = _MARKDOWN.parseInline(text)
+    children = inline_tokens[0].children if inline_tokens else None
+    return _render_prose(children or []).strip()
+
+
+def _require_representable_log_entry(
+    content: str, kind: str | None, log_path: Path
+) -> None:
+    """Reject ``content``/``kind`` that can't be recorded as one flat ``LogEntry``.
+
+    Builds the candidate entry, renders it as a single bullet under a
+    throwaway placeholder date section, and reparses that synthetic
+    document with ``parse_log`` -- the same parser a future read of the
+    real log.md will use. Three distinct failure shapes share this one
+    round trip:
+
+    - **Multi-block content**: a blank line (splitting ``content`` into more
+      than one paragraph), a nested list, a code block, a heading, or any
+      other block-level construct embedded in ``content`` either produces a
+      ``LogParseProblem`` (nested content inside the item) or a stray
+      top-level block once it falls out of the list item (an unindented
+      second paragraph does not continue the item under CommonMark's list
+      rules), or otherwise yields more or fewer than exactly one recovered
+      entry -- e.g. a second unindented ``* `` line starting a sibling
+      bullet instead of continuing this one. Any of these is reported as
+      "not representable as one entry".
+    - **Unrepresentable label/kind values**: a ``kind`` that cannot survive
+      its own ``**kind**: `` rendering (e.g. containing ``**``, which closes
+      the bold span early) recovers a different, or no, label on reparse.
+    - **Label-ambiguous content**: ``content`` that itself starts with a
+      ``**word**: `` prefix when no ``kind`` was supplied renders
+      indistinguishably from a real labelled entry -- reparsing recovers
+      that prefix as ``.label`` (not ``None``) and strips it from ``.text``,
+      which is caught by the same label-mismatch check as the point above.
+
+    ``content`` that round-trips is accepted even if its recovered text
+    differs from ``content`` verbatim, as long as it matches
+    ``_canonicalize_log_entry_prose(content)`` -- expected re-render
+    canonicalization (quote style, soft-break collapsing), not corruption.
+    """
+    candidate = LogEntry(text=content, label=kind)
+    synthetic = f"## {_LOG_APPEND_VALIDATION_DATE}\n{_render_log_entry(candidate)}\n"
+    parsed = parse_log(synthetic)
+    if (
+        parsed.problems
+        or len(parsed.sections) != 1
+        or len(parsed.sections[0].entries) != 1
+    ):
+        raise DocumentChangePlanningError(
+            log_path,
+            "content is not representable as one flat log.md entry: it "
+            "must be single-paragraph prose, not multiple paragraphs, a "
+            "nested list, a code block, a heading, or any other "
+            "block-level construct",
+        )
+    recovered = parsed.sections[0].entries[0]
+    if recovered.label != kind:
+        raise DocumentChangePlanningError(
+            log_path,
+            f"content or kind cannot be recorded unambiguously: expected "
+            f"label {kind!r} but re-parsing the rendered entry recovers "
+            f"label {recovered.label!r} instead -- content beginning with "
+            "a '**word**: ' prefix must be passed via kind instead, and "
+            "kind must itself be representable as a plain bold label "
+            "(e.g. it cannot contain '**')",
+        )
+    if recovered.text != _canonicalize_log_entry_prose(content):
+        raise DocumentChangePlanningError(
+            log_path,
+            "content cannot be recorded without altering its meaning when "
+            "parsed back from log.md",
+        )
+
+
+def plan_log_append(
+    bundle: BundleConfig,
+    content: str,
+    *,
+    date: datetime.date | None = None,
+    kind: str | None = None,
+) -> DocumentChangePlan:
+    """Plan appending one agent-supplied entry to bundle-root ``log.md``.
+
+    The library owns log.md's structure -- locating or creating the correct
+    ``## YYYY-MM-DD`` date section, preserving reverse chronology, and
+    leaving every other entry untouched -- so a caller never has to read or
+    parse the file itself. ``content`` is the entry's prose; ``kind``, when
+    given, becomes the entry's bold label convention word (``**kind**: ``),
+    the same convention ``plan_log_concept_move``'s fixed ``"Moved"`` label
+    uses. Both are validated before any file is touched:
+    ``DocumentChangePlanningError`` is raised for a non-``str`` or
+    blank/whitespace-padded ``content``; a ``kind`` that is not ``None`` and
+    not a clean, non-empty, single-line string; and, via
+    ``_require_representable_log_entry``, content/kind that cannot be
+    recorded as one flat, unambiguous ``LogEntry`` -- multi-block content
+    (more than one paragraph, or any other nested block-level construct), a
+    ``kind`` that can't survive its own bold-label rendering, or ``content``
+    that itself begins with a ``**word**: ``-shaped prefix when no ``kind``
+    was supplied (which would render indistinguishably from a genuinely
+    labelled entry).
+
+    An existing ``log.md`` that ``parse_log`` reports any ``LogParseProblem``
+    against is refused the same way ``plan_log_concept_move`` refuses one --
+    see ``_require_log_reconstructable`` -- since ``render_log`` cannot
+    reconstruct content ``parse_log`` couldn't represent, and rewriting the
+    log in that state would silently drop it.
+
+    Unlike ``plan_log_concept_move``, this primitive never deduplicates: a
+    general prose entry has no natural identity to compare against (a move
+    entry's identity is its ``(old, new)`` pair; arbitrary prose has none),
+    so calling this again with the same arguments records the entry again
+    rather than being treated as idempotent. Callers that need move-style
+    dedup should use ``plan_log_concept_move`` instead.
+
+    The entry is inserted at the top of ``date``'s section (created if
+    absent, keeping the log newest-first even if the existing top section
+    isn't ``date``'s), via ``_insert_entry_for_date``. ``date`` defaults to
+    the real current UTC date; pass a fixed value for deterministic tests.
+    Planning delegates to ``plan_document_change_from_reader(...,
+    allow_missing=True)``, the same pairing ``plan_log_concept_move`` uses,
+    so a bundle with no ``log.md`` yet is planned as if starting from an
+    empty document, the parse/validate/insert/render logic above all
+    operate on the exact content this call reads once and hashes as the
+    plan's baseline, and the returned plan retains the same SHA-256
+    optimistic-concurrency protection as every other write primitive here.
+    """
+    bundle_root = bundle.bundle_root.resolve(strict=False)
+    log_path = bundle_root / "log.md"
+
+    validated_content = _require_string_log_append_content(content, log_path)
+    validated_kind = _require_valid_log_append_kind(kind, log_path)
+    _require_representable_log_entry(validated_content, validated_kind, log_path)
+
+    def build_proposed_content(resolved_path: Path, original_content: str) -> str:
+        parsed = parse_log(original_content)
+        _require_log_reconstructable(parsed, resolved_path)
+        entry = LogEntry(text=validated_content, label=validated_kind)
+        updated = _insert_entry_for_date(parsed, entry, date)
+        return render_log(updated)
+
+    return plan_document_change_from_reader(
+        bundle, log_path, build_proposed_content, allow_missing=True
+    )
+
+
+def log_append(
+    bundle: BundleConfig,
+    content: str,
+    *,
+    date: datetime.date | None = None,
+    kind: str | None = None,
+) -> DocumentChangeResult:
+    """Plan and apply one agent-supplied ``log.md`` append in a single call.
+
+    Mirrors ``log_concept_move``'s relationship to ``plan_log_concept_move``:
+    ``plan_log_append`` alone is read-only and safe for a dry-run preview,
+    while this convenience wrapper also applies it, retaining the same
+    SHA-256 optimistic-concurrency protection (including against a
+    ``log.md`` created concurrently after planning, when one didn't exist
+    yet).
+    """
+    plan = plan_log_append(bundle, content, date=date, kind=kind)
     return apply_document_change(bundle, plan)

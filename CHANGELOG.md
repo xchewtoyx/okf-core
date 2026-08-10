@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`log_append`/`plan_log_append` and `okf log-append`**: structure-free `log.md` append -- an agent supplies free-form prose (and an optional bold-label `kind`) and the library locates or creates the correct `## YYYY-MM-DD` section, preserves reverse chronology, and leaves every other entry untouched, so the caller never reads or parses `log.md` itself. Generalizes `plan_log_concept_move`'s (#136) fixed-shape "Moved" entry writer onto the same internals (`_insert_entry_for_date`, `_require_log_reconstructable`), now shared between both writers. Content/kind that can't be recorded as one flat, unambiguous entry -- multi-paragraph or otherwise non-flat content, an unrepresentable label, or content that would be misread as a labelled entry -- is rejected before any file is touched. Unlike the move writer, appended entries are never deduplicated. (#101)
+
 ## [0.5.0-alpha.1] - 2026-08-10
 
 ### Fixed
