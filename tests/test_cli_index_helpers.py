@@ -143,7 +143,13 @@ def test_index_one_directory_matches_only_problems_within_directory(
     assert result["entries"] == 0
     assert result["problems"] == []
     assert result["excluded_reserved_files"] == []
-    assert (sub_dir / "index.md").is_file()
+    assert result["write_conflict"] is None
+    # A directory with zero entries and zero subdirs generates an empty
+    # index body; apply_document_change treats "empty proposed content
+    # against a missing target" as a no-op (matching original_sha256), so
+    # no index.md is created here -- unlike test_index_one_directory_writes_
+    # direct_entries below, where the generated body is non-empty.
+    assert not (sub_dir / "index.md").exists()
 
 
 def test_index_one_directory_writes_direct_entries(tmp_path: Path) -> None:
