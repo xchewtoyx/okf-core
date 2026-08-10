@@ -6,7 +6,7 @@
   splice engines).
 - **Related:** ADR-0002 (canonical serialization form); the v0.5.0 re-plan
   set (`docs/proposals/v0.5.0-replan/01-draft1-requirements-assessment.md`
-  through `04-milestone-plan-draft2.md`).
+  through `[replan-plan]`).
 
 ## Context
 
@@ -15,7 +15,7 @@ Its reasoning rested on a single premise: byte-level preservation of
 untouched regions is the contract the library must serve, and every
 candidate replacement (`mdformat`, `ruamel.yaml`) regresses that contract
 somewhere. That premise has since been re-examined directly.
-`docs/proposals/v0.5.0-replan/02-editing-requirements.md` (the requirements
+`[replan-requirements]` (the requirements
 draft for the v0.5.0 re-plan) traces every requirement back to a spec clause
 or observed corpus behavior and finds no such clause: byte preservation of
 untouched regions appears nowhere in OKF v0.1 or v0.2. It is listed there as
@@ -25,14 +25,14 @@ requirements underneath it are S1 (key preservation on round-trip, an actual
 spec clause) and R-C1 (deterministic, documented output per format) — both
 satisfiable without byte identity.
 
-`docs/proposals/v0.5.0-replan/03-codebase-analysis.md` (the companion
+`[replan-analysis]` (the companion
 codebase analysis) independently quantifies the cost of keeping the
 byte-identity contract: nine hand-rolled parsing/span implementations across
 six modules, four inconsistent Markdown-escaping rules, and roughly 850 of
 `patching.py`'s 1,632 lines existing solely to guarantee byte-identity of
-untouched regions (§3.1, §3.2). Separately, the delivery loop's own
+untouched regions (`[replan-analysis]` §3.1, §3.2). Separately, the delivery loop's own
 change-engineering metric shows ~30% of all commits across the milestone are
-review-fix commits (§4) — evidence of real, ongoing rework cost, though not
+review-fix commits (`[replan-analysis]` §4) — evidence of real, ongoing rework cost, though not
 yet attributed to this specific machinery (see below).
 
 This ADR does not re-run #148's evidence gathering. The spike prototypes,
@@ -59,8 +59,8 @@ not merely to overrule them.
 **Partially met, and the reason it was only partial is the actual finding.**
 The evidence for recurring cost is real: nine hand-rolled parsers, four
 inconsistent Markdown-escaping rules, and a ~30% review-fix commit rate (see
-`docs/proposals/v0.5.0-replan/03-codebase-analysis.md` §3.2 for the parser
-count and escaping-rule count, and §4 for the review-fix rate). But #148's
+`[replan-analysis]` §3.2 for the parser
+count and escaping-rule count, and `[replan-analysis]` §4 for the review-fix rate). But #148's
 criterion assumed a mechanism that would *track* recurring cost across
 issues so it could be recognized as recurring rather than re-litigated as a
 fresh point-fix each time — and no such mechanism existed. The 30%
@@ -87,7 +87,7 @@ to be reformatted before an edit could touch them — a violation of a
 byte-identity contract that, per this ADR's Context section, was never
 actually required by the spec. Under R-C1 (canonical, documented
 serialization) and R-C2 (convergence, not precondition — see
-`docs/proposals/v0.5.0-replan/02-editing-requirements.md`), a library that
+`[replan-requirements]`), a library that
 canonicalizes on first touch is exhibiting the *desired* behavior, not a
 defect: R-C2 requires exactly that a library accept any conformant document
 regardless of formatting and bring the touched document to canonical form as
@@ -101,18 +101,18 @@ requirement it was testing for is no longer the one in force.
 ### The retired byte-identity test suite becomes a characterization baseline, not a correctness oracle
 
 `patching.py`'s ~850 byte-identity-guaranteeing lines
-(`docs/proposals/v0.5.0-replan/03-codebase-analysis.md` §3.1) and the
+(`[replan-analysis]` §3.1) and the
 ~40-45 tests (~1,000 lines, concentrated in `test_section_patching.py` and
 `test_frontmatter_patching.py`) that assert full byte-exact output — see
-§3.4 of the same analysis — were written as *correctness* oracles ("bytes
+`[replan-analysis]` §3.4 — were written as *correctness* oracles ("bytes
 must not change"). They are retired **deliberately**, not silently: per
-§3.4's framing, they become *characterization baselines* ("has behavior
+`[replan-analysis]` §3.4's framing, they become *characterization baselines* ("has behavior
 changed from the pinned snapshot?") during each extraction step of the
 refactor, then their byte-exactness assertions are consciously dropped once
 each extraction step lands, rather than being carried forward as the
 project's actual correctness contract. The distinction matters for anyone
 touching this code during the refactor: a failing byte-pinning assertion
-during Step 1-2 of the refactor (per §5's dependency-ordered runway) is
+during Step 1-2 of the refactor (per `[replan-analysis]` §5's dependency-ordered runway) is
 expected drift being characterized, not a regression to fix by restoring
 byte-identical output. See AGENTS.md's "characterization-first" rule (added
 by issue #193) for the same principle applied prospectively to any future
@@ -136,7 +136,7 @@ parsing/serialization deletion.
   than re-deriving it.
 - **Supersede #148 silently by just proceeding with the refactor.**
   Rejected: `requirements-architecture/architectural-decision-capture`
-  (cited in `03-codebase-analysis.md` §4) is explicit that the rationale is
+  (cited in `[replan-analysis]` §4) is explicit that the rationale is
   the knowledge that goes missing first. A future planner re-reading
   `docs/spikes/148-round-trip-refactor-descope.md` without this ADR would
   see an accepted "not planned" decision and have to re-derive why it no
@@ -145,7 +145,7 @@ parsing/serialization deletion.
 ## Revisit trigger
 
 This ADR is itself revisited only if a future gate run
-(`docs/proposals/v0.5.0-replan/02-editing-requirements.md` §3, the
+(`[replan-requirements]` §3, the
 inclusion gate) finds that R-C1/R-C2/R-C3 no longer hold as the operative
 requirements — for example, if a future consumer demonstrates a real need
 for byte-level preservation that passes the gate on its own evidence, not

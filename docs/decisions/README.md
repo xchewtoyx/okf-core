@@ -6,8 +6,7 @@ resurfaces in a new issue. It exists because the instruction set alone
 (`AGENTS.md`, `.claude/agents/*.md`) enforces *how* to write code, but had no
 place to record *why* a direction was chosen over its alternatives, or what
 would have to change for that choice to be revisited. See
-`docs/proposals/v0.5.0-replan/03-codebase-analysis.md` §4 for the analysis
-that motivated this directory.
+`[replan-analysis] §4` for the analysis that motivated this directory.
 
 Every agent role planning or reviewing design/architecture work must read
 this index and the ADRs it lists before starting. See `AGENTS.md`'s
@@ -63,3 +62,14 @@ into the ADR that governs their current adoption status:
 ADR) of `request_changes` review rounds, used to detect recurring bug
 categories across issues. See that file for its format and the three-strikes
 rule.
+
+## Citing external documents
+
+Citations in `docs/decisions/` and the instruction files that cite the same
+sources use an inline bracket slug, e.g. `[replan-plan]` or
+`[replan-plan: characterization-first]` for a specific named item within a
+plain (non-heading) numbered list — never a bare path, a list position
+number ("item 1"), or an unqualified section number. Slugs are permanent
+text identifiers: add a new slug for a new source, never renumber or reuse
+one. `references.md` in this directory is the canonical bibliography and
+registry of slugs — add an entry there before citing a new external source.
