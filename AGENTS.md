@@ -101,6 +101,27 @@ consume `okf-core`.
   primary problem channel — they are invisible to library callers and
   untestable without patching.
 
+## Decision Records
+
+Before starting design or architecture work — anything that chooses a
+direction rather than just implementing an already-decided one — read
+`docs/decisions/README.md` and scan the ADRs it indexes. They record
+decisions that were expensive to reach once and should not be re-litigated
+from scratch on every issue that touches the same territory (e.g. the
+serialization-engine direction in ADR-0001/ADR-0002). An implementation that
+contradicts an accepted ADR is a review finding
+(`.claude/agents/milestone-reviewer.md`'s ADR-divergence check), not a
+matter of implementor discretion; a `PROPOSED` (not yet `ACCEPTED`) ADR
+section is documented direction, not yet binding.
+
+**Pending, not yet binding:** a future "one sanctioned parse/serialize path"
+rule — the idea that document content is only ever touched through one
+documented path per format, rather than through format-specific ad hoc
+logic scattered across modules — is anticipated by
+`docs/proposals/v0.5.0-replan/03-codebase-analysis.md` §4 but is **staged as
+pending issue #199**, not adopted here. Do not treat it as binding until
+#199 lands its own ADR or AGENTS.md update.
+
 ## Code Structure
 
 These rules exist to stop cyclomatic complexity from accumulating in the first
@@ -196,7 +217,20 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   - Incorrect data/config types (e.g., list vs. string).
   - Malformed file inputs or config structures (e.g. invalid syntax).
   - Explicit error handling checks (asserting that `ConfigError` or expected domain exceptions are raised).
-- **Round-Trip Property Tests for Markdown Interpolation**: Any function that interpolates a dynamic value into Markdown link/reference syntax (e.g. `render_linked_span`, `_build_move_entry`) must have a `hypothesis`-based round-trip property test — parse-generate-reparse and assert the recovered value matches — covering markdown-significant characters (`[`, `]`, `(`, `)`, unbalanced parens, backslashes, double quotes), not just hand-picked examples. Hand-picked examples miss adjacency effects between these characters that only a generated-input fuzz reliably reaches; see `tests/test_index_span.py` and `tests/test_log_writing.py` for the pattern (#173).
+- **Round-Trip Property Tests for Markdown Interpolation**: Any function that interpolates a dynamic value into Markdown link/reference syntax must have a `hypothesis`-based round-trip property test — parse-generate-reparse and assert the recovered *value* matches the value that went in (a semantic/data-model comparison, not a byte-for-byte comparison of the surrounding document) — covering markdown-significant characters (`[`, `]`, `(`, `)`, unbalanced parens, backslashes, double quotes), not just hand-picked examples. Hand-picked examples miss adjacency effects between these characters that only a generated-input fuzz reliably reaches. See `tests/test_index_span.py` and `tests/test_log_writing.py` for the pattern, and grep the current codebase for `@given`/`hypothesis` usage in `tests/` for the current set of functions this rule already applies to — that set changes as code moves, so it is not enumerated here (#173; generalized by #193 so this rule survives the round-trip refactor tracked by ADR-0001/ADR-0002 without naming functions that may be renamed, merged, or replaced).
+- **Characterization-First for Parsing/Serialization Deletions**: Any PR that
+  deletes or replaces parsing or serialization code must land its
+  characterization baseline (tests pinning the current, observable behavior
+  before the change) in that same PR or an earlier one — never after the
+  deletion, when there is nothing left to characterize against. The PR
+  description or commit message must explicitly name which of the retired
+  assertions were *drift oracles* (they verified "has behavior changed from
+  a known-good snapshot," useful for catching accidental regressions during
+  the transition) versus *correctness oracles* (they encoded the actual
+  contract the new code must still satisfy) — collapsing that distinction is
+  exactly how a byte-identity contract nobody actually required got baked in
+  as if it were load-bearing (see ADR-0001 for the concrete case this rule
+  generalizes from).
 - **Freeze Time for Date/Time-Boundary Tests**: Any test exercising date/time-boundary logic (e.g. "what date does this default to today") must freeze time explicitly, e.g. via `freezegun.freeze_time`, rather than relying on the real `datetime.now()`/`date.today()` at test-run time — a test that snapshots the real clock before and after the call under test only suppresses flakiness near a day rollover, it doesn't verify the boundary itself; see `test_plan_uses_real_today_by_default` in `tests/test_log_writing.py` for the pattern (#174).
 - **Enforce Code Formatting**: Run code formatting with `black` on the codebase prior to executing tests and before pushing/submitting code changes:
   ```sh
@@ -214,7 +248,7 @@ The project uses `CHANGELOG.md` at the repo root following the [Keep a Changelog
   .venv/bin/actionlint .github/workflows/*.yml
   ```
   `ruff` checks Python style and common bugs in the codebase and scripts, including cyclomatic complexity (`C901`, `max-complexity = 14`) and unused function/method arguments (`ARG`, with `ignore-variadic-names` so a `*args`/`**kwargs` catch-all isn't flagged); `mypy` checks types; `actionlint` validates GitHub Actions workflow YAML. `actionlint` is in the `.[actionlint]` optional dep group (installed automatically by `just install` unless a system `actionlint` is found on PATH). Note: `just lint` does not include the Black formatting check — use `just ci` before pushing.
-- **Complexity budget**: New or modified functions must stay at or under cyclomatic complexity 14 (enforced by `ruff`'s `C901`). Do not add `# noqa: C901` to new code — refactor instead, following the Code Structure section above (which is designed to keep new code under this budget from the first draft). If a function's complexity is genuinely essential (e.g. a hand-rolled parser/state machine where splitting would only relocate shared mutable state, not reduce it), a `# noqa: C901` is acceptable but must carry an inline comment naming the specific constraint — a bare `# noqa: C901` is not. The one remaining suppression (`_entry_from_inline_token` in `index.py`, with its justifying comment) is tracked debt (#153), not a precedent for suppressing the check without justification on new code.
+- **Complexity budget**: New or modified functions must stay at or under cyclomatic complexity 14 (enforced by `ruff`'s `C901`). Do not add `# noqa: C901` to new code — refactor instead, following the Code Structure section above (which is designed to keep new code under this budget from the first draft). If a function's complexity is genuinely essential (e.g. a hand-rolled parser/state machine where splitting would only relocate shared mutable state, not reduce it), a `# noqa: C901` is acceptable but must carry an inline comment naming the specific constraint — a bare `# noqa: C901` is not. As of this writing there are no `# noqa: C901` suppressions in `src/` (verify with `grep -rn "noqa: C901" src/` before assuming otherwise) — the check has stayed satisfied by refactoring rather than by suppression, and any new suppression should be treated as the exception, not the norm.
 - **GitHub scripts**: Python files under `.github/scripts/` must have unit tests in `tests/` where feasible. Prefer testing pure functions directly without network calls by passing a stub or fake for any `_api`-style dependency.
 - **Branch coverage and the coverage-diff gate**: `pytest`/`just test` stay plain and fast — coverage is not collected on every run. `[tool.coverage.run]` in `pyproject.toml` enables branch coverage (`branch = true`, `source = ["src/okf_core"]`) for the explicit coverage runs below, which measure whether both arms of a conditional were exercised, not just that the line was reached — line coverage alone can hide an untested `except`/`else` branch. A dedicated `coverage-diff` GitHub Actions job (`.github/workflows/test.yml`, PRs only, single run on Python 3.11) runs `pytest --cov=okf_core --cov-branch --cov-report=xml` followed by `diff-cover coverage.xml --compare-branch=origin/<base-ref> --fail-under=90`. `diff-cover` scopes its check to lines the PR actually added or changed (new/changed lines in the diff against the PR's base branch), not the whole-codebase aggregate, so an old, already-uncovered file doesn't block an unrelated PR — but new code must be covered. The 90% floor is a starting point, not a fixed target; revisit it if it proves too strict or too lax in practice. Reproduce it locally with:
   ```sh

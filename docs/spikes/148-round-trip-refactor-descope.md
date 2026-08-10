@@ -1,5 +1,9 @@
 # Decision — round-trip serializer refactor descoped (#148 closed as not planned)
 
+> **Status: superseded.** The decision below is superseded by
+> [`docs/decisions/0001-supersede-round-trip-refactor-descope.md`](../decisions/0001-supersede-round-trip-refactor-descope.md).
+> See that ADR for current adoption status; this spike's evidence stands.
+
 - **Issue:** [#148](https://github.com/xchewtoyx/okf-core/issues/148), closed 2026-08-10 as not planned
 - **Supersedes:** the adoption recommendations in
   [`149-markdown-round-trip.md`](149-markdown-round-trip.md) (Strategy A /

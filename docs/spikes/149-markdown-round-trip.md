@@ -4,6 +4,12 @@
 > was closed as not planned — see
 > [`148-round-trip-refactor-descope.md`](148-round-trip-refactor-descope.md).
 > The evidence remains valid; the existing splice engine stays.
+>
+> **Current adoption status:** see
+> [`docs/decisions/0002-canonical-serialization-form.md`](../decisions/0002-canonical-serialization-form.md)
+> ("Markdown side"). The Markdown-side canonical form is currently PROPOSED,
+> not accepted — this spike's evidence and renderer choice are pending
+> re-verification under issue #198's new (non-byte) contract.
 
 - **Issue:** [#149](https://github.com/xchewtoyx/okf-core/issues/149) (`type:design`)
 - **Epic:** [#11](https://github.com/xchewtoyx/okf-core/issues/11) safe patch operations

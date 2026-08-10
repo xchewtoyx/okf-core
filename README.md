@@ -331,6 +331,16 @@ graph = build_bundle_graph(config.bundles["default"], manifest)
 
 ### Safe Document Changes
 
+The primitives below currently preserve untouched content byte-for-byte —
+this is the shipped, true behavior described in this section. The project's
+longer-term serialization-contract direction has changed, however: see
+`docs/decisions/` (ADR-0001 and ADR-0002) for the recorded decision to move
+toward one documented canonical output form per format instead of
+byte-identical preservation of untouched regions, tracked for YAML by issue
+#195 and for Markdown by issue #198. This section will be rewritten to match
+once that work lands; until then, treat the byte-preservation behavior
+documented below as current and accurate.
+
 `plan_document_change(bundle, path, proposed_content, *, allow_missing=False)`
 prepares an inspectable full-content change for one UTF-8 file under a
 configured bundle root. The returned `DocumentChangePlan` contains the

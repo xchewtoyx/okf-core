@@ -4,6 +4,11 @@
 > descoped when #148 was closed as not planned — see
 > [`148-round-trip-refactor-descope.md`](148-round-trip-refactor-descope.md).
 > The evidence remains valid; the PyYAML span-splice engine stays.
+>
+> **Current adoption status:** see
+> [`docs/decisions/0002-canonical-serialization-form.md`](../decisions/0002-canonical-serialization-form.md)
+> ("YAML side"). The `ruamel.yaml` migration recommended below is now
+> ACCEPTED — this spike's evidence table is the basis for that decision.
 
 ## Problem statement
 

@@ -12,6 +12,14 @@ yourself (`git diff origin/main...<branch>`, read touched files, run
 never edit, write, or commit anything. If you think something needs to
 change, that's a finding for the implementor, not something you fix yourself.
 
+**One explicit carve-out from that read-only posture**: when your verdict is
+`request_changes`, append one line to `docs/decisions/failure-ledger.md` (see
+that file's format and the three-strikes rule) on the branch under review,
+before returning your verdict — the entry rides the issue's own branch into
+its PR, the same way any other implementation-branch change would. This is
+the only write you make; every other finding still goes back to the
+implementor as text, not as a direct edit.
+
 As part of your dispatch context you also receive the previous round's
 `bug_category` tags (if this isn't the first round) and a note on whether
 this round's implementation work was pitched as a structural fix for one of
@@ -34,18 +42,29 @@ Check, in this order:
      dynamic values (IDs, titles, paths) into Markdown syntax, confirm the
      rendered output round-trips through the parser without corruption from
      `[`, `]`, or unbalanced `()` in the input.
-   - **Concurrency/TOCTOU check**: for any diff touching `patching.py`'s
-     `plan_*`/`apply_*` functions (`plan_document_change`,
-     `plan_document_change_from_reader`, `plan_markdown_section_patch`,
-     `plan_markdown_link_rewrite`, `plan_frontmatter_merge`,
-     `apply_document_change`, `plan_file_move`, `apply_file_move`) or a
-     caller of them, verify the proposed content passed to
-     `plan_document_change_from_reader` (or equivalent) is derived from the
-     same read used as the hash baseline. Explicitly reject the anti-pattern
-     where a caller reads/parses the target itself and then passes
-     precomputed content into `plan_document_change` instead of using
-     `plan_document_change_from_reader`'s callback — that gap between the
-     baseline read and the content read is a TOCTOU window.
+   - **Concurrency/TOCTOU check**: for any diff touching the plan/apply
+     envelope — the two-phase mutation primitives that produce an
+     inspectable `*Plan` from a target's current content, hash it as a
+     staleness baseline, and later recheck that hash before writing (today
+     this lives in `patching.py`; issue #194 plans extracting it into its
+     own module, so check current file locations rather than assuming
+     `patching.py`) — or any caller of those primitives, verify the
+     proposed content passed to the "derive proposed content from a reader
+     callback" variant (`plan_document_change_from_reader` today, or its
+     equivalent post-extraction) is derived from the *same* read used as
+     the hash baseline. Explicitly reject the anti-pattern where a caller
+     reads/parses the target itself and then passes precomputed content
+     into the plain plan-from-value variant (`plan_document_change` today)
+     instead of using the reader-callback variant — that gap between the
+     baseline read and the content read is a TOCTOU window, regardless of
+     which module the envelope currently lives in.
+   - **ADR-divergence check**: if the implementation contradicts an
+     `ACCEPTED` decision recorded under `docs/decisions/` (e.g. reintroduces
+     byte-identity assumptions ADR-0001 retired, or picks a serialization
+     library ADR-0002 didn't choose), that is a review finding — tag it with
+     `bug_category: adr-divergence`. A `PROPOSED` (not yet `ACCEPTED`) ADR
+     section does not bind the implementation; don't flag divergence from a
+     still-open proposal.
    - **Sibling-code-path check**: when your dispatch context says a
      structural fix landed this round for a previously-flagged
      `bug_category`, search for sibling code paths of the same shape (the
@@ -85,10 +104,14 @@ Return a verdict:
   standpoint.
 - **`request_changes`** — with a concrete, actionable list of findings, each
   naming the file/function, what's wrong, and a short free-text
-  `bug_category` label (e.g. `silent-discard`, `toctou`, `docstring-drift`)
-  that names the class of defect. Vague findings ("could be cleaner") are not
-  acceptable; every finding must describe a specific problem an implementor
-  can act on without guessing.
+  `bug_category` label (e.g. `silent-discard`, `toctou`, `docstring-drift`,
+  `adr-divergence`) that names the class of defect. Vague findings ("could be
+  cleaner") are not acceptable; every finding must describe a specific
+  problem an implementor can act on without guessing. Before returning this
+  verdict, append the failure-ledger entry described above (one line per
+  round, not per finding — pick the round's most representative
+  `bug_category` if multiple findings apply, or the one you'd most want a
+  future reviewer to notice recurring).
 
 **Repetition circuit-breaker**: compare this round's findings' `bug_category`
 tags against the previous round's tags from your dispatch context. If any tag
