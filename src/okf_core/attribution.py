@@ -17,22 +17,57 @@ children (mirroring ``_markdown_inline.py``'s ``code_inline`` exclusion)
 keeps labels inside fenced/inline code or link destinations from being
 mistaken for prose citations.
 
-The parser instance below has CommonMark's ``reference`` block rule
-disabled. Without that, whenever a ``[^label]: text`` definition's *text*
-happens to parse as a valid link destination (a bare URL is the natural
-case, following a source-citation footnote), markdown-it's block-level
-reference-definition rule silently consumes that line as a genuine link
-reference definition -- no ``inline`` token is ever emitted for it -- and
-then rewrites *every* other ``[^label]`` occurrence anywhere in the
-document into a ``link_open``/text/``link_close`` span, since it now
-resolves as a shortcut reference link. Either way the occurrence never
-reaches the ``text``-child regex scan below: the definition line vanishes
-silently, and every reference to that label vanishes with it. Disabling
-``reference`` leaves ``[^label]``/``[^label]:`` as literal text in both
-positions regardless of what the definition text looks like, while leaving
-the ``link`` inline rule (real ``[text](url)`` links) and code-span/fenced
-handling untouched -- there is no known reference-definition-shaped input
-this scanner needs to treat as opaque.
+The parser instance below has three CommonMark rules disabled:
+``reference`` (block), ``link`` (inline), and ``image`` (inline). All three
+are members of the same bug class: each is a construct that can consume a
+``[``/``]`` pair -- exactly the delimiters ``[^label]`` is built from --
+before this module's ``text``-child regex scan ever sees the characters.
+Whichever rule fires, the outcome is the same: no ``text`` child is ever
+emitted for the consumed span (or, for ``reference``, for any other
+occurrence of that label elsewhere in the document that it rewrites into a
+link), so the occurrence silently vanishes from this scanner's view. Each
+disabled rule addresses a distinct trigger shape:
+
+- ``reference`` (block rule): a ``[^label]: text`` definition whose *text*
+  happens to parse as a valid link destination (a bare URL is the natural
+  case, following a source-citation footnote) is silently consumed as a
+  genuine link reference definition -- no ``inline`` token is ever emitted
+  for that line -- and every other ``[^label]`` occurrence in the document
+  is then rewritten into a ``link_open``/text/``link_close`` span, since it
+  now resolves as a shortcut reference link.
+- ``link`` (inline rule): a ``[^label]`` immediately followed by a
+  parenthetical -- e.g. ``...[^ga4-schema](appendix-a)``, a plausible
+  inline-citation authoring pattern -- parses directly as ``[text](dest)``
+  regardless of the block ``reference`` rule's state; the two rules are
+  independent, so disabling only ``reference`` (as an earlier fix did) does
+  not stop this trigger.
+- ``image`` (inline rule): ``![^label](url)`` (a caret label immediately
+  after ``!``) parses as an image token, which is not a ``text`` child at
+  all -- ``_occurrences_in_inline``'s ``if child.type != "text": continue``
+  would skip it unconditionally even if the label text survived.
+
+Every other CommonMark inline/block rule was audited against
+``MarkdownIt("commonmark").inline.ruler.get_all_rules()`` /
+``.block.ruler.get_all_rules()`` and reasoned about for whether it could
+plausibly consume a ``[^...]``-shaped token: ``autolink`` and
+``html_inline`` key off ``<``/``>``, not ``[``/``]``; ``entity`` and
+``escape`` only transform character sequences they directly match
+(``&name;``, a backslash-escaped character) and pass unrelated ``[``/``]`` runs straight through
+as text; ``backticks`` (code spans) and fenced/indented code blocks are
+already excluded by the ``text``-child-only scan and by never producing
+inline tokens for fenced content, respectively; ``linkify`` is off by
+default in the ``"commonmark"`` preset (``options.linkify=False``) and, even
+enabled, only matches bare-URL text, never bracket syntax; ``strikethrough``
+and ``emphasis`` key off ``~~``/``*``/``_`` delimiters and leave surrounding
+``[``/``]`` text untouched; ``table``, ``blockquote``, ``hr``, ``list``,
+``heading``, ``lheading``, ``html_block``, and top-level ``paragraph`` are
+block-structure rules that don't parse bracket syntax themselves and pass
+their content on to the inline tokenizer where the above analysis applies.
+None of these needed disabling. Disabling ``reference``/``link``/``image``
+leaves ``[^label]``/``[^label]:`` as literal text in every position
+regardless of what follows the closing ``]``, while leaving code-span and
+fenced-code-block handling untouched -- there is no known bracket-consuming
+input left that this scanner needs to treat as opaque.
 """
 
 from __future__ import annotations
@@ -47,7 +82,7 @@ from markdown_it import MarkdownIt
 from okf_core._markdown_inline import token_line
 from okf_core.documents import ValidationFinding
 
-_MARKDOWN = MarkdownIt("commonmark").disable("reference")
+_MARKDOWN = MarkdownIt("commonmark").disable(["reference", "link", "image"])
 
 # A footnote label stops at the first "]" or whitespace; an immediately
 # following ":" distinguishes a definition ("[^label]: text") from a

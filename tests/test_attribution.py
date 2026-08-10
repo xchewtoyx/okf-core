@@ -79,6 +79,37 @@ def test_extract_finds_both_occurrences_when_definition_is_url_shaped() -> None:
     )
 
 
+def test_extract_finds_reference_immediately_followed_by_parenthetical() -> None:
+    """A ``[^label]`` immediately followed by ``(...)`` -- a plausible
+    inline-citation authoring pattern -- parses as a real ``[text](dest)``
+    link via markdown-it's *inline* ``link`` rule, independent of the block
+    ``reference`` rule disabled for the prior bug. Without also disabling
+    ``link``, the caret label is stripped of its brackets before the
+    text-child regex scan ever sees it, and the occurrence is silently
+    lost (recurrence #2 of the same bug class)."""
+    body = "A claim citing an appendix.[^ga4-schema](appendix-a)\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="ga4-schema", line=1, is_definition=False),
+    )
+
+
+def test_extract_finds_image_style_caret_label() -> None:
+    """``![^label](url)`` -- an image-style caret label -- parses via
+    markdown-it's *inline* ``image`` rule. The resulting ``image`` token is
+    not a ``text`` child at all, so without disabling ``image`` the
+    occurrence is skipped unconditionally by
+    ``_occurrences_in_inline``'s ``if child.type != "text": continue``,
+    even though the label text itself would otherwise have survived."""
+    body = "See the chart.\n\n![^chart-src](https://example.com/chart.png)\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="chart-src", line=3, is_definition=False),
+    )
+
+
 # ---------------------------------------------------------------------------
 # check_attribution_consistency
 # ---------------------------------------------------------------------------
@@ -104,6 +135,66 @@ def test_clean_document_with_url_shaped_definition_reports_nothing() -> None:
     body = "A claim.[^ga4-schema]\n\n[^ga4-schema]: https://example.com/schema\n"
 
     assert check_attribution_consistency(frontmatter, body) == ()
+
+
+def test_clean_document_with_parenthetical_adjacent_reference_reports_nothing() -> None:
+    """Companion to ``test_extract_finds_reference_immediately_followed_by_parenthetical``
+    at the ``check_attribution_consistency`` layer: a clean label/id match must
+    not be misreported as a dangling footnote (false positive) just because the
+    reference happens to sit immediately before a parenthetical."""
+    frontmatter = {"sources": [{"id": "ga4-schema", "resource": "https://example.com"}]}
+    body = "A claim citing an appendix.[^ga4-schema](appendix-a)\n"
+
+    assert check_attribution_consistency(frontmatter, body) == ()
+
+
+def test_dangling_parenthetical_adjacent_reference_is_an_error_with_location() -> None:
+    """A dangling footnote reference immediately followed by a parenthetical
+    must still be reported as an error, not silently dropped as a false
+    negative, per the inline ``link``-rule-consumption bug covered above."""
+    frontmatter: dict[str, Any] = {}
+    body = "A claim citing an appendix.[^missing-label](appendix-a)\n"
+
+    findings = check_attribution_consistency(frontmatter, body)
+
+    assert findings == (
+        ValidationFinding(
+            severity="error",
+            message="Footnote label 'missing-label' has no matching sources[].id",
+            field="missing-label",
+            line=1,
+        ),
+    )
+
+
+def test_clean_document_with_image_style_label_reports_nothing() -> None:
+    """Companion to ``test_extract_finds_image_style_caret_label`` at the
+    ``check_attribution_consistency`` layer: a clean label/id match must not
+    be misreported as a dangling footnote (false positive) just because the
+    label is written in image-style ``![^label](url)`` form."""
+    frontmatter = {"sources": [{"id": "chart-src", "resource": "https://example.com"}]}
+    body = "See the chart.\n\n![^chart-src](https://example.com/chart.png)\n"
+
+    assert check_attribution_consistency(frontmatter, body) == ()
+
+
+def test_dangling_image_style_label_is_an_error_with_location() -> None:
+    """A dangling image-style caret label must still be reported as an
+    error, not silently dropped as a false negative, per the inline
+    ``image``-rule-consumption bug covered above."""
+    frontmatter: dict[str, Any] = {}
+    body = "See the chart.\n\n![^missing-chart](https://example.com/chart.png)\n"
+
+    findings = check_attribution_consistency(frontmatter, body)
+
+    assert findings == (
+        ValidationFinding(
+            severity="error",
+            message="Footnote label 'missing-chart' has no matching sources[].id",
+            field="missing-chart",
+            line=3,
+        ),
+    )
 
 
 def test_dangling_footnote_with_url_shaped_definition_is_an_error_with_location() -> (
