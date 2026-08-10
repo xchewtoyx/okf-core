@@ -1,5 +1,10 @@
 # Issue #117: YAML frontmatter editing spike
 
+> **Status: superseded.** The `ruamel.yaml` migration recommended below was
+> descoped when #148 was closed as not planned — see
+> [`148-round-trip-refactor-descope.md`](148-round-trip-refactor-descope.md).
+> The evidence remains valid; the PyYAML span-splice engine stays.
+
 ## Problem statement
 
 `plan_frontmatter_merge()` currently edits YAML frontmatter by composing with
