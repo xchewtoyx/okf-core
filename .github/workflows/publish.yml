@@ -49,3 +49,34 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./pages
+
+  cloudsmith:
+    runs-on: ubuntu-latest
+    if: ${{ !github.event.release.prerelease && !github.event.release.draft }}
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install build tools
+        run: python -m pip install build cloudsmith-cli
+
+      - name: Build package
+        run: python -m build
+
+      - name: Push to Cloudsmith
+        env:
+          CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
+          CLOUDSMITH_REPOSITORY: ${{ vars.CLOUDSMITH_REPOSITORY }}
+        run: |
+          if [ -z "$CLOUDSMITH_API_KEY" ] || [ -z "$CLOUDSMITH_REPOSITORY" ]; then
+            echo "Configure the CLOUDSMITH_API_KEY secret and CLOUDSMITH_REPOSITORY variable (owner/repo) to publish to Cloudsmith." >&2
+            exit 1
+          fi
+          for pkg in dist/*; do
+            cloudsmith push python "$CLOUDSMITH_REPOSITORY" "$pkg" --republish
+          done
