@@ -232,6 +232,40 @@ def test_existing_entries_order_and_content_preserved_on_append(
     assert [entry["id"] for entry in parsed.frontmatter["sources"]] == ["a", "b", "c"]
 
 
+def test_existing_entry_with_none_id_is_left_untouched_on_unrelated_upsert(
+    tmp_path: Path,
+) -> None:
+    """Round-2 regression (#113): the round-1 fix for candidate `id: None`
+    stripping over-broadened to strip `id: None` from every entry validated
+    through the shared `_validate_source_entry` helper, including
+    pre-existing entries read back via `_validate_existing_sources` that
+    were never the target of this upsert. A document is allowed to already
+    contain a literal `id: null` for an existing entry; upserting an
+    unrelated new source must leave that entry -- including its `id: null`
+    -- completely untouched (AC4), not silently normalized."""
+    path = tmp_path / "topic.md"
+    _write(
+        path,
+        "---\ntype: concept\nsources:\n"
+        "  - resource: https://example.com/a\n    id: null\n"
+        "---\nBody\n",
+    )
+    bundle = _bundle(tmp_path)
+
+    plan = plan_source_upsert(bundle, path, {"resource": "https://example.com/b"})
+
+    assert plan.changed is True
+    parsed = parse_concept_document(plan.proposed_content)
+    assert parsed.frontmatter["sources"] == [
+        {"resource": "https://example.com/a", "id": None},
+        {"resource": "https://example.com/b"},
+    ]
+    # Serialized form: the pre-existing entry's `id` key must survive with a
+    # null value, not be silently dropped from the output.
+    first_entry = parsed.frontmatter["sources"][0]
+    assert "id" in first_entry and first_entry["id"] is None
+
+
 def test_unknown_sibling_frontmatter_keys_untouched(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     _write(
