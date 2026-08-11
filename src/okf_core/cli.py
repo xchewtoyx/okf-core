@@ -254,7 +254,7 @@ def _echo_index_result(
         click.echo(dir_result["write_conflict"], err=True)
         click.echo(
             f"index.md for bundle {bundle.name!r}{d_str} was not written "
-            "due to the conflict above; the existing file is left unchanged.",
+            f"due to the conflict above; the existing file is left unchanged.",
             err=True,
         )
         return
@@ -1392,7 +1392,7 @@ def stamp_verified_cmd(
         click.echo(f"Appended verified event to {output['path']}", err=True)
     else:
         click.echo(
-            f"Verified event already represented in {output['path']}; " "nothing to do",
+            f"Verified event already represented in {output['path']}; nothing to do",
             err=True,
         )
 

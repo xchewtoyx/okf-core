@@ -823,7 +823,7 @@ def _validate_actor_string(path: Path, value: Any, *, field_name: str) -> str:
     raise DocumentChangePlanningError(
         path,
         f"{field_name} must be an actor string in the form "
-        "'<producer>/<version>', 'human:<id>', or 'process:<id>' "
+        f"'<producer>/<version>', 'human:<id>', or 'process:<id>' "
         f"(OKF v0.2 §7): {value!r}",
     )
 
