@@ -38,6 +38,7 @@ An ADR has these sections:
 | --- | --- | --- |
 | [0001](0001-supersede-round-trip-refactor-descope.md) | Supersede the round-trip refactor descope | ACCEPTED |
 | [0002](0002-canonical-serialization-form.md) | Canonical serialization form | ACCEPTED (framework + YAML); PROPOSED (Markdown) |
+| [0003](0003-attribution-footnote-label-charset.md) | Attribution footnote label charset | ACCEPTED |
 
 ## Registered spike-era decisions
 

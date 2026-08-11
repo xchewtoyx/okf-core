@@ -7,79 +7,43 @@ label joins to a ``sources[].id`` frontmatter entry, e.g.::
 
     [^ga4-schema]: GA4 BigQuery Export schema
 
-History: six rounds of extraction/exclusion bugs
---------------------------------------------------
-This check went through six rounds of "a footnote occurrence is silently
-lost, or a real code span is wrongly not excluded" bugs before the design
-below (round 7). Each prior round is summarized here for archaeology; none
-of the code they refer to still exists in this module.
+See ``docs/decisions/0003-attribution-footnote-label-charset.md`` for the
+design history and rejected alternatives (earlier extraction designs that
+each closed one CommonMark interaction while missing another). What
+follows is the load-bearing soundness argument for the design actually
+shipped: why the restricted label charset is safe, and why code spans are
+excluded without any extra bookkeeping.
 
-1. A ``[^label]: <url>`` definition whose text happened to look like a link
-   destination was consumed whole by the block ``reference`` rule, and the
-   earlier ``[^label]`` reference was rewritten into a resolved link span
-   with no plain-text trace of either occurrence left for a per-token scan
-   to find.
-2. ``[^label](dest)`` and ``![^label](url)`` -- immediately-parenthetical or
-   image-style citation shapes -- were independently consumed by the inline
-   ``link``/``image`` rules, regardless of the ``reference`` rule's state.
-3. Content *nested inside* the label -- e.g. an autolink or code span --
-   split the surrounding text into non-adjacent ``text`` children under the
-   then-current per-``text``-child scan; neither half matched the full
-   pattern and the occurrence was silently lost. This was "fixed" by
-   abandoning token-child scanning for a raw-source regex scan plus a
-   separate ``markdown_it``-derived code-span/code-block exclusion list --
-   extraction never looked at inline tokens again, so round 3's failure
-   mode could not recur, but *locating* each ``code_inline`` token's own
-   raw byte range (needed only for exclusion) turned out to have its own
-   multi-round history:
-4. The code-span exclusion walker located ``code_inline`` tokens only at
-   the top level of a paragraph's children, missing ones nested inside
-   another token's own ``.children`` (e.g. an ``image``'s alt text).
-5. The exclusion walker's backtick-delimiter matching had no concept of a
-   stray backtick belonging to an unrelated construct (an HTML comment, an
-   autolink URI, a link/image destination) sitting between one span's
-   search cursor and its real delimiters, and mis-paired against it.
-6. A content-validated fix for round 5 (accept a candidate backtick pair
-   only once its normalized inner text equals the target ``code_inline``
-   token's own ``.content``) closed every known case, but left one
-   structural gap: a stray backtick pair in an unrelated construct can
-   *coincidentally* normalize to the same content as a real code span
-   elsewhere in the paragraph, matching the wrong span for exclusion
-   purposes. Reproduced with this repo's own README usage pattern,
-   `` `[^label]` `` used as literal documentation text next to an unrelated
-   real code span with the same content.
+Label charset: ``[A-Za-z0-9-]+``
+---------------------------------
+``_FOOTNOTE_RE``'s label group matches only ``[A-Za-z0-9-]+`` -- letters,
+digits, and hyphens. No brackets, backticks, angle brackets, parens,
+colons, underscores, whitespace, or any other character with meaning to
+any CommonMark rule. A ``[^label]``-shaped construct whose label contains a
+character outside this set is not recognized as footnote syntax at all --
+see "Narrowed contract" below.
 
-Every one of rounds 3 through 6 was, in the end, about one thing: locating
-a ``code_inline`` token's raw source position by *re-deriving* it (by
-delimiter-run search, later content-validated) rather than by asking
-``markdown_it`` what it already knows -- its own token type. Round 7
-removes the need to re-derive anything.
+**Why no label character can ever be a delimiter for an active rule:**
 
-Round 7: restrict the label charset, scan tokens, stop relocating spans
---------------------------------------------------------------------------
-``_FOOTNOTE_RE``'s label group is now restricted to ``[A-Za-z0-9-]+`` --
-letters, digits, and hyphens only. No brackets, backticks, angle brackets,
-parens, colons, underscores, whitespace, or any other character with
-meaning to any CommonMark rule. A ``[^label]``-shaped construct whose label
-contains a character outside this set is no longer recognized as footnote
-syntax at all -- see "Narrowed contract" below.
-
-**Why this closes the bug class, not just today's known cases:**
-
-This ``MarkdownIt("commonmark")`` configuration's full active rule set
-(confirmed empirically against the installed ``markdown-it-py`` --
-``md.block.ruler.get_active_rules()`` / ``md.inline.ruler.get_active_rules()``
-/ ``md.inline.ruler2.get_active_rules()`` -- rather than assumed) is:
+This module's ``MarkdownIt("commonmark")`` configuration disables the block
+``reference`` rule (see ``_MARKDOWN.block.ruler.disable("reference")``
+below); it is not part of the active rule set. Its own trigger characters
+are still checked below, for defense in depth against a future change that
+re-enables it. The active rule set -- confirmed empirically against the
+installed ``markdown-it-py`` (``md.block.ruler.get_active_rules()`` /
+``md.inline.ruler.get_active_rules()`` / ``md.inline.ruler2.get_active_rules()``
+-- rather than assumed) is:
 
 - Block: ``code``, ``fence``, ``blockquote``, ``hr``, ``list``,
-  ``reference``, ``html_block``, ``heading``, ``lheading``, ``paragraph``.
+  ``html_block``, ``heading``, ``lheading``, ``paragraph``.
 - Inline (pass 1): ``text``, ``newline``, ``escape``, ``backticks``,
   ``emphasis``, ``link``, ``image``, ``autolink``, ``html_inline``,
   ``entity``.
 - Inline (pass 2, post-processing over already-tagged delimiters):
   ``balance_pairs``, ``emphasis``, ``fragments_join``.
 
-Every rule's own trigger/delimiter character set is checked against
+Every rule's own trigger/delimiter character set -- active or not, per the
+defense-in-depth note above for ``reference`` -- is checked against
 ``{A-Z, a-z, 0-9, -}``:
 
 - ``text`` has no delimiter set of its own -- it is the catch-all that
@@ -111,17 +75,18 @@ Every rule's own trigger/delimiter character set is checked against
   irrelevant here, since a label consisting only of ``{A-Z, a-z, 0-9, -}``
   can never *itself* supply the ``"<"``/``">"`` needed to open or close one.
 - ``entity`` triggers on ``"&"``. Not in the label charset.
-- ``reference`` (block) triggers on a line starting with ``"["`` and later
-  a `` "]:" `` shape. Neither is in the label charset, so by the same
-  reasoning as ``link``/``image`` a label's own characters cannot trigger
-  it. This rule is disabled at parse-config level anyway (see below) -- not
-  because the label charset requires it, but because *unrelated* bracket
-  text elsewhere in the same document (a genuine ``[^label]: text``
-  definition) can register a reference and cause a *different* bracket
-  span later in the document to be rewritten into a resolved link. That is
-  a structural interaction between two separate constructs, orthogonal to
-  what characters either one's label is made of -- disabling the rule
-  removes the interaction entirely rather than reasoning about it.
+- ``reference`` (block; disabled, see above) triggers on a line starting
+  with ``"["`` and later a `` "]:" `` shape. Neither is in the label
+  charset, so by the same reasoning as ``link``/``image`` a label's own
+  characters cannot trigger it even if the rule were re-enabled. It is
+  disabled regardless -- not because the label charset requires it, but
+  because *unrelated* bracket text elsewhere in the same document (a
+  genuine ``[^label]: text`` definition) can register a reference and cause
+  a *different* bracket span later in the document to be rewritten into a
+  resolved link. That is a structural interaction between two separate
+  constructs, orthogonal to what characters either one's label is made of
+  -- disabling the rule removes the interaction entirely rather than
+  reasoning about it.
 - ``balance_pairs`` / ``fragments_join`` (pass 2) operate over delimiter
   runs and token adjacency already established by pass 1; they introduce no
   new trigger characters of their own.
@@ -136,14 +101,13 @@ Every rule's own trigger/delimiter character set is checked against
 
 Because no label character can ever be a delimiter, opener, or closer for
 any active rule, a slug-shaped label can never be split across a token
-boundary (round 3's failure mode) except by the closed-set ``link`` shape
-above -- which is exactly the shape handled explicitly, not reasoned about
-heuristically. ``image`` never reaches this reasoning at all: it is out of
-scope regardless of whether its alt text is slug-shaped -- see "Images are
-out of scope" below.
+boundary except by the closed-set ``link`` shape above -- which is exactly
+the shape handled explicitly, not reasoned about heuristically. ``image``
+never reaches this reasoning at all: it is out of scope regardless of
+whether its alt text is slug-shaped -- see "Images are out of scope" below.
 
-**Simplified extraction: scan ``text``-type inline children, stop
-relocating code spans.** ``extract_footnote_occurrences`` parses once with
+**Extraction: scan ``text``-type inline children by token type, never by
+raw position.** ``extract_footnote_occurrences`` parses once with
 ``markdown_it`` (``reference`` disabled, as above) and walks every
 top-level ``inline`` token's ``.children`` in document order, regex-matching
 ``_FOOTNOTE_RE`` against each ``text``-type child's ``.content``. One
@@ -164,30 +128,29 @@ for fenced/indented code blocks: they are ``fence``/``code_block`` block
 tokens with their own opaque ``.content`` and are never passed through the
 inline tokenizer at all, so a walk that only visits ``inline`` tokens'
 children never sees them -- no exclusion-range bookkeeping needed for code
-blocks either. This is what makes rounds 4 through 6 structurally
-unreachable rather than merely unreproduced: those rounds were all about
-mis-locating a ``code_inline`` token's raw position, and this design never
-computes one.
+blocks either. This is what makes mis-locating a code span's raw position
+-- the failure mode of every earlier design, see the ADR referenced above
+-- structurally unreachable: this design never computes a raw position for
+a code span at all.
 
 **Images are out of scope, by design (not a partial-match omission).**
 markdown-it-py flattens a link's text directly into the parent token list
 (the ``link_open``/``text``/``link_close`` triple reconstructed above), but
 an image's alt text is different: even trivial alt text lives on a nested
 ``image.children`` list this module never walks -- ``image.content`` is only
-a flattened rendering of that nested tree, not the tree itself. Round 4's
-code-span-exclusion bug and round 7's occurrence-recognition bug (an
-``image`` token's ``.content`` matched only when the *entire* alt text was
-exactly ``^label``, so non-trivial alt text like
-``![Diagram [^label]](url.png)`` was silently invisible) were the same
-underlying problem surfacing twice: *any* image-alt-text handling needs its
-own child-tree walk. Rather than solve that a third time, images are scoped
-out of this check entirely: an ``image`` token is never inspected for
-footnote syntax, whether its alt text matches a label exactly or merely
-contains one -- there is no partial-match/exact-match distinction to reason
-about, because nothing about an image's alt text is recognized. A
-``sources[].id`` cited only from image alt text will therefore always
-surface as the advisory "unreferenced source" finding (see "Narrowed
-contract" below); that is expected, not a bug.
+a flattened rendering of that nested tree, not the tree itself. Matching
+against ``image.content`` directly is also unsound on its own terms: it
+would only catch alt text that is *exactly* ``^label``, so non-trivial alt
+text like ``![Diagram [^label]](url.png)`` would be silently invisible
+regardless. Any image-alt-text handling needs its own child-tree walk, and
+none exists here: images are scoped out of this check entirely -- an
+``image`` token is never inspected for footnote syntax, whether its alt
+text matches a label exactly or merely contains one -- there is no
+partial-match/exact-match distinction to reason about, because nothing
+about an image's alt text is recognized. A ``sources[].id`` cited only from
+image alt text will therefore always surface as the advisory "unreferenced
+source" finding (see "Narrowed contract" below); that is expected, not a
+bug.
 
 Line numbers are recovered by walking each ``inline`` token's children
 in order, starting from ``token.map[0] + 1`` (``markdown_it``'s block-level
@@ -230,8 +193,8 @@ from markdown_it import MarkdownIt
 from okf_core.documents import ValidationFinding
 
 _MARKDOWN = MarkdownIt("commonmark")
-# See "Round 7" docstring section above: disabling this rule removes the
-# structural interaction where a genuine `[^label]: text` definition
+# See the "Label charset" docstring section above: disabling this rule
+# removes the structural interaction where a genuine `[^label]: text` definition
 # elsewhere in the document causes an unrelated `[^label]` reference to be
 # rewritten into a resolved link span. It is not required for label-shape
 # safety on its own (the label charset already can't trigger this rule),
@@ -243,7 +206,7 @@ _MARKDOWN.block.ruler.disable("reference")
 # hyphens only. No character in this set can ever be a delimiter, opener,
 # or closer for any active CommonMark inline/block rule in this module's
 # `MarkdownIt("commonmark")` configuration -- see the module docstring's
-# "Round 7" section for the full per-rule derivation. The lookahead after
+# "Label charset" section for the full per-rule derivation. The lookahead after
 # the closing "]" rejects a match immediately followed by another
 # label-charset character (e.g. `[^label]abc`), requiring a clean boundary
 # rather than silently truncating to a shorter label.
@@ -401,11 +364,16 @@ def check_attribution_consistency(
     if not occurrences and not source_ids:
         return ()
 
+    # `source_ids` is a tuple to preserve declaration order for the
+    # unreferenced-source warning loop below; `source_id_set` is a plain set
+    # so the occurrences loop's membership check is O(1) instead of O(sources).
+    source_id_set = set(source_ids)
+
     referenced: set[str] = set()
     findings: list[ValidationFinding] = []
     for occurrence in occurrences:
         referenced.add(occurrence.label)
-        if occurrence.label not in source_ids:
+        if occurrence.label not in source_id_set:
             findings.append(
                 ValidationFinding(
                     severity="error",
