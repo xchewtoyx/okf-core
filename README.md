@@ -307,6 +307,54 @@ PATH is the concept file, relative to the bundle root or an absolute path resolv
 
 Exits `2` for an invalid `--last-modified` value, a missing `--resource`, or other config/usage error; exits `1` for malformed candidate/existing `sources` content, or for a stale-content write conflict.
 
+### `okf stamp-generated`
+
+Stamps a concept document's top-level `generated` trust record (OKF v0.2 §5.2):
+
+```sh
+okf stamp-generated PATH --by ACTOR [--at ISO8601] [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+`--by` is a required actor string (§7: `<producer>/<version>`, `human:<id>`, or `process:<id>`); `--at` is an ISO 8601 datetime with a UTC offset (e.g. a trailing `Z`), defaulting to the real current UTC datetime when omitted. Both are validated before any file is touched. Setting `generated` to a value that already matches the document's current value is a no-op — nothing is written. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
+
+Exits `1` for an invalid `--by`/`--at` value, or for a stale-content write conflict.
+
+### `okf stamp-verified`
+
+Appends one `verified` trust event to a concept document's frontmatter (OKF v0.2 §5.2):
+
+```sh
+okf stamp-verified PATH --by ACTOR [--at ISO8601] [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+`--by` and `--at` follow the same validation and default as `stamp-generated`. The library owns `verified` list bookkeeping: an absent value is created, an existing bare `{by, at}` mapping (spec §5.2's single-verifier shorthand) or list is read and normalized only in memory, and an event whose exact `--by`/`--at` pair already matches an existing entry is a no-op — unlike `source-add`'s identity rule, two checks by the same actor at different times are distinct events (§5.2), so only an *exact* match is a no-op, and an existing bare-mapping value is not rewritten into list form just to canonicalize it when nothing is appended. A genuinely new event is appended, and the field is always written back as a list from that point on. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
+
+Exits `1` for an invalid `--by`/`--at` value, malformed existing `verified` content, or a stale-content write conflict.
+
+### `okf stamp-status`
+
+Sets a concept document's top-level `status` lifecycle field (OKF v0.2 §5.4):
+
+```sh
+okf stamp-status PATH --status {draft|stable|deprecated} [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+`--status` must be one of `draft`, `stable`, or `deprecated`. Setting `status` to its already-current value is a no-op. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
+
+Exits `2` for an invalid `--status` choice (Click's own usage-error handling); exits `1` for a stale-content write conflict.
+
+### `okf stamp-stale-after`
+
+Sets a concept document's top-level `stale_after` lifecycle field (OKF v0.2 §5.5):
+
+```sh
+okf stamp-stale-after PATH --stale-after YYYY-MM-DD [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+`--stale-after` is an absolute ISO 8601 calendar date (not a datetime — a timestamp is rejected, since §5.5 defines an absolute date). Setting `stale_after` to its already-current value is a no-op. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
+
+Exits `1` for an invalid `--stale-after` value or a stale-content write conflict.
+
 ### `okf graph-repair`
 
 Repairs broken concept links whose target moved, by asking a pluggable hook whether it knows the target's new location:
@@ -511,6 +559,14 @@ never a separate, earlier read -- so a concurrent edit to `sources` between
 planning and applying is still reported as `DocumentChangeConflictError`
 rather than silently discarded. Applying uses `apply_document_change()` and
 retains the same stale-content protection.
+
+`plan_stamp_generated(bundle, path, by, *, at=None)` and `stamp_generated(bundle, path, by, *, at=None)` set a concept document's top-level `generated` trust record (OKF v0.2 §5.2), mirroring `plan_source_upsert`/`source_upsert`'s planning/applying pairing. `by` is a required actor string (§7: `<producer>/<version>`, `human:<id>`, or `process:<id>`); `at` is an ISO 8601 datetime -- a native `datetime.datetime` or a string, either way requiring a UTC offset (e.g. a trailing `Z`) -- defaulting to the real current UTC datetime when omitted (`None`), overridable for deterministic tests (e.g. via `freezegun`). Both are validated before any file is touched, raising `DocumentChangePlanningError` for a malformed actor, an unparseable or offset-naive datetime, or a `datetime.date` passed where a datetime is required. The write delegates entirely to `plan_frontmatter_merge`, so setting `generated` to a value that already matches the document's current value is a no-op (`plan.changed is False`, nothing written); a malformed pre-existing `generated` value is not separately rejected, since `generated` is fully replaced on every stamp rather than preserving history. Applying uses `apply_document_change()` and retains the same stale-content protection.
+
+`plan_stamp_verified(bundle, path, by, *, at=None)` and `stamp_verified(bundle, path, by, *, at=None)` append one `verified` trust event (OKF v0.2 §5.2) to a concept document's frontmatter. `by` and `at` are validated exactly as `plan_stamp_generated` validates them. The document's existing `verified` value is read and validated the same way each candidate event is: an absent key is treated as an empty list; a bare `{by, at}` mapping -- spec §5.2's single-verifier shorthand, which "Consumers MUST treat ... as a one-element list" -- is normalized to a one-element list, purely in memory; a list has every entry validated the same way, and a malformed existing entry raises `DocumentChangePlanningError` before any write (`verified` is append-only history, so a malformed entry is never silently discarded or overwritten, unlike `generated`'s replace-on-write semantics). Identity for the no-op decision is the exact `(by, at)` pair, not just `by`: spec §5.2 treats two checks by the same actor at different times as distinct events, unlike `plan_source_upsert`'s single-field identity key. When an identical event is already present, the existing content -- including an existing bare-mapping shape -- is returned completely untouched, so a true no-op never rewrites even a bare mapping into list form just to canonicalize it. When the event is new, it is appended and the result is always written as a list from that point on, even if the result has only one element. The write itself, when actually needed, delegates to the same `_merge_frontmatter` engine `plan_frontmatter_merge` and `plan_source_upsert` use, applied to the exact read `plan_document_change_from_reader` performs -- never a separate, earlier read -- so a concurrent edit to `verified` between planning and applying is still reported as `DocumentChangeConflictError` rather than silently discarded. Applying uses `apply_document_change()` and retains the same stale-content protection.
+
+`plan_stamp_status(bundle, path, status)` and `stamp_status(bundle, path, status)` set a concept document's top-level `status` lifecycle field (OKF v0.2 §5.4). `status` must be one of `draft`, `stable`, or `deprecated`; anything else raises `DocumentChangePlanningError` before any file is touched. The write delegates to `plan_frontmatter_merge`, so setting `status` to its already-current value is a no-op. Applying uses `apply_document_change()` and retains the same stale-content protection.
+
+`plan_stamp_stale_after(bundle, path, stale_after)` and `stamp_stale_after(bundle, path, stale_after)` set a concept document's top-level `stale_after` lifecycle field (OKF v0.2 §5.5). `stale_after` must be a `datetime.date` or an ISO 8601 `YYYY-MM-DD` string; a `datetime.datetime` is rejected, since §5.5 defines `stale_after` as an absolute date, not a timestamp. The write delegates to `plan_frontmatter_merge`, so setting `stale_after` to its already-current value is a no-op. Applying uses `apply_document_change()` and retains the same stale-content protection.
 
 `plan_markdown_link_rewrite(bundle, path, rewrites)` builds a safe plan to rewrite the target/href destinations of one or more inline Markdown links in the document body. `rewrites` must be a sequence of `LinkRewrite(old_target, new_target)` instances. The primitive operates strictly on the Markdown body, leaving the frontmatter completely untouched. Duplicate `old_target` inputs (after normalization) are rejected. The implementation uses a single-pass replacement to prevent offset drift and avoid double-replacement issues if multiple rewrites form chains.
 

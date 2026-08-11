@@ -47,7 +47,18 @@ from okf_core import (
 from okf_core.logs import log_append, plan_log_append
 from okf_core.moves import move_concept, plan_move_concept
 from okf_core.orientation import ORIENTATION_GUIDE
-from okf_core.patching import plan_source_upsert, source_upsert
+from okf_core.patching import (
+    plan_source_upsert,
+    plan_stamp_generated,
+    plan_stamp_stale_after,
+    plan_stamp_status,
+    plan_stamp_verified,
+    source_upsert,
+    stamp_generated,
+    stamp_stale_after,
+    stamp_status,
+    stamp_verified,
+)
 from okf_core.repair import plan_graph_repair, repair_graph
 from okf_core.write_safety import check_bundle_write_safety
 
@@ -243,7 +254,7 @@ def _echo_index_result(
         click.echo(dir_result["write_conflict"], err=True)
         click.echo(
             f"index.md for bundle {bundle.name!r}{d_str} was not written "
-            "due to the conflict above; the existing file is left unchanged.",
+            f"due to the conflict above; the existing file is left unchanged.",
             err=True,
         )
         return
@@ -1207,6 +1218,310 @@ def source_add_cmd(
     else:
         click.echo(
             f"Source already represented in {output['path']}; nothing to do",
+            err=True,
+        )
+
+
+def _stamp_config_options(f: Any) -> Any:
+    """Shared ``--config``/``--bundle``/``--dry-run`` option trio for stamp commands."""
+    f = click.option(
+        "--config",
+        "config_path",
+        default=None,
+        metavar="PATH",
+        help="Path to okf-core.toml (default: search upward from cwd).",
+    )(f)
+    f = click.option(
+        "--bundle",
+        "bundle_name",
+        default="default",
+        show_default=True,
+        metavar="NAME",
+        help="Named bundle from config.",
+    )(f)
+    f = click.option(
+        "--dry-run",
+        is_flag=True,
+        help="Show the planned stamp without writing anything.",
+    )(f)
+    return f
+
+
+@cli.command("stamp-generated")
+@click.argument("concept_path", metavar="PATH")
+@click.option(
+    "--by",
+    "by",
+    required=True,
+    metavar="ACTOR",
+    help="Actor that generated the content, in the actor convention "
+    "(e.g. human:alice, process:nightly-ingest, "
+    "reference_agent/gemini-2.5-pro). OKF v0.2 §7.",
+)
+@click.option(
+    "--at",
+    "at",
+    default=None,
+    metavar="ISO8601",
+    help="ISO 8601 datetime the content was last meaningfully changed "
+    "(default: now, UTC). Must include a UTC offset, e.g. a trailing 'Z'.",
+)
+@_stamp_config_options
+def stamp_generated_cmd(
+    concept_path: str,
+    by: str,
+    at: str | None,
+    config_path: str | None,
+    bundle_name: str,
+    dry_run: bool,
+) -> None:
+    """Stamp PATH's frontmatter with a `generated` trust record (OKF v0.2 §5.2).
+
+    Sets the top-level `generated: {by, at}` mapping recording how the
+    current content was produced. `--by` and `--at` are validated before
+    any file is touched; setting `generated` to a value that already
+    matches the document's current value is a no-op.
+    """
+    _, bundle = _load(config_path, bundle_name)
+
+    try:
+        if dry_run:
+            plan = plan_stamp_generated(bundle, concept_path, by, at=at)
+            output: dict[str, Any] = {
+                "bundle": bundle.name,
+                "path": str(plan.path),
+                "would_change": plan.changed,
+            }
+        else:
+            result = stamp_generated(bundle, concept_path, by, at=at)
+            output = {
+                "bundle": bundle.name,
+                "path": str(result.path),
+                "changed": result.changed,
+            }
+    except DocumentChangeError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
+    if dry_run:
+        if output["would_change"]:
+            click.echo(f"Dry run: would stamp generated on {output['path']}", err=True)
+        else:
+            click.echo(
+                f"Dry run: generated already up to date on {output['path']}; "
+                "nothing to do",
+                err=True,
+            )
+    elif output["changed"]:
+        click.echo(f"Stamped generated on {output['path']}", err=True)
+    else:
+        click.echo(
+            f"generated already up to date on {output['path']}; nothing to do",
+            err=True,
+        )
+
+
+@cli.command("stamp-verified")
+@click.argument("concept_path", metavar="PATH")
+@click.option(
+    "--by",
+    "by",
+    required=True,
+    metavar="ACTOR",
+    help="Actor confirming the content, in the actor convention "
+    "(e.g. human:alice, process:nightly-ingest, "
+    "reference_agent/gemini-2.5-pro). OKF v0.2 §7.",
+)
+@click.option(
+    "--at",
+    "at",
+    default=None,
+    metavar="ISO8601",
+    help="ISO 8601 datetime the confirmation happened at (default: now, "
+    "UTC). Must include a UTC offset, e.g. a trailing 'Z'.",
+)
+@_stamp_config_options
+def stamp_verified_cmd(
+    concept_path: str,
+    by: str,
+    at: str | None,
+    config_path: str | None,
+    bundle_name: str,
+    dry_run: bool,
+) -> None:
+    """Append a `verified` trust event to PATH's frontmatter (OKF v0.2 §5.2).
+
+    The library owns `verified` list bookkeeping: an absent value is
+    created, an existing bare `{by, at}` mapping or list is preserved and
+    normalized only in memory, and an event whose exact `--by`/`--at` pair
+    already matches an existing entry is a no-op -- nothing is written, and
+    an existing bare-mapping value is not rewritten into list form just to
+    canonicalize it. A genuinely new event is appended, and the field is
+    always written back as a list from that point on.
+    """
+    _, bundle = _load(config_path, bundle_name)
+
+    try:
+        if dry_run:
+            plan = plan_stamp_verified(bundle, concept_path, by, at=at)
+            output: dict[str, Any] = {
+                "bundle": bundle.name,
+                "path": str(plan.path),
+                "would_change": plan.changed,
+            }
+        else:
+            result = stamp_verified(bundle, concept_path, by, at=at)
+            output = {
+                "bundle": bundle.name,
+                "path": str(result.path),
+                "changed": result.changed,
+            }
+    except DocumentChangeError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
+    if dry_run:
+        if output["would_change"]:
+            click.echo(
+                f"Dry run: would append verified event to {output['path']}", err=True
+            )
+        else:
+            click.echo(
+                f"Dry run: verified event already represented in "
+                f"{output['path']}; nothing to do",
+                err=True,
+            )
+    elif output["changed"]:
+        click.echo(f"Appended verified event to {output['path']}", err=True)
+    else:
+        click.echo(
+            f"Verified event already represented in {output['path']}; nothing to do",
+            err=True,
+        )
+
+
+@cli.command("stamp-status")
+@click.argument("concept_path", metavar="PATH")
+@click.option(
+    "--status",
+    "status",
+    required=True,
+    type=click.Choice(["draft", "stable", "deprecated"]),
+    help="Lifecycle status to set (OKF v0.2 §5.4).",
+)
+@_stamp_config_options
+def stamp_status_cmd(
+    concept_path: str,
+    status: str,
+    config_path: str | None,
+    bundle_name: str,
+    dry_run: bool,
+) -> None:
+    """Set PATH's top-level `status` lifecycle field (OKF v0.2 §5.4).
+
+    Setting `status` to its already-current value is a no-op.
+    """
+    _, bundle = _load(config_path, bundle_name)
+
+    try:
+        if dry_run:
+            plan = plan_stamp_status(bundle, concept_path, status)
+            output: dict[str, Any] = {
+                "bundle": bundle.name,
+                "path": str(plan.path),
+                "would_change": plan.changed,
+            }
+        else:
+            result = stamp_status(bundle, concept_path, status)
+            output = {
+                "bundle": bundle.name,
+                "path": str(result.path),
+                "changed": result.changed,
+            }
+    except DocumentChangeError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
+    if dry_run:
+        if output["would_change"]:
+            click.echo(f"Dry run: would stamp status on {output['path']}", err=True)
+        else:
+            click.echo(
+                f"Dry run: status already up to date on {output['path']}; "
+                "nothing to do",
+                err=True,
+            )
+    elif output["changed"]:
+        click.echo(f"Stamped status on {output['path']}", err=True)
+    else:
+        click.echo(
+            f"status already up to date on {output['path']}; nothing to do",
+            err=True,
+        )
+
+
+@cli.command("stamp-stale-after")
+@click.argument("concept_path", metavar="PATH")
+@click.option(
+    "--stale-after",
+    "stale_after",
+    required=True,
+    metavar="YYYY-MM-DD",
+    help="Absolute date content is stale on/after (OKF v0.2 §5.5).",
+)
+@_stamp_config_options
+def stamp_stale_after_cmd(
+    concept_path: str,
+    stale_after: str,
+    config_path: str | None,
+    bundle_name: str,
+    dry_run: bool,
+) -> None:
+    """Set PATH's top-level `stale_after` lifecycle field (OKF v0.2 §5.5).
+
+    Setting `stale_after` to its already-current value is a no-op.
+    """
+    _, bundle = _load(config_path, bundle_name)
+
+    try:
+        if dry_run:
+            plan = plan_stamp_stale_after(bundle, concept_path, stale_after)
+            output: dict[str, Any] = {
+                "bundle": bundle.name,
+                "path": str(plan.path),
+                "would_change": plan.changed,
+            }
+        else:
+            result = stamp_stale_after(bundle, concept_path, stale_after)
+            output = {
+                "bundle": bundle.name,
+                "path": str(result.path),
+                "changed": result.changed,
+            }
+    except DocumentChangeError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
+    if dry_run:
+        if output["would_change"]:
+            click.echo(
+                f"Dry run: would stamp stale_after on {output['path']}", err=True
+            )
+        else:
+            click.echo(
+                f"Dry run: stale_after already up to date on {output['path']}; "
+                "nothing to do",
+                err=True,
+            )
+    elif output["changed"]:
+        click.echo(f"Stamped stale_after on {output['path']}", err=True)
+    else:
+        click.echo(
+            f"stale_after already up to date on {output['path']}; nothing to do",
             err=True,
         )
 
