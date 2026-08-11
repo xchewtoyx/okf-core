@@ -101,6 +101,76 @@ _MARKDOWN = MarkdownIt("commonmark")
 # from inside a freeze.
 _REAL_DATETIME_TYPE = (datetime,)
 
+# Same freezegun module-attribute scan as `_REAL_DATETIME_TYPE` above, and
+# the same 1-tuple-hiding trick to survive it: `freeze_time` also finds and
+# rebinds every module-level attribute that is (by identity) the real
+# `datetime.date` class to `FakeDate` for the freeze's duration, so a plain
+# `_REAL_DATE_TYPE = date` module global would be patched exactly like the
+# `date` import itself. Confirmed empirically (not merely by reading
+# freezegun's source) that `date.fromisoformat` returns a `FakeDate`
+# instance while a freeze is active, and that `_REAL_DATE_TYPE[0]` stays the
+# genuine class throughout. `datetime.datetime` is itself a `date`
+# subclass, so `_REAL_DATETIME_TYPE[0]` also satisfies
+# `isinstance(x, _REAL_DATE_TYPE[0])` for real or fake datetimes alike --
+# callers that need to tell a datetime apart from a plain date must check
+# `_REAL_DATETIME_TYPE[0]` first, as `_validate_date_value` does.
+_REAL_DATE_TYPE = (date,)
+
+
+def _as_real_datetime(value: datetime) -> datetime:
+    """Rebuild ``value`` as a genuine ``datetime.datetime``, discarding any
+    subclass-ness (notably freezegun's ``FakeDatetime``).
+
+    Returns ``value`` itself, unchanged, when it is already the exact real
+    type -- rebuilding is only needed to strip a subclass, and reuses the
+    exact rebuild ``_validate_datetime_value`` has always performed inline;
+    shared here so ``_yaml_values_equal``'s no-op comparison (AC3) can apply
+    the identical normalization to its "current" operand, not just the
+    "candidate" operand callers pass through ``_validate_datetime_value``.
+    """
+    if type(value) is _REAL_DATETIME_TYPE[0]:
+        return value
+    return _REAL_DATETIME_TYPE[0](
+        value.year,
+        value.month,
+        value.day,
+        value.hour,
+        value.minute,
+        value.second,
+        value.microsecond,
+        tzinfo=value.tzinfo,
+    )
+
+
+def _as_real_date(value: date) -> date:
+    """``date`` counterpart of ``_as_real_datetime`` -- see its docstring."""
+    if type(value) is _REAL_DATE_TYPE[0]:
+        return value
+    return _REAL_DATE_TYPE[0](value.year, value.month, value.day)
+
+
+def _normalize_temporal_for_comparison(value: Any) -> Any:
+    """Rebuild ``value`` as a genuine ``datetime``/``date`` if it is a
+    subclass of either (notably freezegun's ``FakeDatetime``/``FakeDate``),
+    otherwise return it unchanged.
+
+    Used by ``_yaml_values_equal`` to normalize *both* operands of a no-op
+    comparison the same way ``_validate_datetime_value``/
+    ``_validate_date_value`` already normalize a stamping candidate --
+    without this, a "current" value parsed from the document by PyYAML
+    (whose ``construct_yaml_timestamp`` also calls ``datetime.datetime(...)``
+    dynamically, so it is likewise a ``FakeDatetime`` under
+    ``freeze_time``) would never compare exact-type-equal to an
+    already-normalized candidate while a freeze is active, breaking AC3's
+    no-op detection. Checks ``datetime`` before ``date`` since
+    ``datetime.datetime`` is itself a ``date`` subclass.
+    """
+    if isinstance(value, _REAL_DATETIME_TYPE[0]):
+        return _as_real_datetime(value)
+    if isinstance(value, _REAL_DATE_TYPE[0]):
+        return _as_real_date(value)
+    return value
+
 
 def _make_frontmatter_yaml() -> YAML:
     """Build a fresh round-trip YAML instance for one frontmatter operation.
@@ -814,20 +884,7 @@ def _validate_datetime_value(path: Path, value: Any, *, field_name: str) -> date
     an unsupported type, not because its value is wrong.
     """
     if isinstance(value, _REAL_DATETIME_TYPE[0]):
-        candidate = (
-            value
-            if type(value) is _REAL_DATETIME_TYPE[0]
-            else _REAL_DATETIME_TYPE[0](
-                value.year,
-                value.month,
-                value.day,
-                value.hour,
-                value.minute,
-                value.second,
-                value.microsecond,
-                tzinfo=value.tzinfo,
-            )
-        )
+        candidate = _as_real_datetime(value)
     elif isinstance(value, str):
         try:
             candidate = _parse_iso_datetime_string(value)
@@ -860,18 +917,38 @@ def _validate_date_value(path: Path, value: Any, *, field_name: str) -> date:
     would silently drop its time-of-day component. Anything else, or a
     string that fails to parse as a calendar date, raises
     ``DocumentChangePlanningError`` before any write.
+
+    Checks and parses via ``_REAL_DATETIME_TYPE``/``_REAL_DATE_TYPE`` rather
+    than the module-global ``datetime``/``date`` names, mirroring
+    ``_validate_datetime_value`` (see ``_REAL_DATETIME_TYPE``'s own
+    comment). This matters in two distinct ways under a ``freeze_time``
+    context, which rebinds both module-global names to
+    ``FakeDatetime``/``FakeDate`` for the freeze's duration: an
+    ``isinstance(value, datetime)`` check against the rebound name would
+    incorrectly *fail* to reject a genuine (non-fake) ``datetime.datetime``
+    passed as ``value`` (a real ``datetime`` is not an instance of
+    ``FakeDatetime``, which only subclasses the real class), and
+    ``date.fromisoformat`` would hand back a ``FakeDate`` instance that
+    fails ``_merge_frontmatter``'s exact-``type()`` scalar check downstream
+    -- confirmed empirically, not merely by reading freezegun's source. A
+    ``datetime.date`` *subclass* instance (``FakeDate``) is rebuilt as a
+    genuine ``datetime.date`` via ``_as_real_date``, the same way
+    ``_validate_datetime_value`` rebuilds a ``datetime`` subclass via
+    ``_as_real_datetime``, for the same reason: ``_merge_frontmatter``'s
+    value validator checks ``type(value)`` against an exact set of allowed
+    types, not ``isinstance``.
     """
-    if isinstance(value, datetime):
+    if isinstance(value, _REAL_DATETIME_TYPE[0]):
         raise DocumentChangePlanningError(
             path,
             f"{field_name} must be a calendar date (YYYY-MM-DD), not a "
             f"datetime: {value!r}",
         )
-    if isinstance(value, date):
-        return value
+    if isinstance(value, _REAL_DATE_TYPE[0]):
+        return _as_real_date(value)
     if isinstance(value, str):
         try:
-            return date.fromisoformat(value)
+            return _REAL_DATE_TYPE[0].fromisoformat(value)
         except ValueError as exc:
             raise DocumentChangePlanningError(
                 path,
@@ -1628,14 +1705,31 @@ def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
 # update value already constrained to plain builtin types by
 # `_validate_frontmatter_update_value`. Neither side is ever a value loaded
 # by the ruamel round-trip engine -- that engine's `CommentedMap`/`data` is
-# mutated directly and never routed through this comparison -- so a plain
-# `type(...) is not type(...)` check is sufficient here; there is no
-# ruamel-specific formatting subclass (e.g. `SingleQuotedScalarString`,
-# `ScalarInt`) for this comparison to ever see. Do not reintroduce
-# subclass normalization without first tracing a real call path that
-# passes a ruamel-loaded value here, per AGENTS.md's guidance against
-# defensive handling for scenarios that cannot happen.
+# mutated directly and never routed through this comparison -- so beyond the
+# temporal normalization below, a plain `type(...) is not type(...)` check
+# is sufficient here; there is no ruamel-specific formatting subclass (e.g.
+# `SingleQuotedScalarString`, `ScalarInt`) for this comparison to ever see.
+# Do not reintroduce *ruamel* subclass normalization without first tracing a
+# real call path that passes a ruamel-loaded value here, per AGENTS.md's
+# guidance against defensive handling for scenarios that cannot happen.
+#
+# The temporal normalization is a different, real scenario, not a
+# precautionary one: PyYAML's `construct_yaml_timestamp` calls
+# `datetime.datetime(...)` dynamically for every `left` operand this
+# function ever sees for a date/datetime field, so under
+# `freeze_time` `left` is a `FakeDatetime`/`FakeDate` exactly as often as a
+# stamping candidate would be without `_validate_datetime_value`/
+# `_validate_date_value`'s own rebuild -- but `right` (the candidate) is
+# *always* pre-normalized by one of those two validators before reaching
+# here, while `left` never was. `_normalize_temporal_for_comparison`
+# closes that asymmetry on both operands (a no-op on `right`, since it is
+# already real; the actual fix for `left`) before the exact-type check, so
+# AC3's no-op detection holds under a freeze for every field routed through
+# this comparison (`generated`, `status`, `stale_after`, `verified`), not
+# only whichever case a given test happens to freeze.
 def _yaml_values_equal(left: Any, right: Any) -> bool:
+    left = _normalize_temporal_for_comparison(left)
+    right = _normalize_temporal_for_comparison(right)
     left_type = type(left)
     if left_type is not type(right):
         return False

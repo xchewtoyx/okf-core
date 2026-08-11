@@ -557,6 +557,43 @@ def test_plan_stamp_generated_overwrites_offset_naive_existing_at(
     assert parsed.frontmatter["generated"] == {"by": "human:alice", "at": VALID_AT_DT}
 
 
+def test_plan_stamp_generated_ac3_noop_holds_while_frozen(tmp_path: Path) -> None:
+    """Regression for the round-1 review finding on `_yaml_values_equal`.
+
+    `_merge_frontmatter`'s no-op check compares `current` (parsed from the
+    on-disk document by PyYAML, whose `construct_yaml_timestamp` calls
+    `datetime.datetime(...)` dynamically -- so it becomes a `FakeDatetime`
+    under `freeze_time` just like a directly-constructed one) against the
+    candidate `at` (already normalized to a genuine `datetime` by
+    `_validate_datetime_value`). Before the fix, `_yaml_values_equal` used a
+    bare `type(...) is not type(...)` check with no normalization on the
+    `current` side, so this asymmetry made an on-disk value that equals the
+    frozen-time candidate compare unequal, and `plan.changed` was
+    incorrectly `True` instead of the required AC3 no-op `False`. The
+    on-disk `generated.at` is pre-populated to match the frozen instant
+    *before* entering the freeze block, matching the reviewer's exact repro
+    shape -- a test that only froze time without a matching on-disk value
+    would not exercise this asymmetry.
+    """
+    path = tmp_path / "topic.md"
+    frozen_instant = datetime.datetime(
+        2026, 7, 25, 23, 59, 30, tzinfo=datetime.timezone.utc
+    )
+    frozen_instant_z = frozen_instant.isoformat().replace("+00:00", "Z")
+    _write(
+        path,
+        "---\ntype: concept\ngenerated: { by: human:alice, at: "
+        f"{frozen_instant_z} }}\n---\nBody\n",
+    )
+    bundle = _bundle(tmp_path)
+
+    with freeze_time(frozen_instant):
+        plan = plan_stamp_generated(bundle, path, "human:alice")
+
+    assert plan.changed is False
+    assert plan.proposed_content == plan.original_content
+
+
 def test_plan_stamp_status_same_value_is_noop(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     _write(path, "---\ntype: concept\nstatus: stable\n---\nBody\n")
@@ -574,6 +611,33 @@ def test_plan_stamp_stale_after_same_value_is_noop(tmp_path: Path) -> None:
     bundle = _bundle(tmp_path)
 
     plan = plan_stamp_stale_after(bundle, path, "2026-09-23")
+
+    assert plan.changed is False
+    assert plan.proposed_content == plan.original_content
+
+
+def test_plan_stamp_stale_after_succeeds_while_frozen(tmp_path: Path) -> None:
+    """Regression for the round-1 review finding on `_validate_date_value`.
+
+    `_validate_date_value` called `date.fromisoformat` directly rather than
+    via a real-class guard (unlike `_validate_datetime_value`'s
+    `_REAL_DATETIME_TYPE` mechanism), so under `freezegun.freeze_time` it
+    returned a `FakeDate` instance -- a type
+    `_SUPPORTED_FRONTMATTER_SCALAR_TYPES` (built from the genuine classes at
+    import time) does not contain -- and `plan_stamp_stale_after` raised
+    `DocumentChangePlanningError` ("Frontmatter update values must use
+    supported scalar, list, or dict types") instead of stamping at all
+    while any code in the process was inside a `freeze_time` block. The
+    on-disk `stale_after` is pre-populated to match the candidate *before*
+    entering the freeze block, matching the reviewer's exact repro shape,
+    so this also exercises the AC3 no-op path once validation succeeds.
+    """
+    path = tmp_path / "topic.md"
+    _write(path, "---\ntype: concept\nstale_after: 2026-09-23\n---\nBody\n")
+    bundle = _bundle(tmp_path)
+
+    with freeze_time("2026-08-10"):
+        plan = plan_stamp_stale_after(bundle, path, "2026-09-23")
 
     assert plan.changed is False
     assert plan.proposed_content == plan.original_content
