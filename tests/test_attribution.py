@@ -166,6 +166,22 @@ def test_extract_finds_reference_immediately_followed_by_parenthetical() -> None
     )
 
 
+def test_extract_ignores_link_with_emphasis_wrapped_caret_label() -> None:
+    """``[*^ga4-schema*](appendix-a)`` -- a caret label wrapped in emphasis
+    inside link text -- must not be reconstructed: the ``link_open``
+    reconstruction only accepts a *direct* ``text`` child immediately
+    followed by ``link_close`` (module docstring / ``_bracket_reconstructed_label``),
+    and here the direct child is ``em_open``, not ``text`` (the caret text
+    lives one level deeper, inside the ``em_open``/``em_close`` pair). A
+    reconstruction that instead searched *any* descendant's content for a
+    bare-label match would wrongly recognize this as citing
+    ``ga4-schema``; requiring a direct child keeps the closed-set
+    reconstruction from over-matching into arbitrarily nested link text."""
+    body = "A claim.[*^ga4-schema*](appendix-a)\n"
+
+    assert extract_footnote_occurrences(body) == ()
+
+
 def test_extract_finds_image_style_caret_label() -> None:
     """``![^label](url)`` -- an image-style caret label -- parses via
     markdown-it's *inline* ``image`` rule (round 2) into an ``image`` token
@@ -180,18 +196,70 @@ def test_extract_finds_image_style_caret_label() -> None:
     )
 
 
-def test_extract_finds_label_with_nested_autolink() -> None:
-    """Round 3: content *nested inside* the label -- here an autolink,
-    ``<http://x.com>`` -- triggers markdown-it's ``autolink`` rule mid-label,
-    which under the old per-``text``-child scan split the surrounding text
-    into two non-adjacent children so neither half matched. The raw-source
-    regex sees the whole ``[^lab<http://x.com>el]`` span directly and
-    captures the full (unusual but validly-shaped) label."""
+def test_extract_ignores_label_containing_nested_autolink() -> None:
+    """Round 7 narrows the label charset to ``[A-Za-z0-9-]+``. A label
+    containing an autolink (round 3's original trigger shape) is no longer
+    slug-shaped, so ``[^lab<http://x.com>el]`` is not recognized as
+    footnote syntax at all -- not an error, just inert, the same as any
+    other prose containing stray brackets and an autolink."""
     body = "A claim.[^lab<http://x.com>el]\n"
+
+    assert extract_footnote_occurrences(body) == ()
+
+
+def test_extract_ignores_label_with_underscore() -> None:
+    """Underscore is deliberately excluded from the label charset (module
+    docstring, "Round 7") to sidestep CommonMark's intraword-emphasis
+    flanking rules entirely. A label containing one is not slug-shaped and
+    is not recognized -- inert, not an error."""
+    body = "A claim.[^label_with_underscore]\n"
+
+    assert extract_footnote_occurrences(body) == ()
+
+
+def test_extract_ignores_label_with_internal_space() -> None:
+    """Whitespace is not in the label charset. ``[^label with spaces]`` is
+    not recognized as footnote syntax -- inert, not an error."""
+    body = "A claim.[^label with spaces]\n"
+
+    assert extract_footnote_occurrences(body) == ()
+
+
+def test_extract_ignores_match_immediately_followed_by_label_charset_char() -> None:
+    """A valid-shaped ``[^label]`` immediately followed by another
+    label-charset character, with no boundary in between, is not
+    recognized -- see the module docstring's boundary-lookahead rationale.
+    This must not be silently truncated to citing ``label``; it must be
+    fully inert."""
+    body = "A claim.[^label]with-trailing\n"
+
+    assert extract_footnote_occurrences(body) == ()
+
+
+def test_extract_finds_valid_slug_label_immediately_followed_by_non_slug_char() -> None:
+    """Control for the above: a valid slug label immediately followed by a
+    character that is *not* in the label charset (here, a period) is
+    recognized normally -- the boundary check only rejects a directly
+    adjacent label-charset character, not any character at all."""
+    body = "A claim.[^ga4-schema].\n"
     occurrences = extract_footnote_occurrences(body)
 
     assert occurrences == (
-        FootnoteOccurrence(label="lab<http://x.com>el", line=1, is_definition=False),
+        FootnoteOccurrence(label="ga4-schema", line=1, is_definition=False),
+    )
+
+
+def test_extract_finds_valid_slug_label_inside_emphasis() -> None:
+    """A valid slug label wrapped in emphasis is recognized normally --
+    emphasis wraps the surrounding text without splitting it (module
+    docstring, "Round 7": emphasis triggers only on ``*``/``_``, neither of
+    which can appear in a slug label), so the label's own ``[^...]`` text
+    survives as one intact ``text`` child."""
+    body = "*[^ga4-schema]*\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="ga4-schema", line=1, is_definition=False),
     )
 
 
@@ -308,19 +376,14 @@ def test_extract_finds_both_spans_with_repeated_html_comments_between_them() -> 
     )
 
 
-def test_extract_finds_label_with_nested_code_span() -> None:
-    """Round 3's other trigger shape: a code span nested inside the label
-    (`` [^lab`code`el] ``) fires markdown-it's ``backticks`` rule mid-label.
-    The nested code span's own char range does not include the label's
-    opening ``[``, so it does not exclude this occurrence -- exclusion is
-    keyed off the position of ``[``, not off any byte the label happens to
-    overlap."""
+def test_extract_ignores_label_containing_nested_code_span() -> None:
+    """Round 3's other original trigger shape (a code span nested inside
+    the label, `` [^lab`code`el] ``) is no longer slug-shaped under the
+    round 7 charset restriction, so it is not recognized -- inert, not an
+    error."""
     body = "A claim.[^lab`code`el]\n"
-    occurrences = extract_footnote_occurrences(body)
 
-    assert occurrences == (
-        FootnoteOccurrence(label="lab`code`el", line=1, is_definition=False),
-    )
+    assert extract_footnote_occurrences(body) == ()
 
 
 # ---------------------------------------------------------------------------
@@ -457,60 +520,73 @@ def test_dangling_label_after_html_comment_backtick_is_an_error_with_location() 
     )
 
 
-def test_clean_document_with_nested_autolink_label_reports_nothing() -> None:
-    """Companion to ``test_extract_finds_label_with_nested_autolink`` at the
-    ``check_attribution_consistency`` layer: a clean label/id match must not
-    be misreported as a dangling footnote just because the label contains a
-    nested autolink."""
+def test_declared_source_id_shaped_like_nested_autolink_label_is_unreferenced() -> None:
+    """Companion to ``test_extract_ignores_label_containing_nested_autolink``
+    at the ``check_attribution_consistency`` layer: since a
+    ``[^lab<http://x.com>el]``-shaped construct is no longer recognized as
+    footnote syntax at all (round 7), a ``sources[].id`` with that exact
+    (non-slug-shaped) value can never be matched by any footnote reference
+    under this check -- it always surfaces as the advisory
+    "unreferenced source" warning, per the module docstring's "Narrowed
+    contract" section. This is expected, not a bug."""
     frontmatter = {
         "sources": [{"id": "lab<http://x.com>el", "resource": "https://example.com"}]
     }
     body = "A claim.[^lab<http://x.com>el]\n"
 
-    assert check_attribution_consistency(frontmatter, body) == ()
-
-
-def test_dangling_nested_autolink_label_is_an_error_with_location() -> None:
-    frontmatter: dict[str, Any] = {}
-    body = "A claim.[^missing<http://x.com>label]\n"
-
     findings = check_attribution_consistency(frontmatter, body)
 
     assert findings == (
         ValidationFinding(
-            severity="error",
-            message="Footnote label 'missing<http://x.com>label' has no matching sources[].id",
-            field="missing<http://x.com>label",
-            line=1,
+            severity="warning",
+            message="sources[].id 'lab<http://x.com>el' is not referenced by any footnote",
+            field="lab<http://x.com>el",
+            line=None,
         ),
     )
 
 
-def test_clean_document_with_nested_code_span_label_reports_nothing() -> None:
-    """Companion to ``test_extract_finds_label_with_nested_code_span`` at the
-    ``check_attribution_consistency`` layer."""
+def test_non_slug_shaped_label_construct_reports_nothing_with_no_sources() -> None:
+    """A ``[^missing<http://x.com>label]``-shaped construct is invisible to
+    this check under the round 7 charset restriction -- not an error, since
+    it is not recognized as footnote syntax at all."""
+    frontmatter: dict[str, Any] = {}
+    body = "A claim.[^missing<http://x.com>label]\n"
+
+    assert check_attribution_consistency(frontmatter, body) == ()
+
+
+def test_declared_source_id_shaped_like_nested_code_span_label_is_unreferenced() -> (
+    None
+):
+    """Companion to ``test_extract_ignores_label_containing_nested_code_span``
+    at the ``check_attribution_consistency`` layer -- see the analogous
+    autolink-label companion test above for the "always unreferenced"
+    rationale."""
     frontmatter = {
         "sources": [{"id": "lab`code`el", "resource": "https://example.com"}]
     }
     body = "A claim.[^lab`code`el]\n"
 
-    assert check_attribution_consistency(frontmatter, body) == ()
-
-
-def test_dangling_nested_code_span_label_is_an_error_with_location() -> None:
-    frontmatter: dict[str, Any] = {}
-    body = "A claim.[^missing`code`label]\n"
-
     findings = check_attribution_consistency(frontmatter, body)
 
     assert findings == (
         ValidationFinding(
-            severity="error",
-            message="Footnote label 'missing`code`label' has no matching sources[].id",
-            field="missing`code`label",
-            line=1,
+            severity="warning",
+            message="sources[].id 'lab`code`el' is not referenced by any footnote",
+            field="lab`code`el",
+            line=None,
         ),
     )
+
+
+def test_non_slug_shaped_code_span_label_construct_reports_nothing_with_no_sources() -> (
+    None
+):
+    frontmatter: dict[str, Any] = {}
+    body = "A claim.[^missing`code`label]\n"
+
+    assert check_attribution_consistency(frontmatter, body) == ()
 
 
 def test_dangling_footnote_with_url_shaped_definition_is_an_error_with_location() -> (
