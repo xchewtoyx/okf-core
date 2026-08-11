@@ -7,87 +7,74 @@ label joins to a ``sources[].id`` frontmatter entry, e.g.::
 
     [^ga4-schema]: GA4 BigQuery Export schema
 
-This module hand-rolls a minimal ``[^label]`` (reference) / ``[^label]:``
-(definition) scanner over a concept body's already-parsed inline tokens --
-not a full footnote-content parser (footnotes are not a CommonMark
-construct and OKF only needs the label, not rendered footnote content), and
-not the ``mdit-py-plugins`` footnote plugin, which would be new-dependency
-overhead for this narrow, well-scoped syntax. Scanning only ``text`` inline
-children (mirroring ``_markdown_inline.py``'s ``code_inline`` exclusion)
-keeps labels inside fenced/inline code or link destinations from being
-mistaken for prose citations.
+Design (raw-source scan, superseding a rule-disabling approach)
+-----------------------------------------------------------------
+``extract_footnote_occurrences`` scans the **raw** ``body`` string directly
+with ``_FOOTNOTE_RE`` for ``[^label]``/``[^label]:`` patterns. ``markdown_it``
+is used only to locate the source ranges of inline code spans
+(``code_inline`` tokens) and fenced/indented code blocks (``fence``/
+``code_block`` tokens); any regex match whose ``[`` falls inside one of
+those ranges is excluded. Line numbers are recovered by counting literal
+``"\\n"`` characters up to the match position -- no token-line bookkeeping
+needed, since a raw string naturally carries every line break, including
+soft breaks that only exist as token boundaries during tokenization.
 
-The parser instance below has three CommonMark rules disabled:
-``reference`` (block), ``link`` (inline), and ``image`` (inline). All three
-are members of the same bug class: each is a construct that can consume a
-``[``/``]`` pair -- exactly the delimiters ``[^label]`` is built from --
-before this module's ``text``-child regex scan ever sees the characters.
-Whichever rule fires, the outcome is the same: no ``text`` child is ever
-emitted for the consumed span (or, for ``reference``, for any other
-occurrence of that label elsewhere in the document that it rewrites into a
-link), so the occurrence silently vanishes from this scanner's view. Each
-disabled rule addresses a distinct trigger shape:
+This replaces an earlier design that walked ``markdown_it``'s parsed
+*inline* token children per paragraph, scanning only ``text``-type
+children for the regex. That approach broke three times in succession,
+each time because a CommonMark rule consumed or split the bracket
+characters ``[^label]`` is built from before the per-child scan ever saw a
+complete pattern:
 
-- ``reference`` (block rule): a ``[^label]: text`` definition whose *text*
-  happens to parse as a valid link destination (a bare URL is the natural
-  case, following a source-citation footnote) is silently consumed as a
-  genuine link reference definition -- no ``inline`` token is ever emitted
-  for that line -- and every other ``[^label]`` occurrence in the document
-  is then rewritten into a ``link_open``/text/``link_close`` span, since it
-  now resolves as a shortcut reference link.
-- ``link`` (inline rule): a ``[^label]`` immediately followed by a
-  parenthetical -- e.g. ``...[^ga4-schema](appendix-a)``, a plausible
-  inline-citation authoring pattern -- parses directly as ``[text](dest)``
-  regardless of the block ``reference`` rule's state; the two rules are
-  independent, so disabling only ``reference`` (as an earlier fix did) does
-  not stop this trigger.
-- ``image`` (inline rule): ``![^label](url)`` (a caret label immediately
-  after ``!``) parses as an image token, which is not a ``text`` child at
-  all -- ``_occurrences_in_inline``'s ``if child.type != "text": continue``
-  would skip it unconditionally even if the label text survived.
+1. A ``[^label]: <url>`` definition whose text happened to look like a link
+   destination was consumed whole by the block ``reference`` rule, and every
+   later ``[^label]`` in the document was then rewritten into a resolved
+   link span (no ``text`` child left for either).
+2. A ``[^label](dest)`` or ``![^label](url)`` was consumed by the inline
+   ``link``/``image`` rules, independently of the ``reference`` rule's
+   state.
+3. Content *nested inside* the label -- e.g. ``[^lab<http://x.com>el]`` (an
+   autolink) or `` [^lab`code`el] `` (a code span) -- triggered
+   ``autolink``/``html_inline``/``backticks`` mid-label, splitting the
+   surrounding text into two non-adjacent ``text`` children; neither half
+   matched the full pattern, and the occurrence was silently lost.
 
-Every other CommonMark inline/block rule was audited against
-``MarkdownIt("commonmark").inline.ruler.get_all_rules()`` /
-``.block.ruler.get_all_rules()`` and reasoned about for whether it could
-plausibly consume a ``[^...]``-shaped token: ``autolink`` and
-``html_inline`` key off ``<``/``>``, not ``[``/``]``; ``entity`` and
-``escape`` only transform character sequences they directly match
-(``&name;``, a backslash-escaped character) and pass unrelated ``[``/``]`` runs straight through
-as text; ``backticks`` (code spans) and fenced/indented code blocks are
-already excluded by the ``text``-child-only scan and by never producing
-inline tokens for fenced content, respectively; ``linkify`` is off by
-default in the ``"commonmark"`` preset (``options.linkify=False``) and, even
-enabled, only matches bare-URL text, never bracket syntax; ``strikethrough``
-and ``emphasis`` key off ``~~``/``*``/``_`` delimiters and leave surrounding
-``[``/``]`` text untouched; ``table``, ``blockquote``, ``hr``, ``list``,
-``heading``, ``lheading``, ``html_block``, and top-level ``paragraph`` are
-block-structure rules that don't parse bracket syntax themselves and pass
-their content on to the inline tokenizer where the above analysis applies.
-None of these needed disabling. Disabling ``reference``/``link``/``image``
-leaves ``[^label]``/``[^label]:`` as literal text in every position
-regardless of what follows the closing ``]``, while leaving code-span and
-fenced-code-block handling untouched -- there is no known bracket-consuming
-input left that this scanner needs to treat as opaque.
+Each fix disabled another CommonMark rule, but round 3 showed the strategy
+doesn't converge: there is no fixed list of "rules that can consume ``[``/
+``]``" to disable, because any rule that produces a non-``text`` child in
+the middle of a label defeats a per-child scan, whether or not it touches
+brackets itself. Scanning the raw source sidesteps the class of bug
+entirely -- the tokenizer's choices about how to group characters into
+child tokens are irrelevant when the scan never looks at child tokens for
+extraction. ``markdown_it`` is kept, at its CommonMark defaults, purely as
+an oracle for "is this byte range code" (spans and blocks), which is the
+one thing a hand-rolled regex should not reimplement (backtick-string
+matching has spec-defined edge cases around run length and adjacency that
+the real parser already gets right).
 """
 
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from markdown_it import MarkdownIt
 
-from okf_core._markdown_inline import token_line
 from okf_core.documents import ValidationFinding
 
-_MARKDOWN = MarkdownIt("commonmark").disable(["reference", "link", "image"])
+_MARKDOWN = MarkdownIt("commonmark")
 
 # A footnote label stops at the first "]" or whitespace; an immediately
 # following ":" distinguishes a definition ("[^label]: text") from a
-# reference ("[^label]" inline in prose).
+# reference ("[^label]" inline in prose). This is the accepted-input
+# contract carried over unchanged from the token-scanning design.
 _FOOTNOTE_RE = re.compile(r"\[\^([^\]\s]+)\](:)?")
+
+# Block-level token types whose entire source line range is opaque to the
+# footnote scan (fenced and indented code blocks).
+_CODE_BLOCK_TOKEN_TYPES = ("fence", "code_block")
 
 
 @dataclass(frozen=True)
@@ -104,40 +91,138 @@ class FootnoteOccurrence:
 
 
 def extract_footnote_occurrences(body: str) -> tuple[FootnoteOccurrence, ...]:
-    """Extract every ``[^label]`` reference and ``[^label]:`` definition in *body*."""
+    """Extract every ``[^label]`` reference and ``[^label]:`` definition in *body*.
+
+    Matches whose ``[`` falls inside a code span or fenced/indented code
+    block are excluded; every other match is reported regardless of what
+    surrounds it (nested autolinks, code spans, or resolved reference
+    links do not affect a raw-source scan).
+    """
+    line_starts = _line_starts(body)
+    excluded = _excluded_ranges(body, _MARKDOWN.parse(body), line_starts)
+
     occurrences: list[FootnoteOccurrence] = []
-    for token in _MARKDOWN.parse(body):
-        if token.type != "inline" or token.children is None:
+    for match in _FOOTNOTE_RE.finditer(body):
+        pos = match.start()
+        if _position_excluded(pos, excluded):
             continue
-        occurrences.extend(_occurrences_in_inline(token))
+        occurrences.append(
+            FootnoteOccurrence(
+                label=match.group(1),
+                line=body.count("\n", 0, pos) + 1,
+                is_definition=match.group(2) is not None,
+            )
+        )
     return tuple(occurrences)
 
 
-def _occurrences_in_inline(token: Any) -> list[FootnoteOccurrence]:
-    """Scan one inline token's ``text`` children for footnote-label matches.
+def _line_starts(body: str) -> list[int]:
+    """Return the char offset each source line (0-indexed) begins at.
 
-    Line breaks within the run are ``softbreak``/``hardbreak`` child tokens
-    (markdown-it never embeds a literal newline in a ``text`` child), so the
-    running line number only needs to advance on those, not per-match.
+    ``line_starts[i]`` is the offset of line *i*, matching ``markdown_it``
+    token ``.map`` line numbering. A trailing sentinel equal to
+    ``len(body)`` lets a token's ``end_line`` (exclusive) be used as a
+    slice bound even when it addresses one line past the last real line.
     """
-    occurrences: list[FootnoteOccurrence] = []
-    line = token_line(token)
-    for child in token.children:
-        if child.type in ("softbreak", "hardbreak"):
-            if line is not None:
-                line += 1
+    starts: list[int] = []
+    offset = 0
+    for raw_line in body.splitlines(keepends=True):
+        starts.append(offset)
+        offset += len(raw_line)
+    starts.append(offset)
+    return starts
+
+
+def _line_offset(line_starts: Sequence[int], line: int) -> int:
+    """Char offset for 0-indexed *line*, clamped to the sentinel end offset."""
+    return line_starts[min(line, len(line_starts) - 1)]
+
+
+def _find_backtick_run(text: str, start: int, length: int) -> int | None:
+    """Find the next maximal backtick run of exactly *length* at/after *start*.
+
+    A CommonMark "backtick string" is a run of backticks bounded by a
+    non-backtick character (or the string boundary) on both sides. Matching
+    the literal substring alone is not enough -- ``"`"`` (length 1) must not
+    match inside ``"``"`` (a run of two) -- so each candidate is checked for
+    both neighbors before being accepted; a false candidate advances the
+    search by one character rather than past the whole run, since the next
+    real run could start one character later.
+    """
+    marker = "`" * length
+    pos = start
+    while True:
+        idx = text.find(marker, pos)
+        if idx == -1:
+            return None
+        before_ok = idx == 0 or text[idx - 1] != "`"
+        after_idx = idx + length
+        after_ok = after_idx >= len(text) or text[after_idx] != "`"
+        if before_ok and after_ok:
+            return idx
+        pos = idx + 1
+
+
+def _code_inline_ranges(
+    para_text: str, children: Sequence[Any]
+) -> list[tuple[int, int]]:
+    """Return (start, end) char ranges of each ``code_inline`` child, in order.
+
+    Each code span is located by re-finding its opening/closing backtick
+    run directly in *para_text*, starting the search for span *n+1* only
+    after span *n*'s close -- so two code spans using the same delimiter
+    length in one paragraph resolve in document order rather than both
+    matching the first run found. A span whose delimiters can't be
+    relocated (should not happen given ``markdown_it`` already identified
+    it) is skipped rather than raising, since skipping only risks under-
+    excluding, never mis-locating a real footnote occurrence.
+    """
+    ranges: list[tuple[int, int]] = []
+    cursor = 0
+    for child in children:
+        if getattr(child, "type", None) != "code_inline":
             continue
-        if child.type != "text":
+        markup = getattr(child, "markup", "") or "`"
+        length = len(markup)
+        open_pos = _find_backtick_run(para_text, cursor, length)
+        if open_pos is None:
             continue
-        for match in _FOOTNOTE_RE.finditer(child.content):
-            occurrences.append(
-                FootnoteOccurrence(
-                    label=match.group(1),
-                    line=line,
-                    is_definition=match.group(2) is not None,
+        close_pos = _find_backtick_run(para_text, open_pos + length, length)
+        if close_pos is None:
+            continue
+        end = close_pos + length
+        ranges.append((open_pos, end))
+        cursor = end
+    return ranges
+
+
+def _excluded_ranges(
+    body: str, tokens: Sequence[Any], line_starts: Sequence[int]
+) -> list[tuple[int, int]]:
+    """Collect every code-span and code-block char range to exclude from the scan."""
+    ranges: list[tuple[int, int]] = []
+    for token in tokens:
+        if token.type in _CODE_BLOCK_TOKEN_TYPES and token.map:
+            start_line, end_line = token.map
+            ranges.append(
+                (
+                    _line_offset(line_starts, start_line),
+                    _line_offset(line_starts, end_line),
                 )
             )
-    return occurrences
+        elif token.type == "inline" and token.children and token.map:
+            start_line, end_line = token.map
+            start_off = _line_offset(line_starts, start_line)
+            para_text = body[start_off : _line_offset(line_starts, end_line)]
+            ranges.extend(
+                (start_off + rel_start, start_off + rel_end)
+                for rel_start, rel_end in _code_inline_ranges(para_text, token.children)
+            )
+    return ranges
+
+
+def _position_excluded(pos: int, ranges: Sequence[tuple[int, int]]) -> bool:
+    return any(start <= pos < end for start, end in ranges)
 
 
 def _declared_source_ids(frontmatter: Mapping[str, Any]) -> tuple[str, ...]:

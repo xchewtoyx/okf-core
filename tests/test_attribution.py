@@ -53,9 +53,81 @@ def test_extract_occurrence_advances_line_across_soft_breaks() -> None:
             "```\n[^fencedlabel]\n```\n",
             id="fenced-code-block",
         ),
+        pytest.param(
+            "    [^indentedlabel]\n",
+            id="indented-code-block",
+        ),
     ],
 )
 def test_extract_ignores_labels_inside_code(body: str) -> None:
+    assert extract_footnote_occurrences(body) == ()
+
+
+def test_extract_finds_occurrences_immediately_before_and_after_a_code_span() -> None:
+    """Boundary check for the new range-exclusion design: a ``[^label]``
+    whose ``[`` sits at the exact char offset immediately before a code
+    span's opening backtick, or immediately after its closing backtick,
+    must not be treated as inside that span -- only a label whose ``[``
+    falls strictly between the delimiters is excluded."""
+    body = "See.[^before]`middle`[^after] and `[^inside]` skip.\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="before", line=1, is_definition=False),
+        FootnoteOccurrence(label="after", line=1, is_definition=False),
+    )
+
+
+def test_extract_does_not_merge_adjacent_fenced_code_block_ranges() -> None:
+    """Two separate fenced code blocks must each exclude only their own
+    line range -- a real reference sitting between them must still be
+    found, not swallowed by a naive "first fence start to last fence end"
+    range."""
+    body = (
+        "```\n"
+        "[^first]\n"
+        "```\n"
+        "\n"
+        "Real claim.[^real]\n"
+        "\n"
+        "```\n"
+        "[^second]\n"
+        "```\n"
+    )
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="real", line=5, is_definition=False),
+    )
+
+
+def test_extract_finds_occurrence_after_code_span_preceded_by_unmatched_backtick_pair() -> (
+    None
+):
+    """An unmatched ```` `` ```` (two backticks with no later closing pair of
+    the same length) earlier in the paragraph is literal text, not a code
+    delimiter -- CommonMark still finds the real, later ``` `code` ``` span
+    using single backticks. Locating that span's exact offsets must reject
+    the false two-backtick candidate and keep scanning rather than
+    mis-anchoring on it."""
+    body = "a`` `code`[^after] b\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="after", line=1, is_definition=False),
+    )
+
+
+def test_extract_ignores_label_inside_literal_triple_backtick_text_within_quad_fence() -> (
+    None
+):
+    """A fenced block delimited with four backticks can contain literal
+    lines that themselves look like a triple-backtick fence -- those inner
+    lines are inert content, not a nested fence (CommonMark has no fence
+    nesting). The whole outer fence's line range must still be excluded as
+    one contiguous block, not confused by the fence-shaped text inside it."""
+    body = "````\n```\n[^fake-label]\n```\n````\n"
+
     assert extract_footnote_occurrences(body) == ()
 
 
@@ -65,11 +137,11 @@ def test_extract_no_footnotes_returns_empty_tuple() -> None:
 
 def test_extract_finds_both_occurrences_when_definition_is_url_shaped() -> None:
     """A ``[^label]: https://...`` definition text is itself a valid link
-    destination. Without disabling markdown-it's ``reference`` block rule,
-    that rule silently consumes the definition line before any ``inline``
-    token is emitted for it, and rewrites the earlier ``[^label]`` reference
-    into a ``link_open``/text/``link_close`` span -- so neither occurrence
-    ever reaches the text-child regex scan. Both must still be found."""
+    destination: markdown-it's ``reference`` block rule (round 1) consumes
+    the definition line as a genuine reference definition and rewrites the
+    earlier ``[^label]`` into a resolved link span -- but the raw-source
+    scan never inspects tokens for extraction, so both occurrences are
+    found regardless of how markdown-it resolves the surrounding syntax."""
     body = "A claim.[^ga4-schema]\n\n[^ga4-schema]: https://example.com/schema\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -82,11 +154,10 @@ def test_extract_finds_both_occurrences_when_definition_is_url_shaped() -> None:
 def test_extract_finds_reference_immediately_followed_by_parenthetical() -> None:
     """A ``[^label]`` immediately followed by ``(...)`` -- a plausible
     inline-citation authoring pattern -- parses as a real ``[text](dest)``
-    link via markdown-it's *inline* ``link`` rule, independent of the block
-    ``reference`` rule disabled for the prior bug. Without also disabling
-    ``link``, the caret label is stripped of its brackets before the
-    text-child regex scan ever sees it, and the occurrence is silently
-    lost (recurrence #2 of the same bug class)."""
+    link via markdown-it's *inline* ``link`` rule (round 2), independent of
+    the ``reference`` rule. The raw-source scan finds the label directly in
+    the source text without caring whether markdown-it resolved it as a
+    link."""
     body = "A claim citing an appendix.[^ga4-schema](appendix-a)\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -97,16 +168,45 @@ def test_extract_finds_reference_immediately_followed_by_parenthetical() -> None
 
 def test_extract_finds_image_style_caret_label() -> None:
     """``![^label](url)`` -- an image-style caret label -- parses via
-    markdown-it's *inline* ``image`` rule. The resulting ``image`` token is
-    not a ``text`` child at all, so without disabling ``image`` the
-    occurrence is skipped unconditionally by
-    ``_occurrences_in_inline``'s ``if child.type != "text": continue``,
-    even though the label text itself would otherwise have survived."""
+    markdown-it's *inline* ``image`` rule (round 2) into an ``image`` token
+    that carries no ``text`` child at all. The raw-source scan doesn't
+    depend on any inline child token existing for the label, so it is found
+    directly."""
     body = "See the chart.\n\n![^chart-src](https://example.com/chart.png)\n"
     occurrences = extract_footnote_occurrences(body)
 
     assert occurrences == (
         FootnoteOccurrence(label="chart-src", line=3, is_definition=False),
+    )
+
+
+def test_extract_finds_label_with_nested_autolink() -> None:
+    """Round 3: content *nested inside* the label -- here an autolink,
+    ``<http://x.com>`` -- triggers markdown-it's ``autolink`` rule mid-label,
+    which under the old per-``text``-child scan split the surrounding text
+    into two non-adjacent children so neither half matched. The raw-source
+    regex sees the whole ``[^lab<http://x.com>el]`` span directly and
+    captures the full (unusual but validly-shaped) label."""
+    body = "A claim.[^lab<http://x.com>el]\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="lab<http://x.com>el", line=1, is_definition=False),
+    )
+
+
+def test_extract_finds_label_with_nested_code_span() -> None:
+    """Round 3's other trigger shape: a code span nested inside the label
+    (`` [^lab`code`el] ``) fires markdown-it's ``backticks`` rule mid-label.
+    The nested code span's own char range does not include the label's
+    opening ``[``, so it does not exclude this occurrence -- exclusion is
+    keyed off the position of ``[``, not off any byte the label happens to
+    overlap."""
+    body = "A claim.[^lab`code`el]\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="lab`code`el", line=1, is_definition=False),
     )
 
 
@@ -193,6 +293,62 @@ def test_dangling_image_style_label_is_an_error_with_location() -> None:
             message="Footnote label 'missing-chart' has no matching sources[].id",
             field="missing-chart",
             line=3,
+        ),
+    )
+
+
+def test_clean_document_with_nested_autolink_label_reports_nothing() -> None:
+    """Companion to ``test_extract_finds_label_with_nested_autolink`` at the
+    ``check_attribution_consistency`` layer: a clean label/id match must not
+    be misreported as a dangling footnote just because the label contains a
+    nested autolink."""
+    frontmatter = {
+        "sources": [{"id": "lab<http://x.com>el", "resource": "https://example.com"}]
+    }
+    body = "A claim.[^lab<http://x.com>el]\n"
+
+    assert check_attribution_consistency(frontmatter, body) == ()
+
+
+def test_dangling_nested_autolink_label_is_an_error_with_location() -> None:
+    frontmatter: dict[str, Any] = {}
+    body = "A claim.[^missing<http://x.com>label]\n"
+
+    findings = check_attribution_consistency(frontmatter, body)
+
+    assert findings == (
+        ValidationFinding(
+            severity="error",
+            message="Footnote label 'missing<http://x.com>label' has no matching sources[].id",
+            field="missing<http://x.com>label",
+            line=1,
+        ),
+    )
+
+
+def test_clean_document_with_nested_code_span_label_reports_nothing() -> None:
+    """Companion to ``test_extract_finds_label_with_nested_code_span`` at the
+    ``check_attribution_consistency`` layer."""
+    frontmatter = {
+        "sources": [{"id": "lab`code`el", "resource": "https://example.com"}]
+    }
+    body = "A claim.[^lab`code`el]\n"
+
+    assert check_attribution_consistency(frontmatter, body) == ()
+
+
+def test_dangling_nested_code_span_label_is_an_error_with_location() -> None:
+    frontmatter: dict[str, Any] = {}
+    body = "A claim.[^missing`code`label]\n"
+
+    findings = check_attribution_consistency(frontmatter, body)
+
+    assert findings == (
+        ValidationFinding(
+            severity="error",
+            message="Footnote label 'missing`code`label' has no matching sources[].id",
+            field="missing`code`label",
+            line=1,
         ),
     )
 
