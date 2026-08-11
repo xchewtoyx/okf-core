@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from okf_core.attribution import check_attribution_consistency
 from okf_core.documents import (
     ConceptDocument,
     ValidationFinding,
@@ -51,6 +52,14 @@ def validate_bundle(
             )
         else:
             doc_findings = validate_concept_document(doc)
+
+        # Attribution consistency (footnote labels vs. sources[].id) is base
+        # spec behavior (§5.1), not profile-specific, so it runs regardless
+        # of whether a profile is configured; reuse the already-parsed
+        # frontmatter/body from the scan rather than re-parsing the document.
+        doc_findings = tuple(doc_findings) + check_attribution_consistency(
+            entry.frontmatter, entry.body
+        )
 
         if doc_findings:
             findings[entry.path] = doc_findings
