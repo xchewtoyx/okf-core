@@ -100,8 +100,10 @@ Every rule's own trigger/delimiter character set is checked against
   ``"!"`` for the image form). None are in the label charset -- a label's
   own characters can never independently open or close a link/image
   delimiter. Only the *surrounding* literal brackets (never part of the
-  label) can do that, which is exactly the closed, enumerable case handled
-  explicitly below (link/image reconstruction).
+  label) can do that; for ``link``, that is exactly the closed, enumerable
+  case handled explicitly below (link reconstruction). ``image`` is out of
+  scope entirely regardless of its trigger characters -- see "Images are out
+  of scope" below.
 - ``autolink`` / ``html_inline`` both require a literal ``"<"`` to trigger
   and (for autolink) a literal ``">"`` to close. Neither is in the label
   charset. Once triggered by those chars, content inside is opaque to
@@ -134,23 +136,26 @@ Every rule's own trigger/delimiter character set is checked against
 
 Because no label character can ever be a delimiter, opener, or closer for
 any active rule, a slug-shaped label can never be split across a token
-boundary (round 3's failure mode) except by the two closed-set link/image
-shapes above -- and those are exactly the shapes handled explicitly, not
-reasoned about heuristically.
+boundary (round 3's failure mode) except by the closed-set ``link`` shape
+above -- which is exactly the shape handled explicitly, not reasoned about
+heuristically. ``image`` never reaches this reasoning at all: it is out of
+scope regardless of whether its alt text is slug-shaped -- see "Images are
+out of scope" below.
 
 **Simplified extraction: scan ``text``-type inline children, stop
 relocating code spans.** ``extract_footnote_occurrences`` parses once with
 ``markdown_it`` (``reference`` disabled, as above) and walks every
 top-level ``inline`` token's ``.children`` in document order, regex-matching
-``_FOOTNOTE_RE`` against each ``text``-type child's ``.content``. Two
-closed-set reconstructions cover the shapes that swallow the surrounding
+``_FOOTNOTE_RE`` against each ``text``-type child's ``.content``. One
+closed-set reconstruction covers the shape that swallows the surrounding
 brackets:
 
 - ``link_open`` immediately followed by one ``text`` child immediately
   followed by ``link_close``, whose content fully matches ``^label`` --
   recovers ``[^label](dest)``.
-- an ``image`` token whose ``.content`` (the rendered alt text) fully
-  matches ``^label`` -- recovers ``![^label](url)``.
+
+An ``image`` token is never reconstructed at all -- see "Images are out of
+scope" below.
 
 A ``code_inline`` token is never of type ``text``, so it is skipped by
 construction -- no relocation of its raw byte range is needed, because
@@ -163,6 +168,26 @@ blocks either. This is what makes rounds 4 through 6 structurally
 unreachable rather than merely unreproduced: those rounds were all about
 mis-locating a ``code_inline`` token's raw position, and this design never
 computes one.
+
+**Images are out of scope, by design (not a partial-match omission).**
+markdown-it-py flattens a link's text directly into the parent token list
+(the ``link_open``/``text``/``link_close`` triple reconstructed above), but
+an image's alt text is different: even trivial alt text lives on a nested
+``image.children`` list this module never walks -- ``image.content`` is only
+a flattened rendering of that nested tree, not the tree itself. Round 4's
+code-span-exclusion bug and round 7's occurrence-recognition bug (an
+``image`` token's ``.content`` matched only when the *entire* alt text was
+exactly ``^label``, so non-trivial alt text like
+``![Diagram [^label]](url.png)`` was silently invisible) were the same
+underlying problem surfacing twice: *any* image-alt-text handling needs its
+own child-tree walk. Rather than solve that a third time, images are scoped
+out of this check entirely: an ``image`` token is never inspected for
+footnote syntax, whether its alt text matches a label exactly or merely
+contains one -- there is no partial-match/exact-match distinction to reason
+about, because nothing about an image's alt text is recognized. A
+``sources[].id`` cited only from image alt text will therefore always
+surface as the advisory "unreferenced source" finding (see "Narrowed
+contract" below); that is expected, not a bug.
 
 Line numbers are recovered by walking each ``inline`` token's children
 in order, starting from ``token.map[0] + 1`` (``markdown_it``'s block-level
@@ -224,11 +249,12 @@ _MARKDOWN.block.ruler.disable("reference")
 # rather than silently truncating to a shorter label.
 _FOOTNOTE_RE = re.compile(r"\[\^([A-Za-z0-9-]+)\](?![A-Za-z0-9-])(:)?")
 
-# Matches a token's `.content` that is *exactly* `^label` -- used to
-# recover the label from the two closed-set shapes (`link_open`/`image`)
-# whose surrounding brackets were consumed by the link/image inline rules
-# rather than left as literal text. Anchored on both ends, so this can
-# never match anything but the whole content.
+# Matches a token's `.content` that is *exactly* `^label` -- used to recover
+# the label from the closed-set `link_open` shape whose surrounding brackets
+# were consumed by the inline `link` rule rather than left as literal text.
+# Anchored on both ends, so this can never match anything but the whole
+# content. Not used for `image` tokens -- see the module docstring's "Images
+# are out of scope" section.
 _BARE_LABEL_RE = re.compile(r"\A\^([A-Za-z0-9-]+)\Z")
 
 
@@ -238,8 +264,10 @@ class FootnoteOccurrence:
 
     ``is_definition`` is True for a ``[^label]:`` definition line, False for
     a bare ``[^label]`` reference in prose (including the ``[^label](dest)``
-    and ``![^label](url)`` reference shapes, which can never be
-    definitions -- see the module docstring).
+    reference shape, which can never be a definition -- see the module
+    docstring). An ``![^label](url)`` image-style occurrence is never
+    produced -- images are out of scope entirely, see the module docstring's
+    "Images are out of scope" section.
     """
 
     label: str
@@ -271,12 +299,14 @@ def _scan_inline_children(
 ) -> list[FootnoteOccurrence]:
     """Walk one paragraph's (or heading's, etc.) inline children in order.
 
-    ``text``-type children are regex-scanned directly. ``link_open`` and
-    ``image`` are checked against the two closed-set reconstruction shapes
+    ``text``-type children are regex-scanned directly. ``link_open`` is
+    checked against the closed-set ``[^label](dest)`` reconstruction shape
     (see module docstring). Every other token type -- notably
-    ``code_inline``, which is not visited by any branch here -- is passed
-    over without inspection; that omission *is* the code-span exclusion,
-    not a gap in one.
+    ``code_inline``, which is not visited by any branch here, and ``image``,
+    which is deliberately never inspected at all (see the module docstring's
+    "Images are out of scope" section) -- is passed over without inspection;
+    for ``code_inline`` that omission *is* the code-span exclusion, not a gap
+    in one.
     """
     occurrences: list[FootnoteOccurrence] = []
     line = start_line
@@ -301,14 +331,9 @@ def _scan_inline_children(
                 occurrences.append(
                     FootnoteOccurrence(label=label, line=line, is_definition=False)
                 )
-        elif child_type == "image":
-            image_match = _BARE_LABEL_RE.match(getattr(child, "content", "") or "")
-            if image_match is not None:
-                occurrences.append(
-                    FootnoteOccurrence(
-                        label=image_match.group(1), line=line, is_definition=False
-                    )
-                )
+        # `image` is deliberately not matched here -- see the module
+        # docstring's "Images are out of scope" section. An image's alt text
+        # is never inspected for footnote syntax, exact-match or otherwise.
     return occurrences
 
 

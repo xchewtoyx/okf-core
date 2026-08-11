@@ -64,11 +64,12 @@ def test_extract_ignores_labels_inside_code(body: str) -> None:
 
 
 def test_extract_finds_occurrences_immediately_before_and_after_a_code_span() -> None:
-    """Boundary check for the new range-exclusion design: a ``[^label]``
-    whose ``[`` sits at the exact char offset immediately before a code
-    span's opening backtick, or immediately after its closing backtick,
-    must not be treated as inside that span -- only a label whose ``[``
-    falls strictly between the delimiters is excluded."""
+    """Boundary check for the token-type-skip design (round 7): a
+    ``[^label]`` sitting immediately before or after a code span -- i.e. in
+    its own ``text`` child adjacent to a ``code_inline`` token -- must still
+    be found. Only a label whose text lives *inside* the ``code_inline``
+    token itself (like ``[^inside]`` here) is skipped, because
+    ``code_inline`` is never a ``text``-type child."""
     body = "See.[^before]`middle`[^after] and `[^inside]` skip.\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -79,10 +80,11 @@ def test_extract_finds_occurrences_immediately_before_and_after_a_code_span() ->
 
 
 def test_extract_does_not_merge_adjacent_fenced_code_block_ranges() -> None:
-    """Two separate fenced code blocks must each exclude only their own
-    line range -- a real reference sitting between them must still be
-    found, not swallowed by a naive "first fence start to last fence end"
-    range."""
+    """Two separate fenced code blocks are each their own ``fence`` block
+    token with no ``inline`` children at all -- a real reference between
+    them lives in its own ``inline`` token and must still be found, not
+    lost just because it happens to sit between two fences that are,
+    individually, correctly invisible to the inline-only walk."""
     body = (
         "```\n"
         "[^first]\n"
@@ -106,10 +108,12 @@ def test_extract_finds_occurrence_after_code_span_preceded_by_unmatched_backtick
 ):
     """An unmatched ```` `` ```` (two backticks with no later closing pair of
     the same length) earlier in the paragraph is literal text, not a code
-    delimiter -- CommonMark still finds the real, later ``` `code` ``` span
-    using single backticks. Locating that span's exact offsets must reject
-    the false two-backtick candidate and keep scanning rather than
-    mis-anchoring on it."""
+    delimiter -- CommonMark's own tokenizer resolves the real, later
+    ``` `code` ``` span using single backticks and hands it back as one
+    ``code_inline`` token. This design never re-derives backtick positions
+    itself, so the stray unmatched pair (living inside a plain ``text``
+    child) is simply prose to the regex scan, with no opportunity to be
+    mis-anchored against."""
     body = "a`` `code`[^after] b\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -124,8 +128,10 @@ def test_extract_ignores_label_inside_literal_triple_backtick_text_within_quad_f
     """A fenced block delimited with four backticks can contain literal
     lines that themselves look like a triple-backtick fence -- those inner
     lines are inert content, not a nested fence (CommonMark has no fence
-    nesting). The whole outer fence's line range must still be excluded as
-    one contiguous block, not confused by the fence-shaped text inside it."""
+    nesting). The whole outer fence is one ``fence`` block token with no
+    ``inline`` children, so its content -- including text that merely looks
+    like a nested fence -- is never visited by the inline-only walk at all,
+    not confused by the fence-shaped text inside it."""
     body = "````\n```\n[^fake-label]\n```\n````\n"
 
     assert extract_footnote_occurrences(body) == ()
@@ -137,11 +143,14 @@ def test_extract_no_footnotes_returns_empty_tuple() -> None:
 
 def test_extract_finds_both_occurrences_when_definition_is_url_shaped() -> None:
     """A ``[^label]: https://...`` definition text is itself a valid link
-    destination: markdown-it's ``reference`` block rule (round 1) consumes
-    the definition line as a genuine reference definition and rewrites the
-    earlier ``[^label]`` into a resolved link span -- but the raw-source
-    scan never inspects tokens for extraction, so both occurrences are
-    found regardless of how markdown-it resolves the surrounding syntax."""
+    destination: markdown-it's ``reference`` block rule (round 1's original
+    trigger shape) would otherwise consume the definition line as a genuine
+    reference definition and rewrite the earlier ``[^label]`` into a
+    resolved link span with no plain-text trace left for a token scan to
+    find. This module disables the ``reference`` rule entirely (module
+    docstring, "Round 7"), so both occurrences stay literal ``text``
+    children and are found directly by the regex scan, independent of how
+    markdown-it would otherwise have resolved the surrounding syntax."""
     body = "A claim.[^ga4-schema]\n\n[^ga4-schema]: https://example.com/schema\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -154,10 +163,12 @@ def test_extract_finds_both_occurrences_when_definition_is_url_shaped() -> None:
 def test_extract_finds_reference_immediately_followed_by_parenthetical() -> None:
     """A ``[^label]`` immediately followed by ``(...)`` -- a plausible
     inline-citation authoring pattern -- parses as a real ``[text](dest)``
-    link via markdown-it's *inline* ``link`` rule (round 2), independent of
-    the ``reference`` rule. The raw-source scan finds the label directly in
-    the source text without caring whether markdown-it resolved it as a
-    link."""
+    link via markdown-it's *inline* ``link`` rule (round 2's original
+    trigger shape), independent of the (disabled) ``reference`` rule. The
+    closed-set ``link_open``/``text``/``link_close`` reconstruction
+    (``_bracket_reconstructed_label``) recovers the label from that link
+    token triple directly, without needing to know it was ever a bracketed
+    footnote in the source."""
     body = "A claim citing an appendix.[^ga4-schema](appendix-a)\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -182,18 +193,58 @@ def test_extract_ignores_link_with_emphasis_wrapped_caret_label() -> None:
     assert extract_footnote_occurrences(body) == ()
 
 
-def test_extract_finds_image_style_caret_label() -> None:
-    """``![^label](url)`` -- an image-style caret label -- parses via
-    markdown-it's *inline* ``image`` rule (round 2) into an ``image`` token
-    that carries no ``text`` child at all. The raw-source scan doesn't
-    depend on any inline child token existing for the label, so it is found
-    directly."""
-    body = "See the chart.\n\n![^chart-src](https://example.com/chart.png)\n"
-    occurrences = extract_footnote_occurrences(body)
+def test_extract_ignores_link_with_empty_text_near_end_of_children() -> None:
+    """Defensive out-of-bounds guard in ``_bracket_reconstructed_label``:
+    ``[](appendix-a)`` -- a link with empty text -- produces a ``link_open``
+    immediately followed by ``link_close`` with no intervening ``text``
+    child at all, and ``link_open`` is the second-to-last token overall.
+    ``open_index + 2`` then indexes past the end of ``children``; the guard
+    must decline (return ``None``) rather than raise an ``IndexError``."""
+    body = "A claim.[](appendix-a)\n"
 
-    assert occurrences == (
-        FootnoteOccurrence(label="chart-src", line=3, is_definition=False),
+    assert extract_footnote_occurrences(body) == ()
+
+
+def test_extract_ignores_link_text_split_by_soft_break_before_close() -> None:
+    """Defensive guard in ``_bracket_reconstructed_label`` for a
+    ``close_token.type != "link_close"`` triple: a soft line break inside
+    the link text before the closing bracket (``"[^label\\n](url)"``)
+    produces ``link_open``, ``text("^label")``, ``softbreak``,
+    ``link_close`` -- four tokens, not the exact three-token
+    ``link_open``/``text``/``link_close`` triple the reconstruction
+    requires. The token immediately after the ``text`` child is
+    ``softbreak``, not ``link_close``, so the guard must decline rather than
+    guess at a label that was never cleanly bracketed."""
+    body = "A claim.[^label\n](appendix-a)\n"
+
+    assert extract_footnote_occurrences(body) == ()
+
+
+def test_extract_ignores_image_style_caret_label_exact_match() -> None:
+    """``![^label](url)`` -- an image-style caret label whose alt text is
+    *exactly* ``^label`` -- is not recognized. Images are out of scope
+    entirely (module docstring, "Images are out of scope"): an ``image``
+    token is never inspected for footnote syntax, so this is inert, the
+    same as any other prose, not a special-cased recognition."""
+    body = "See the chart.\n\n![^chart-src](https://example.com/chart.png)\n"
+
+    assert extract_footnote_occurrences(body) == ()
+
+
+def test_extract_ignores_image_style_caret_label_non_trivial_alt_text() -> None:
+    """Companion to the exact-match case above: non-trivial image alt text
+    containing a label, e.g. ``![Diagram [^label]](url.png)``, is likewise
+    not recognized -- not because it fails some content match, but because
+    ``image`` tokens are never inspected at all. This is the same,
+    uniformly-documented behavior as the exact-match case, not an
+    inconsistency (this was the round 7 recurrence #7 finding: the old
+    exact-match-only check made this shape silently invisible in a way that
+    looked like a bug rather than a documented limitation)."""
+    body = (
+        "See the diagram.\n\n![Diagram [^chart-src]](https://example.com/chart.png)\n"
     )
+
+    assert extract_footnote_occurrences(body) == ()
 
 
 def test_extract_ignores_label_containing_nested_autolink() -> None:
@@ -264,25 +315,26 @@ def test_extract_finds_valid_slug_label_inside_emphasis() -> None:
 
 
 def test_extract_ignores_real_code_span_after_image_with_backtick_caption() -> None:
-    """Round 4: an ``image`` token parents any ``code_inline`` in its alt
-    text onto its own nested ``.children`` -- a list the top-level scan
-    never walked. A code span search that only visited top-level children
-    greedily matched the image's own (invisible-to-us) backtick pair
-    instead of the real code span's delimiters, leaving the real span's
-    content -- including a nested ``[^label]`` -- wrongly unexcluded. The
-    full descendant walk must locate the image's caption backticks first,
-    then the real code span, in raw-text order."""
+    """Round 4's original trigger shape (now moot, kept as a regression
+    guard): an ``image`` token's alt text can itself contain a backtick pair
+    (rendered into ``.content`` as a caption), historically confused with a
+    following real code span. Since images are now out of scope entirely
+    (module docstring, "Images are out of scope"), the ``image`` token
+    contributes nothing regardless of what its alt text contains; the real
+    ``[^hidden]`` still sits inside its own ``code_inline`` token (the
+    `` `[^hidden]` `` span) and is correctly skipped by the token-type
+    check, independent of the image."""
     body = "![diagram `caption`](img.png) See `[^hidden]` in the code.\n"
 
     assert extract_footnote_occurrences(body) == ()
 
 
-def test_extract_finds_label_after_image_with_plain_alt_text() -> None:
+def test_extract_ignores_code_span_after_image_with_plain_alt_text() -> None:
     """Control for the above: an image with no backticks in its alt text
-    has no nested ``code_inline`` to confuse the matcher, so a real code
-    span after it was already excluded correctly even before the fix --
-    this guards against a regression that breaks the already-working
-    simple case while fixing the nested case above."""
+    is unaffected either way -- the ``image`` token still contributes
+    nothing, and the real code span after it is still skipped because it is
+    a ``code_inline`` token, not because of anything about the preceding
+    image."""
     body = "![plain diagram](img.png) See `[^hidden]` in the code.\n"
 
     assert extract_footnote_occurrences(body) == ()
@@ -291,15 +343,14 @@ def test_extract_finds_label_after_image_with_plain_alt_text() -> None:
 def test_extract_finds_occurrence_after_code_span_preceded_by_html_comment_backtick() -> (
     None
 ):
-    """Round 5 (researcher reproduction, HTML comment): an ``html_inline``
-    token (e.g. an HTML comment) can contain a literal backtick that has
-    nothing to do with any code span. The old cursor-based search treated
-    that backtick as a delimiter candidate for the *next* ``code_inline``
-    token, mispairing it with the real span's opening backtick and
-    producing a wrong exclusion range that swallowed the footnote label in
-    between. Validating a candidate pairing's content against the token's
-    own known content (rather than accepting the first backtick-shaped
-    match) rejects the false pairing and finds the real span instead."""
+    """Round 5's original trigger shape: an ``html_inline`` token (e.g. an
+    HTML comment) can contain a literal backtick that has nothing to do with
+    any code span. This design never re-derives a ``code_inline`` token's
+    backtick position from raw text at all -- it trusts markdown_it's own
+    tokenization, so the comment's stray backtick (opaque ``html_inline``
+    content) and the real ``` `real` ``` code span (its own ``code_inline``
+    token) can never be confused with one another; the footnote label
+    between them lives in a plain ``text`` child and is found directly."""
     body = "Some text <!-- a ` stray backtick --> [^mylabel] and `real` code.\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -311,12 +362,14 @@ def test_extract_finds_occurrence_after_code_span_preceded_by_html_comment_backt
 def test_extract_finds_occurrence_after_code_span_preceded_by_autolink_backtick() -> (
     None
 ):
-    """Round 5 (researcher reproduction, autolink): an autolink's URI is
-    legal CommonMark even when it contains a literal backtick (autolink
-    content is not escape/entity-processed). That backtick is exposed as a
-    plain ``text`` token's content, but the old cursor-based search still
-    treated it as a delimiter candidate for the next real code span,
-    mispairing and swallowing the footnote label between them."""
+    """Round 5's other original trigger shape: an autolink's URI is legal
+    CommonMark even when it contains a literal backtick (autolink content is
+    not escape/entity-processed). This design has no backtick-delimiter
+    search of its own to confuse -- it trusts markdown_it's own
+    tokenization directly, so the autolink's internal token structure and
+    the real ``` `real` ``` span's own, distinct ``code_inline`` token can
+    never be mispaired with one another. The footnote label between them,
+    a plain ``text`` child, is found directly by the regex scan."""
     body = "See <http://example.com/a`b> [^mylabel] and then `real` code.\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -328,13 +381,13 @@ def test_extract_finds_occurrence_after_code_span_preceded_by_autolink_backtick(
 def test_extract_finds_occurrence_after_code_span_preceded_by_link_destination_backtick() -> (
     None
 ):
-    """Round 5 (researcher reproduction, link destination): a regular
-    ``[text](url)`` link's destination is not represented by any inline
-    child token at all (only the label text is), so a backtick inside the
-    destination is invisible to a token-type-based scan yet still present
-    in the raw source the cursor walks. The old search mispaired it with
-    the next real code span's opening backtick, swallowing the footnote
-    label in between."""
+    """Round 5's third original trigger shape: a regular ``[text](url)``
+    link's destination is not represented by any inline child token at all
+    (only the visible link text is) -- a backtick inside the destination is
+    genuinely invisible to this token-type-based scan, not merely
+    unmatched. The real code span is still its own distinct ``code_inline``
+    token, and the footnote label between them, a plain ``text`` child, is
+    found directly by the regex scan."""
     body = "See [text](http://example.com/a`b) [^mylabel] and then `real` code.\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -346,13 +399,15 @@ def test_extract_finds_occurrence_after_code_span_preceded_by_link_destination_b
 def test_extract_finds_occurrence_after_code_span_preceded_by_escaped_backtick() -> (
     None
 ):
-    """Round 6: a backslash-escaped backtick (``\\```) in ordinary prose is
-    resolved by markdown_it into a literal backtick character inside a
-    plain ``text`` token's ``.content`` -- the escape itself leaves no
-    trace for a raw-text scan to see. This is not fixed by recognizing an
-    escape syntax (the structural fix does not look for one); it is fixed
-    the same way as the other three cases, by rejecting any candidate
-    pairing whose content does not match the real span's."""
+    """Round 6's original trigger shape: a backslash-escaped backtick
+    (``\\```) in ordinary prose is resolved by markdown_it into a literal
+    backtick character inside a plain ``text`` token's ``.content`` -- the
+    escape syntax itself leaves no trace once parsed. This design never
+    inspects raw source text or backtick characters directly; the escaped
+    backtick is just prose content of a ``text`` child (not matched by
+    ``_FOOTNOTE_RE``), the real code span is still its own distinct
+    ``code_inline`` token, and the footnote label between them is found
+    directly."""
     body = "Some text \\` still prose [^mylabel] and `real` code.\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -362,11 +417,13 @@ def test_extract_finds_occurrence_after_code_span_preceded_by_escaped_backtick()
 
 
 def test_extract_finds_both_spans_with_repeated_html_comments_between_them() -> None:
-    """Generality check: the fix must not depend on there being exactly one
-    confusing construct in the paragraph. Two separate HTML comments, each
-    with their own stray backtick, sit before two separate real code
-    spans -- if the fix were a special case for "the first" comment rather
-    than a general content-validated search, this would still mispair."""
+    """Generality check: the design must not depend on there being exactly
+    one confusing construct in the paragraph. Two separate HTML comments,
+    each with their own stray backtick, sit before two separate real code
+    spans -- since token-type skipping treats every ``html_inline`` and
+    every ``code_inline`` token independently by its own type, not by
+    position or count, this holds regardless of how many such constructs
+    appear."""
     body = "A <!-- ` --> [^one] `code1` B <!-- ` --> [^two] `code2` C\n"
     occurrences = extract_footnote_occurrences(body)
 
@@ -443,34 +500,41 @@ def test_dangling_parenthetical_adjacent_reference_is_an_error_with_location() -
     )
 
 
-def test_clean_document_with_image_style_label_reports_nothing() -> None:
-    """Companion to ``test_extract_finds_image_style_caret_label`` at the
-    ``check_attribution_consistency`` layer: a clean label/id match must not
-    be misreported as a dangling footnote (false positive) just because the
-    label is written in image-style ``![^label](url)`` form."""
+def test_source_id_only_cited_via_image_style_label_is_unreferenced_warning() -> None:
+    """Companion to ``test_extract_ignores_image_style_caret_label_exact_match``
+    at the ``check_attribution_consistency`` layer: since images are out of
+    scope entirely, a ``sources[].id`` that is only ever "cited" via an
+    image-style ``![^label](url)`` alt text is never actually joined to
+    anything -- it surfaces as the advisory "unreferenced source" warning,
+    not a clean match. This is the documented limitation (module docstring,
+    "Images are out of scope"), not a bug."""
     frontmatter = {"sources": [{"id": "chart-src", "resource": "https://example.com"}]}
     body = "See the chart.\n\n![^chart-src](https://example.com/chart.png)\n"
-
-    assert check_attribution_consistency(frontmatter, body) == ()
-
-
-def test_dangling_image_style_label_is_an_error_with_location() -> None:
-    """A dangling image-style caret label must still be reported as an
-    error, not silently dropped as a false negative, per the inline
-    ``image``-rule-consumption bug covered above."""
-    frontmatter: dict[str, Any] = {}
-    body = "See the chart.\n\n![^missing-chart](https://example.com/chart.png)\n"
 
     findings = check_attribution_consistency(frontmatter, body)
 
     assert findings == (
         ValidationFinding(
-            severity="error",
-            message="Footnote label 'missing-chart' has no matching sources[].id",
-            field="missing-chart",
-            line=3,
+            severity="warning",
+            message="sources[].id 'chart-src' is not referenced by any footnote",
+            field="chart-src",
+            line=None,
         ),
     )
+
+
+def test_image_style_caret_label_with_no_matching_source_reports_nothing() -> None:
+    """An image-style caret label with no matching ``sources[].id`` is *not*
+    reported as a dangling-footnote error -- images are out of scope
+    entirely (module docstring, "Images are out of scope"), so
+    ``![^missing-chart](url)`` is never recognized as footnote syntax at
+    all, the same as any other prose. This replaces the pre-scoping
+    behavior where this shape was (inconsistently) recognized as a dangling
+    reference."""
+    frontmatter: dict[str, Any] = {}
+    body = "See the chart.\n\n![^missing-chart](https://example.com/chart.png)\n"
+
+    assert check_attribution_consistency(frontmatter, body) == ()
 
 
 def test_clean_document_with_real_code_span_after_image_caption_reports_nothing() -> (
@@ -480,8 +544,9 @@ def test_clean_document_with_real_code_span_after_image_caption_reports_nothing(
     ``test_extract_ignores_real_code_span_after_image_with_backtick_caption``
     at the ``check_attribution_consistency`` layer: with no ``sources`` at
     all, a false-positive dangling-footnote finding for the code-span-
-    protected ``[^hidden]`` would be the observable symptom of the
-    round-4 bug."""
+    protected ``[^hidden]`` would be the observable symptom of a code-span
+    exclusion regression; the preceding image (out of scope regardless of
+    its alt text) must not affect that."""
     body = "![diagram `caption`](img.png) See `[^hidden]` in the code.\n"
 
     assert check_attribution_consistency({}, body) == ()
