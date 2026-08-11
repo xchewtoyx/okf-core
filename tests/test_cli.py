@@ -70,6 +70,10 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "graph-repair" in result.stdout
     assert "log-append" in result.stdout
     assert "source-add" in result.stdout
+    assert "stamp-generated" in result.stdout
+    assert "stamp-verified" in result.stdout
+    assert "stamp-status" in result.stdout
+    assert "stamp-stale-after" in result.stdout
 
 
 def test_scan_help_exits_zero() -> None:
@@ -2780,6 +2784,418 @@ def test_cli_source_add_stale_conflict_exits_1(
     assert result.exit_code == 1
     assert "changed after planning" in result.stderr
     assert "https://example.com/concurrent" in concept_path.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# stamp-generated / stamp-verified / stamp-status / stamp-stale-after (#196)
+# ---------------------------------------------------------------------------
+
+
+def test_stamp_generated_help_exits_zero() -> None:
+    result = _runner().invoke(cli, ["stamp-generated", "--help"])
+    assert result.exit_code == 0
+    assert "PATH" in result.stdout
+    assert "--by" in result.stdout
+    assert "--at" in result.stdout
+
+
+def test_stamp_verified_help_exits_zero() -> None:
+    result = _runner().invoke(cli, ["stamp-verified", "--help"])
+    assert result.exit_code == 0
+    assert "PATH" in result.stdout
+    assert "--by" in result.stdout
+    assert "--at" in result.stdout
+
+
+def test_stamp_status_help_exits_zero() -> None:
+    result = _runner().invoke(cli, ["stamp-status", "--help"])
+    assert result.exit_code == 0
+    assert "PATH" in result.stdout
+    assert "--status" in result.stdout
+
+
+def test_stamp_stale_after_help_exits_zero() -> None:
+    result = _runner().invoke(cli, ["stamp-stale-after", "--help"])
+    assert result.exit_code == 0
+    assert "PATH" in result.stdout
+    assert "--stale-after" in result.stdout
+
+
+def test_cli_stamp_generated_writes_entry(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    _write_concept(concept_path, title="Topic")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-generated",
+            "topic.md",
+            "--by",
+            "human:alice",
+            "--at",
+            "2026-06-20T22:53:05Z",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is True
+    assert payload["path"] == str(concept_path)
+    assert "Stamped generated" in result.stderr
+    text = concept_path.read_text(encoding="utf-8")
+    assert "by: human:alice" in text
+    assert "at: 2026-06-20" in text
+
+
+def test_cli_stamp_generated_dry_run_does_not_write(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    original = "---\ntype: concept\ntitle: Topic\n---\nBody\n"
+    concept_path.write_text(original, encoding="utf-8", newline="\n")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-generated",
+            "topic.md",
+            "--by",
+            "human:alice",
+            "--at",
+            "2026-06-20T22:53:05Z",
+            "--config",
+            str(config_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["would_change"] is True
+    assert concept_path.read_text(encoding="utf-8") == original
+    assert "Dry run" in result.stderr
+
+
+def test_cli_stamp_generated_same_value_is_noop(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    concept_path.write_text(
+        "---\ntype: concept\ngenerated: { by: human:alice, at: "
+        "2026-06-20T22:53:05Z }\n---\nBody\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-generated",
+            "topic.md",
+            "--by",
+            "human:alice",
+            "--at",
+            "2026-06-20T22:53:05Z",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is False
+    assert "nothing to do" in result.stderr
+
+
+def test_cli_stamp_generated_invalid_actor_exits_1(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    original = "---\ntype: concept\ntitle: Topic\n---\nBody\n"
+    concept_path.write_text(original, encoding="utf-8", newline="\n")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-generated",
+            "topic.md",
+            "--by",
+            "not-an-actor",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "actor string" in result.stderr
+    assert concept_path.read_text(encoding="utf-8") == original
+
+
+def test_cli_stamp_generated_invalid_datetime_exits_1(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    original = "---\ntype: concept\ntitle: Topic\n---\nBody\n"
+    concept_path.write_text(original, encoding="utf-8", newline="\n")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-generated",
+            "topic.md",
+            "--by",
+            "human:alice",
+            "--at",
+            "not-a-date",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "ISO 8601 datetime" in result.stderr
+    assert concept_path.read_text(encoding="utf-8") == original
+
+
+def test_cli_stamp_verified_appends_entry(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    _write_concept(concept_path, title="Topic")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-verified",
+            "topic.md",
+            "--by",
+            "human:alice",
+            "--at",
+            "2026-06-20T22:53:05Z",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is True
+    assert "Appended verified event" in result.stderr
+    text = concept_path.read_text(encoding="utf-8")
+    assert "verified:" in text
+    assert "by: human:alice" in text
+
+
+def test_cli_stamp_verified_identical_event_is_noop(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    concept_path.write_text(
+        "---\ntype: concept\nverified:\n  - { by: human:alice, at: "
+        "2026-06-20T22:53:05Z }\n---\nBody\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-verified",
+            "topic.md",
+            "--by",
+            "human:alice",
+            "--at",
+            "2026-06-20T22:53:05Z",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is False
+    assert "already represented" in result.stderr
+
+
+def test_cli_stamp_status_writes_entry(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    _write_concept(concept_path, title="Topic")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-status",
+            "topic.md",
+            "--status",
+            "draft",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is True
+    assert "Stamped status" in result.stderr
+    assert "status: draft" in concept_path.read_text(encoding="utf-8")
+
+
+def test_cli_stamp_status_invalid_choice_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    original = "---\ntype: concept\ntitle: Topic\n---\nBody\n"
+    concept_path.write_text(original, encoding="utf-8", newline="\n")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-status",
+            "topic.md",
+            "--status",
+            "bogus",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert concept_path.read_text(encoding="utf-8") == original
+
+
+def test_cli_stamp_stale_after_writes_entry(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    _write_concept(concept_path, title="Topic")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-stale-after",
+            "topic.md",
+            "--stale-after",
+            "2026-09-23",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is True
+    assert "Stamped stale_after" in result.stderr
+    assert "stale_after: 2026-09-23" in concept_path.read_text(encoding="utf-8")
+
+
+def test_cli_stamp_stale_after_invalid_date_exits_1(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    original = "---\ntype: concept\ntitle: Topic\n---\nBody\n"
+    concept_path.write_text(original, encoding="utf-8", newline="\n")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-stale-after",
+            "topic.md",
+            "--stale-after",
+            "not-a-date",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert concept_path.read_text(encoding="utf-8") == original
+
+
+def test_cli_stamp_verified_stale_conflict_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`okf stamp-verified` must not overwrite a document it never planned
+    against. Mirrors test_cli_source_add_stale_conflict_exits_1's technique:
+    the race is injected by patching `plan_document_change_from_reader`
+    inside `okf_core.patching`, which `plan_stamp_verified` calls directly.
+    """
+    import okf_core.patching as patching_module
+
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    concept_path.write_text(
+        "---\ntype: concept\nverified:\n  - { by: human:original, at: "
+        "2026-06-20T22:53:05Z }\n---\nBody\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    real_plan_from_reader = patching_module.plan_document_change_from_reader
+
+    def racing_plan_from_reader(
+        bundle: Any, path: Path, build_proposed_content: Any, **kwargs: Any
+    ):
+        plan = real_plan_from_reader(bundle, path, build_proposed_content, **kwargs)
+        concept_path.write_text(
+            "---\ntype: concept\nverified:\n  - { by: human:concurrent, at: "
+            "2026-06-20T22:53:05Z }\n---\nBody\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        return plan
+
+    monkeypatch.setattr(
+        patching_module, "plan_document_change_from_reader", racing_plan_from_reader
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "stamp-verified",
+            "topic.md",
+            "--by",
+            "human:new",
+            "--at",
+            "2026-06-20T22:53:05Z",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "changed after planning" in result.stderr
+    assert "human:concurrent" in concept_path.read_text(encoding="utf-8")
 
 
 def test_cli_graph_repair_dry_run_no_plugin_reports_unresolved(
