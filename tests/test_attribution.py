@@ -195,6 +195,31 @@ def test_extract_finds_label_with_nested_autolink() -> None:
     )
 
 
+def test_extract_ignores_real_code_span_after_image_with_backtick_caption() -> None:
+    """Round 4: an ``image`` token parents any ``code_inline`` in its alt
+    text onto its own nested ``.children`` -- a list the top-level scan
+    never walked. A code span search that only visited top-level children
+    greedily matched the image's own (invisible-to-us) backtick pair
+    instead of the real code span's delimiters, leaving the real span's
+    content -- including a nested ``[^label]`` -- wrongly unexcluded. The
+    full descendant walk must locate the image's caption backticks first,
+    then the real code span, in raw-text order."""
+    body = "![diagram `caption`](img.png) See `[^hidden]` in the code.\n"
+
+    assert extract_footnote_occurrences(body) == ()
+
+
+def test_extract_finds_label_after_image_with_plain_alt_text() -> None:
+    """Control for the above: an image with no backticks in its alt text
+    has no nested ``code_inline`` to confuse the matcher, so a real code
+    span after it was already excluded correctly even before the fix --
+    this guards against a regression that breaks the already-working
+    simple case while fixing the nested case above."""
+    body = "![plain diagram](img.png) See `[^hidden]` in the code.\n"
+
+    assert extract_footnote_occurrences(body) == ()
+
+
 def test_extract_finds_label_with_nested_code_span() -> None:
     """Round 3's other trigger shape: a code span nested inside the label
     (`` [^lab`code`el] ``) fires markdown-it's ``backticks`` rule mid-label.
@@ -295,6 +320,20 @@ def test_dangling_image_style_label_is_an_error_with_location() -> None:
             line=3,
         ),
     )
+
+
+def test_clean_document_with_real_code_span_after_image_caption_reports_nothing() -> (
+    None
+):
+    """Companion to
+    ``test_extract_ignores_real_code_span_after_image_with_backtick_caption``
+    at the ``check_attribution_consistency`` layer: with no ``sources`` at
+    all, a false-positive dangling-footnote finding for the code-span-
+    protected ``[^hidden]`` would be the observable symptom of the
+    round-4 bug."""
+    body = "![diagram `caption`](img.png) See `[^hidden]` in the code.\n"
+
+    assert check_attribution_consistency({}, body) == ()
 
 
 def test_clean_document_with_nested_autolink_label_reports_nothing() -> None:

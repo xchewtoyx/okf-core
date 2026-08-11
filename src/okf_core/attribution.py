@@ -56,7 +56,7 @@ the real parser already gets right).
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -163,25 +163,58 @@ def _find_backtick_run(text: str, start: int, length: int) -> int | None:
         pos = idx + 1
 
 
+def _iter_code_inline_tokens(children: Sequence[Any]) -> Iterator[Any]:
+    """Yield every ``code_inline`` token reachable from *children*, in raw-text order.
+
+    ``token.children`` is not a flat list of every inline token in the
+    paragraph -- a container-like token (e.g. ``image``) carries its own
+    nested ``.children`` (the parsed alt-text tokens), which does not
+    appear in the top-level list at all. A scan that only inspected
+    top-level children silently skipped any ``code_inline`` parented that
+    way, and -- worse -- misattributed a *later* top-level ``code_inline``
+    to the skipped span's own backticks, because ``_code_inline_ranges``'s
+    search cursor never advanced past them (issue #197 recurrence #4).
+
+    Recursing into every child's ``.children`` (not just ``image``'s)
+    keeps this general: any token type, present or future, that nests
+    content that way is walked the same way, not special-cased. A
+    ``code_inline`` token is always a leaf (markdown_it never gives it its
+    own ``.children``), so checking its type first and only recursing into
+    the ``else`` branch cannot skip a nested code span inside it.
+    """
+    for child in children:
+        if getattr(child, "type", None) == "code_inline":
+            yield child
+        else:
+            nested = getattr(child, "children", None)
+            if nested:
+                yield from _iter_code_inline_tokens(nested)
+
+
 def _code_inline_ranges(
     para_text: str, children: Sequence[Any]
 ) -> list[tuple[int, int]]:
-    """Return (start, end) char ranges of each ``code_inline`` child, in order.
+    """Return (start, end) char ranges of each ``code_inline`` descendant, in order.
 
-    Each code span is located by re-finding its opening/closing backtick
-    run directly in *para_text*, starting the search for span *n+1* only
-    after span *n*'s close -- so two code spans using the same delimiter
-    length in one paragraph resolve in document order rather than both
-    matching the first run found. A span whose delimiters can't be
-    relocated (should not happen given ``markdown_it`` already identified
-    it) is skipped rather than raising, since skipping only risks under-
-    excluding, never mis-locating a real footnote occurrence.
+    ``children`` is walked via ``_iter_code_inline_tokens`` rather than
+    iterated directly, so a ``code_inline`` nested inside another token
+    (e.g. inside an ``image``'s alt text) is found alongside top-level
+    ones, in the same left-to-right order they appear in *para_text*. Each
+    code span is located by re-finding its opening/closing backtick run
+    directly in *para_text*, starting the search for span *n+1* only after
+    span *n*'s close -- so two code spans using the same delimiter length
+    in one paragraph resolve in document order rather than both matching
+    the first run found. With every descendant visited in true document
+    order, a span whose delimiters can't be relocated should not happen --
+    markdown_it only emits ``code_inline`` for an actual backtick-delimited
+    run in the source, and the monotonically-advancing cursor now walks
+    every one of those runs in the order they occur -- so this is a
+    defensive skip (never mis-locating a real footnote occurrence) rather
+    than a known-reachable path.
     """
     ranges: list[tuple[int, int]] = []
     cursor = 0
-    for child in children:
-        if getattr(child, "type", None) != "code_inline":
-            continue
+    for child in _iter_code_inline_tokens(children):
         markup = getattr(child, "markup", "") or "`"
         length = len(markup)
         open_pos = _find_backtick_run(para_text, cursor, length)
