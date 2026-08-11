@@ -237,6 +237,69 @@ allowed_types = ["decision"]
     assert config.profiles["strict"].taxonomy.allowed_types == ("decision",)
 
 
+def test_type_fields_parsing(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[profiles.default]
+required_frontmatter = ["title"]
+
+[profiles.default.type_fields.platform-implementation]
+required_frontmatter = ["platform"]
+
+[profiles.default.type_fields.concept]
+optional_frontmatter = ["platform"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path=config_path)
+    profile = config.profiles["default"]
+
+    assert profile.required_frontmatter == ("title",)
+    assert set(profile.type_fields) == {"platform-implementation", "concept"}
+    assert profile.type_fields["platform-implementation"].required_frontmatter == (
+        "platform",
+    )
+    assert profile.type_fields["platform-implementation"].optional_frontmatter == ()
+    assert profile.type_fields["concept"].optional_frontmatter == ("platform",)
+    assert profile.type_fields["concept"].required_frontmatter == ()
+
+
+def test_type_fields_default_to_empty_dict(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[profiles.default]
+required_frontmatter = ["title"]
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path=config_path)
+
+    assert config.profiles["default"].type_fields == {}
+
+
+@pytest.mark.parametrize(
+    "toml",
+    [
+        # unknown key inside a type_fields entry
+        "[profiles.strict.type_fields.concept]\nunexpected = true",
+        # required_frontmatter must be a list of strings, not a bare string
+        '[profiles.strict.type_fields.concept]\nrequired_frontmatter = "platform"',
+        # type_fields itself must be a table, not a scalar
+        "[profiles.strict]\ntype_fields = true",
+    ],
+)
+def test_type_fields_malformed_config_fails_closed(tmp_path: Path, toml: str) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(toml, encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="Invalid OKF configuration"):
+        load_config(config_path=config_path)
+
+
 def test_bundle_level_profile_references_and_overrides(tmp_path: Path) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(

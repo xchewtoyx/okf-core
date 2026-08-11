@@ -36,6 +36,21 @@ class TaxonomyConfig(BaseModel):
     allowed_types: tuple[str, ...] = ()
 
 
+class TypeFieldsConfig(BaseModel):
+    """Per-concept-type required/optional frontmatter fields for a profile.
+
+    Applied additively on top of the profile's own ``required_frontmatter``
+    and ``optional_frontmatter``: a type-scoped entry adds constraints or
+    exemptions for that concept ``type``, it never drops the profile-wide
+    baseline for that type.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    required_frontmatter: tuple[str, ...] = ()
+    optional_frontmatter: tuple[str, ...] = ()
+
+
 class ProfileConfig(BaseModel):
     """Optional local validation profile settings."""
 
@@ -44,6 +59,7 @@ class ProfileConfig(BaseModel):
     required_frontmatter: tuple[str, ...] = ()
     optional_frontmatter: tuple[str, ...] = ()
     taxonomy: TaxonomyConfig = Field(default_factory=TaxonomyConfig)
+    type_fields: dict[str, TypeFieldsConfig] = Field(default_factory=dict)
 
 
 class ProjectDefaults(BaseModel):

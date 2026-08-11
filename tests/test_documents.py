@@ -397,3 +397,140 @@ def test_directory_metadata_bypasses_profile_field_rules() -> None:
     severities = {f.severity for f in findings_normal}
     assert "error" in severities
     assert "warning" in severities
+
+
+@pytest.mark.parametrize(
+    "concept_type,expect_missing_platform_error",
+    [
+        ("platform-implementation", True),
+        ("concept", False),
+    ],
+)
+def test_type_fields_required_field_scoped_to_type(
+    concept_type: str, expect_missing_platform_error: bool
+) -> None:
+    """A type_fields required field only applies to documents of that type."""
+    from okf_core import ProfileConfig, TypeFieldsConfig
+
+    profile = ProfileConfig(
+        type_fields={
+            "platform-implementation": TypeFieldsConfig(
+                required_frontmatter=("platform",)
+            )
+        }
+    )
+    doc = ConceptDocument(frontmatter={"type": concept_type})
+
+    findings = validate_concept_document_with_profile(doc, profile)
+
+    missing_platform = ValidationFinding(
+        severity="error",
+        message="Missing required frontmatter field: platform",
+        field="platform",
+    )
+    if expect_missing_platform_error:
+        assert missing_platform in findings
+    else:
+        assert missing_platform not in findings
+
+
+@pytest.mark.parametrize(
+    "concept_type,expect_unknown_field_warning",
+    [
+        ("concept", False),
+        ("decision", True),
+    ],
+)
+def test_type_fields_optional_field_suppresses_warning_scoped_to_type(
+    concept_type: str, expect_unknown_field_warning: bool
+) -> None:
+    """A type_fields optional field only suppresses the unknown-field warning
+    for documents of that type; other types still warn on it."""
+    from okf_core import ProfileConfig, TypeFieldsConfig
+
+    profile = ProfileConfig(
+        type_fields={
+            "concept": TypeFieldsConfig(optional_frontmatter=("platform",)),
+        }
+    )
+    doc = ConceptDocument(frontmatter={"type": concept_type, "platform": "linux"})
+
+    findings = validate_concept_document_with_profile(doc, profile)
+
+    unknown_platform_warning = ValidationFinding(
+        severity="warning",
+        message="Unknown frontmatter field: platform",
+        field="platform",
+    )
+    if expect_unknown_field_warning:
+        assert unknown_platform_warning in findings
+    else:
+        assert unknown_platform_warning not in findings
+
+
+def test_type_fields_additive_union_with_profile_wide_required() -> None:
+    """type_fields adds requirements on top of the profile-wide baseline; it
+    never drops profile-wide required_frontmatter for that type."""
+    from okf_core import ProfileConfig, TypeFieldsConfig
+
+    profile = ProfileConfig(
+        required_frontmatter=("title",),
+        type_fields={
+            "platform-implementation": TypeFieldsConfig(
+                required_frontmatter=("platform",)
+            )
+        },
+    )
+    doc = ConceptDocument(frontmatter={"type": "platform-implementation"})
+
+    findings = validate_concept_document_with_profile(doc, profile)
+
+    assert (
+        ValidationFinding(
+            severity="error",
+            message="Missing required frontmatter field: title",
+            field="title",
+        )
+        in findings
+    )
+    assert (
+        ValidationFinding(
+            severity="error",
+            message="Missing required frontmatter field: platform",
+            field="platform",
+        )
+        in findings
+    )
+
+
+def test_type_fields_absent_entry_matches_profile_wide_behavior() -> None:
+    """A type with no type_fields entry validates exactly as it did before
+    type_fields existed: only the profile-wide required/optional lists apply."""
+    from okf_core import ProfileConfig, TypeFieldsConfig
+
+    profile_without_type_fields = ProfileConfig(required_frontmatter=("title",))
+    profile_with_unrelated_type_fields = ProfileConfig(
+        required_frontmatter=("title",),
+        type_fields={
+            "platform-implementation": TypeFieldsConfig(
+                required_frontmatter=("platform",)
+            )
+        },
+    )
+    doc = ConceptDocument(frontmatter={"type": "concept"})
+
+    findings_without = validate_concept_document_with_profile(
+        doc, profile_without_type_fields
+    )
+    findings_with_unrelated = validate_concept_document_with_profile(
+        doc, profile_with_unrelated_type_fields
+    )
+
+    assert findings_without == findings_with_unrelated
+    assert findings_without == (
+        ValidationFinding(
+            severity="error",
+            message="Missing required frontmatter field: title",
+            field="title",
+        ),
+    )

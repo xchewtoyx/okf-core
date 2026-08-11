@@ -132,5 +132,61 @@ bundle_root = "docs"
     )
 
 
+def test_validate_bundle_type_fields_scoped_to_type(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "docs"
+
+[profiles.default]
+
+[profiles.default.type_fields.platform-implementation]
+required_frontmatter = ["platform"]
+
+[bundles.product]
+bundle_root = "product"
+profile = "default"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    product_root = tmp_path / "product"
+    product_root.mkdir()
+
+    # missing_platform.md: type-required field absent for its type
+    _write_concept(
+        product_root / "missing_platform.md",
+        "---\ntype: platform-implementation\ntitle: No Platform\n---\nBody\n",
+    )
+    # has_platform.md: type-required field present
+    _write_concept(
+        product_root / "has_platform.md",
+        "---\ntype: platform-implementation\nplatform: linux\n---\nBody\n",
+    )
+    # other_type.md: different type, unaffected by platform-implementation's
+    # type_fields entry
+    _write_concept(
+        product_root / "other_type.md",
+        "---\ntype: concept\ntitle: Unrelated\n---\nBody\n",
+    )
+
+    config = load_config(config_path=config_path)
+    bundle = config.bundles["product"]
+
+    findings = validate_bundle(bundle, config)
+
+    assert product_root / "missing_platform.md" in findings
+    assert findings[product_root / "missing_platform.md"] == (
+        ValidationFinding(
+            severity="error",
+            message="Missing required frontmatter field: platform",
+            field="platform",
+        ),
+    )
+    assert product_root / "has_platform.md" not in findings
+    assert product_root / "other_type.md" not in findings
+
+
 def _write_concept(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")
