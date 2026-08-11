@@ -69,6 +69,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "move" in result.stdout
     assert "graph-repair" in result.stdout
     assert "log-append" in result.stdout
+    assert "source-add" in result.stdout
 
 
 def test_scan_help_exits_zero() -> None:
@@ -2520,6 +2521,265 @@ def test_cli_log_append_stale_conflict_exits_1(
     assert log_path.read_text(encoding="utf-8") == (
         "## 2020-01-01\n* **Update**: Concurrent edit.\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# source-add
+# ---------------------------------------------------------------------------
+
+
+def test_source_add_help_exits_zero() -> None:
+    result = _runner().invoke(cli, ["source-add", "--help"])
+    assert result.exit_code == 0
+    assert "PATH" in result.stdout
+    assert "--resource" in result.stdout
+    assert "--id" in result.stdout
+    assert "--title" in result.stdout
+    assert "--author" in result.stdout
+    assert "--usage-count" in result.stdout
+    assert "--last-modified" in result.stdout
+
+
+def test_cli_source_add_creates_sources_list_and_writes_entry(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    _write_concept(concept_path, title="Topic")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "source-add",
+            "topic.md",
+            "--resource",
+            "https://example.com/a",
+            "--id",
+            "src-a",
+            "--title",
+            "Source A",
+            "--author",
+            "human:alice",
+            "--usage-count",
+            "42",
+            "--last-modified",
+            "2026-05-30",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is True
+    assert payload["path"] == str(concept_path)
+    assert "Added sources entry" in result.stderr
+    text = concept_path.read_text(encoding="utf-8")
+    assert "resource: https://example.com/a" in text
+    assert "id: src-a" in text
+    assert "title: Source A" in text
+    assert "author: human:alice" in text
+    assert "usage_count: 42" in text
+    assert "last_modified: 2026-05-30" in text
+
+
+def test_cli_source_add_only_requires_resource(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    concept_path.write_text(
+        "---\ntype: concept\n---\nBody\n", encoding="utf-8", newline="\n"
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "source-add",
+            "topic.md",
+            "--resource",
+            "https://example.com/a",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    text = concept_path.read_text(encoding="utf-8")
+    assert "resource: https://example.com/a" in text
+    assert "id:" not in text
+    assert "title:" not in text
+
+
+def test_cli_source_add_dry_run_does_not_write(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    original = "---\ntype: concept\ntitle: Topic\n---\nBody\n"
+    concept_path.write_text(original, encoding="utf-8", newline="\n")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "source-add",
+            "topic.md",
+            "--resource",
+            "https://example.com/a",
+            "--config",
+            str(config_path),
+            "--dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["would_change"] is True
+    assert concept_path.read_text(encoding="utf-8") == original
+    assert "Dry run" in result.stderr
+
+
+def test_cli_source_add_already_represented_is_noop(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    concept_path.write_text(
+        "---\ntype: concept\nsources:\n  - resource: https://example.com/a\n"
+        "    id: src-a\n---\nBody\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "source-add",
+            "topic.md",
+            "--resource",
+            "https://example.com/a",
+            "--id",
+            "src-a",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.stdout)
+    assert payload["changed"] is False
+    assert "already represented" in result.stderr
+
+
+def test_cli_source_add_invalid_last_modified_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    original = "---\ntype: concept\ntitle: Topic\n---\nBody\n"
+    concept_path.write_text(original, encoding="utf-8", newline="\n")
+
+    result = _runner().invoke(
+        cli,
+        [
+            "source-add",
+            "topic.md",
+            "--resource",
+            "https://example.com/a",
+            "--last-modified",
+            "not-a-date",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid --last-modified value" in result.stderr
+    assert concept_path.read_text(encoding="utf-8") == original
+
+
+def test_cli_source_add_missing_resource_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    _write_concept(concept_path, title="Topic")
+
+    result = _runner().invoke(
+        cli,
+        ["source-add", "topic.md", "--config", str(config_path)],
+    )
+
+    assert result.exit_code == 2
+
+
+def test_cli_source_add_stale_conflict_exits_1(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`okf source-add` must not overwrite a document it never planned against.
+
+    Mirrors test_cli_log_append_stale_conflict_exits_1's technique:
+    source_add_cmd calls the library's source_upsert, which calls
+    plan_source_upsert, which calls plan_document_change_from_reader inside
+    okf_core.patching -- so the race is injected by patching that name
+    there, not inside cli_module.
+    """
+    import okf_core.patching as patching_module
+
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    concept_path = tmp_path / "topic.md"
+    concept_path.write_text(
+        "---\ntype: concept\nsources:\n  - resource: https://example.com/original\n"
+        "---\nBody\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+    real_plan_from_reader = patching_module.plan_document_change_from_reader
+
+    def racing_plan_from_reader(
+        bundle: Any, path: Path, build_proposed_content: Any, **kwargs: Any
+    ):
+        plan = real_plan_from_reader(bundle, path, build_proposed_content, **kwargs)
+        # Simulate a concurrent edit landing between planning and apply. `path`
+        # here is the CLI's own bundle-root-relative argument, not yet resolved
+        # against bundle_root -- write to the resolved concept_path instead.
+        concept_path.write_text(
+            "---\ntype: concept\nsources:\n"
+            "  - resource: https://example.com/concurrent\n---\nBody\n",
+            encoding="utf-8",
+            newline="\n",
+        )
+        return plan
+
+    monkeypatch.setattr(
+        patching_module, "plan_document_change_from_reader", racing_plan_from_reader
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "source-add",
+            "topic.md",
+            "--resource",
+            "https://example.com/new",
+            "--config",
+            str(config_path),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "changed after planning" in result.stderr
+    assert "https://example.com/concurrent" in concept_path.read_text(encoding="utf-8")
 
 
 def test_cli_graph_repair_dry_run_no_plugin_reports_unresolved(

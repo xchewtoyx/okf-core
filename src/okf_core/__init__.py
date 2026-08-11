@@ -106,6 +106,8 @@ from okf_core.patching import (
     plan_frontmatter_merge,
     plan_markdown_link_rewrite,
     plan_markdown_section_patch,
+    plan_source_upsert,
+    source_upsert,
 )
 from okf_core.paths import (
     ConceptPathError,
@@ -231,12 +233,14 @@ __all__ = [
     "plan_markdown_link_rewrite",
     "plan_markdown_section_patch",
     "plan_move_concept",
+    "plan_source_upsert",
     "render_index_document",
     "render_log",
     "repair_graph",
     "scan_bundle",
     "search_concepts",
     "serialize_concept_document",
+    "source_upsert",
     "validate_bundle",
     "validate_concept_document",
     "validate_concept_document_with_profile",

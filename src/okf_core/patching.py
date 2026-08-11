@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from math import isfinite
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import yaml
@@ -70,6 +70,8 @@ __all__ = [
     "plan_frontmatter_merge",
     "plan_markdown_link_rewrite",
     "plan_markdown_section_patch",
+    "plan_source_upsert",
+    "source_upsert",
 ]
 
 _MARKDOWN = MarkdownIt("commonmark")
@@ -510,6 +512,190 @@ def plan_frontmatter_merge(
             updates,
         ),
     )
+
+
+def plan_source_upsert(
+    bundle: BundleConfig,
+    path: Path | str,
+    source: Mapping[str, Any],
+) -> DocumentChangePlan:
+    """Plan adding one OKF v0.2 §5.1 ``sources`` provenance entry.
+
+    ``source`` is validated up front -- before the target is even read --
+    the same way each existing ``sources`` entry is: it must be a mapping
+    with a non-empty string ``resource`` (§5.1's only required field), and
+    an ``id``, when present, must be a non-empty string (it doubles as a
+    Markdown footnote label, §5.1's "Per-claim attribution"). Every other
+    key (``title`` and the credibility signals ``author``, ``usage_count``,
+    ``last_modified``, plus a per-entry ``usage_window`` override) is
+    optional and passed through untouched -- this operation does not
+    interpret or validate them beyond the base mapping/``resource`` shape.
+
+    The document's existing ``sources`` list (created fresh, an empty list,
+    when the key is absent) is validated the same way: not a list, or any
+    entry failing the mapping/``resource``/``id`` shape check, raises
+    ``DocumentChangePlanningError`` before any write (AC7). Identity is
+    ``id``, falling back to ``resource`` (R-B3): when an existing entry
+    already carries ``source``'s identity, this plans a semantic no-op
+    (AC5) -- the existing entry is left completely untouched, byte-for-byte,
+    in its original position, rather than having fields merged into it,
+    which is what AC4 ("existing entries retain their content and order")
+    requires. A genuinely new identity is appended to the end of the list.
+    Any other top-level frontmatter key, including the shared
+    ``usage_window`` sibling described in §5.1, is left untouched (AC6);
+    this operation never reads or writes it.
+
+    The write itself -- only reached when an entry is actually appended --
+    delegates to ``_merge_frontmatter``, the same canonical frontmatter
+    engine ``plan_frontmatter_merge`` (#195) uses, applied to the *same*
+    read this function performs via ``plan_document_change_from_reader``.
+    Deriving the updated ``sources`` list from a separate, earlier read
+    (rather than the content that read hashes as the plan's baseline) would
+    let a concurrent edit between the two reads go undetected -- exactly
+    the risk ``plan_document_change_from_reader`` itself documents -- so
+    this function reads the document exactly once.
+    """
+    resolved_path = Path(path)
+    validated_source = _validate_source_entry(
+        resolved_path, source, context="Candidate", strip_none_id=True
+    )
+
+    def build_source_update(resolved_path: Path, original_content: str) -> str:
+        try:
+            document = parse_concept_document(original_content)
+        except DocumentParseError as exc:
+            raise DocumentChangePlanningError(
+                resolved_path, f"Could not parse document frontmatter: {exc}"
+            ) from exc
+        current_sources = _validate_existing_sources(
+            resolved_path, document.frontmatter.get("sources", _MISSING)
+        )
+        new_sources, changed = _upsert_source_entry(current_sources, validated_source)
+        if not changed:
+            return original_content
+        return _merge_frontmatter(
+            resolved_path, original_content, {"sources": new_sources}
+        )
+
+    return plan_document_change_from_reader(bundle, resolved_path, build_source_update)
+
+
+def source_upsert(
+    bundle: BundleConfig,
+    path: Path | str,
+    source: Mapping[str, Any],
+) -> DocumentChangeResult:
+    """Plan and apply one ``sources`` entry upsert in a single call.
+
+    Mirrors ``log_append``'s relationship to ``plan_log_append``:
+    ``plan_source_upsert`` alone is read-only and safe for a dry-run
+    preview, while this convenience wrapper also applies it, retaining the
+    same SHA-256 optimistic-concurrency protection.
+    """
+    plan = plan_source_upsert(bundle, path, source)
+    return apply_document_change(bundle, plan)
+
+
+def _validate_source_entry(
+    path: Path, source: Any, *, context: str, strip_none_id: bool = False
+) -> Mapping[str, Any]:
+    """Validate one ``sources`` entry has the §5.1 required/optional shape.
+
+    Shared between the caller-supplied candidate entry and each entry read
+    back from a document's existing ``sources`` list -- ``context``
+    distinguishes the two in the raised message. §5.1 requires ``resource``
+    to be a non-empty string; ``id``, when present, must also be a
+    non-empty string, since it doubles as a Markdown footnote label.
+
+    ``strip_none_id`` controls what happens to an explicit ``id: None``:
+    when ``True`` (the ``plan_source_upsert`` candidate path only), it is
+    treated the same as ``id``'s absence and stripped from the returned
+    mapping, so a caller never gets a literal ``id: null`` written into
+    frontmatter for the entry it is actively upserting, matching §5.1's
+    "present with a value, or fully omitted" shape for the optional field.
+    When ``False`` (the default, used for every pre-existing entry read
+    back via ``_validate_existing_sources``), an ``id: None`` already
+    present in the document is returned untouched -- normalizing
+    pre-existing document state is out of scope for an upsert operation,
+    and stripping it here would silently mutate an entry the caller never
+    targeted. Every other key is optional and returned as-is, unvalidated:
+    per AGENTS.md, this operation deliberately does not enforce a schema
+    on ``title`` or the credibility signals beyond this base shape.
+    """
+    if not isinstance(source, Mapping):
+        raise DocumentChangePlanningError(
+            path, f"{context} sources entry must be a mapping: {source!r}"
+        )
+    resource = source.get("resource")
+    if not isinstance(resource, str) or not resource:
+        raise DocumentChangePlanningError(
+            path,
+            f"{context} sources entry must have a non-empty string "
+            f"'resource': {source!r}",
+        )
+    entry_id = source.get("id")
+    if entry_id is not None and (not isinstance(entry_id, str) or not entry_id):
+        raise DocumentChangePlanningError(
+            path,
+            f"{context} sources entry 'id' must be a non-empty string when "
+            f"present: {source!r}",
+        )
+    if strip_none_id and "id" in source and entry_id is None:
+        return {key: value for key, value in source.items() if key != "id"}
+    return source
+
+
+def _validate_existing_sources(path: Path, sources: Any) -> list[Mapping[str, Any]]:
+    """Validate a document's existing ``sources`` frontmatter value (AC7).
+
+    An absent ``sources`` key (represented by the ``_MISSING`` sentinel)
+    is treated as a conformant empty list -- AC2's "create when absent".
+    Anything else that is not a list, or any entry failing
+    ``_validate_source_entry``, raises ``DocumentChangePlanningError``
+    before any write.
+    """
+    if sources is _MISSING:
+        return []
+    if not isinstance(sources, list):
+        raise DocumentChangePlanningError(
+            path, f"Existing 'sources' frontmatter must be a list, got {sources!r}"
+        )
+    return [
+        _validate_source_entry(path, entry, context="Existing") for entry in sources
+    ]
+
+
+def _source_identity(entry: Mapping[str, Any]) -> str:
+    """Resolve one ``sources`` entry's stable identity: ``id``, else ``resource``.
+
+    Both are already validated (by ``_validate_source_entry``) to be
+    non-empty strings when used this way, so the result is always a
+    non-empty string.
+    """
+    entry_id = entry.get("id")
+    return cast(str, entry_id if entry_id else entry.get("resource"))
+
+
+def _upsert_source_entry(
+    current: Sequence[Mapping[str, Any]],
+    candidate: Mapping[str, Any],
+) -> tuple[list[Mapping[str, Any]], bool]:
+    """Insert ``candidate`` into ``current`` unless already represented.
+
+    Pure per-item helper (AGENTS.md's collector-loop-delegates-per-item
+    convention): given the current ``sources`` list and one candidate
+    entry, decides whether an existing entry already represents the same
+    source by stable identity (``id``, falling back to ``resource``). On a
+    match, ``current`` is returned completely untouched -- same entries,
+    same content, same order -- rather than merging fields into the match;
+    this is what makes AC5 ("already-represented source is a semantic
+    no-op") and AC4 ("existing entries retain their content and order")
+    hold simultaneously. On no match, ``candidate`` is appended to the end.
+    """
+    candidate_identity = _source_identity(candidate)
+    if any(_source_identity(entry) == candidate_identity for entry in current):
+        return list(current), False
+    return [*current, candidate], True
 
 
 def _patch_markdown_section(

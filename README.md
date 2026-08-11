@@ -293,6 +293,18 @@ CONTENT is the entry's prose; the library locates or creates the correct `## YYY
 
 Exits `2` for an invalid `--date` value or other config/usage error; exits `1` when CONTENT/`--kind` cannot be recorded unambiguously (multi-paragraph or otherwise non-flat content, an unrepresentable label, or content that would be misread as a labelled entry), when the existing `log.md` has unparseable content that a rewrite would silently drop, or for a stale-content write conflict.
 
+### `okf source-add`
+
+Adds one OKF v0.2 §5.1 `sources` provenance entry to a concept document's frontmatter:
+
+```sh
+okf source-add PATH --resource RESOURCE [--id ID] [--title TITLE] [--author ACTOR] [--usage-count N] [--last-modified YYYY-MM-DD] [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+PATH is the concept file, relative to the bundle root or an absolute path resolving inside it. `--resource` is the only required field (a URL, bundle-relative path, or free-text scope description); every other option is an optional §5.1 field. The library owns `sources` list bookkeeping: an absent list is created, an existing list's order and content are preserved, and a source whose identity (`--id`, falling back to `--resource`) already matches an entry in the list is a no-op — the existing entry is left completely untouched rather than merged, so nothing is written. Every other frontmatter key, including the top-level `usage_window` sibling, is left untouched. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
+
+Exits `2` for an invalid `--last-modified` value, a missing `--resource`, or other config/usage error; exits `1` for malformed candidate/existing `sources` content, or for a stale-content write conflict.
+
 ### `okf graph-repair`
 
 Repairs broken concept links whose target moved, by asking a pluggable hook whether it knows the target's new location:
@@ -462,6 +474,41 @@ duplicate mapping keys, and invalid update keys are also reported through
 `DocumentChangePlanningError`. The merge does not delete fields or
 recursively merge nested mappings. Applying its plan uses
 `apply_document_change()` and retains the same stale-content protection.
+
+`plan_source_upsert(bundle, path, source)` and `source_upsert(bundle, path,
+source)` add or match one OKF v0.2 §5.1 `sources` provenance entry, mirroring
+`plan_log_append`/`log_append`'s planning/applying pairing. `source` is a
+mapping with a required, non-empty string `resource` (a URL, bundle-relative
+path, or free-text scope description) and any of the optional §5.1 fields:
+`id` (a non-empty string when present -- it doubles as a Markdown footnote
+label for per-claim attribution), `title`, and the credibility signals
+`author`, `usage_count`, `last_modified`, plus a per-entry `usage_window`
+override. Fields beyond this base shape are not otherwise validated or
+interpreted. An explicit `id: None` is treated the same as omitting `id`
+entirely, including in the stored shape: it is stripped before writing, so
+the persisted entry never carries a literal `id: null`.
+`DocumentChangePlanningError` is raised for a malformed
+`source` argument, and -- before any write -- for a document whose existing
+`sources` frontmatter value is not a list, or whose entries don't meet the
+same shape.
+
+Identity is `id`, falling back to `resource`: when an existing entry already
+carries `source`'s identity, planning resolves to a semantic no-op -- the
+existing entry, and every other entry, is left completely untouched
+(byte-for-byte, same position) rather than merged, so `plan.changed` is
+`False` and nothing is written. A genuinely new identity is appended to the
+end of the list; an absent `sources` key is created fresh as a one-entry
+list. Every other frontmatter key, including the top-level `usage_window`
+sibling §5.1 describes, is left untouched -- this operation never reads or
+writes it. The list is absent when there's nothing to represent it (AC2);
+appending or leaving it untouched otherwise preserves every other entry's
+content and order (AC4). The write itself, when actually needed, delegates
+to the same `_merge_frontmatter` engine `plan_frontmatter_merge` (#195) uses,
+applied to the exact read `plan_document_change_from_reader` performs --
+never a separate, earlier read -- so a concurrent edit to `sources` between
+planning and applying is still reported as `DocumentChangeConflictError`
+rather than silently discarded. Applying uses `apply_document_change()` and
+retains the same stale-content protection.
 
 `plan_markdown_link_rewrite(bundle, path, rewrites)` builds a safe plan to rewrite the target/href destinations of one or more inline Markdown links in the document body. `rewrites` must be a sequence of `LinkRewrite(old_target, new_target)` instances. The primitive operates strictly on the Markdown body, leaving the frontmatter completely untouched. Duplicate `old_target` inputs (after normalization) are rejected. The implementation uses a single-pass replacement to prevent offset drift and avoid double-replacement issues if multiple rewrites form chains.
 
