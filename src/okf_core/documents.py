@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from okf_core.config import ProfileConfig, TaxonomyConfig
+    from okf_core.config import ProfileConfig, TaxonomyConfig, TypeFieldsConfig
 
 import yaml
 from yaml.constructor import ConstructorError
@@ -154,9 +154,13 @@ def validate_concept_document_with_profile(
     """Validate a concept document against base OKF rules and a custom profile."""
     findings = list(validate_concept_document(document))
     concept_type = document.frontmatter.get("type")
+    concept_type_str = (
+        concept_type.strip()
+        if isinstance(concept_type, str) and concept_type.strip()
+        else None
+    )
 
-    if isinstance(concept_type, str) and concept_type.strip():
-        concept_type_str = concept_type.strip()
+    if concept_type_str is not None:
         is_system_type = is_directory_meta and concept_type_str.startswith("_")
         if not is_system_type:
             findings.extend(
@@ -164,8 +168,10 @@ def validate_concept_document_with_profile(
             )
 
     if not is_directory_meta:
-        findings.extend(_validate_required_fields(document, profile))
-        findings.extend(_validate_no_undocumented_fields(document, profile))
+        findings.extend(_validate_required_fields(document, profile, concept_type_str))
+        findings.extend(
+            _validate_no_undocumented_fields(document, profile, concept_type_str)
+        )
 
     return tuple(findings)
 
@@ -209,14 +215,37 @@ def _validate_taxonomy(
     return ()
 
 
+def _effective_type_fields(
+    profile: ProfileConfig, concept_type: str | None
+) -> TypeFieldsConfig | None:
+    """Look up the profile's ``type_fields`` entry for ``concept_type``, if any."""
+    if concept_type is None:
+        return None
+    return profile.type_fields.get(concept_type)
+
+
 def _validate_required_fields(
     document: ConceptDocument,
     profile: ProfileConfig,
+    concept_type: str | None = None,
 ) -> tuple[ValidationFinding, ...]:
-    """Check that profile-required frontmatter fields (except 'type') are present
-    and non-empty when the value is a string."""
+    """Check that required frontmatter fields (except 'type') are present and
+    non-empty when the value is a string.
+
+    The effective required-field set is the additive union of the profile's
+    own ``required_frontmatter`` and, when ``concept_type`` has a matching
+    ``type_fields`` entry, that type's ``required_frontmatter`` — a
+    type-scoped entry adds requirements, it never drops the profile-wide
+    baseline for that type.
+    """
     findings: list[ValidationFinding] = []
-    for field_name in profile.required_frontmatter:
+    type_fields = _effective_type_fields(profile, concept_type)
+    required_fields = profile.required_frontmatter
+    if type_fields is not None:
+        required_fields = tuple(
+            dict.fromkeys(required_fields + type_fields.required_frontmatter)
+        )
+    for field_name in required_fields:
         if field_name == "type":
             continue
         if (
@@ -247,9 +276,11 @@ def _validate_required_fields(
 def _validate_no_undocumented_fields(
     document: ConceptDocument,
     profile: ProfileConfig,
+    concept_type: str | None = None,
 ) -> tuple[ValidationFinding, ...]:
-    """Warn about frontmatter fields not in the standard set or the profile's
-    required/optional field lists."""
+    """Warn about frontmatter fields not in the standard set, the profile's
+    required/optional field lists, or (additively) the concept type's
+    ``type_fields`` required/optional lists."""
     standard_fields = {
         "type",
         "title",
@@ -261,6 +292,11 @@ def _validate_no_undocumented_fields(
     defined_fields = standard_fields.union(profile.required_frontmatter).union(
         profile.optional_frontmatter
     )
+    type_fields = _effective_type_fields(profile, concept_type)
+    if type_fields is not None:
+        defined_fields = defined_fields.union(type_fields.required_frontmatter).union(
+            type_fields.optional_frontmatter
+        )
     findings: list[ValidationFinding] = []
     for field_name in document.frontmatter:
         if field_name not in defined_fields:

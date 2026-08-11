@@ -64,7 +64,22 @@ Supported `[defaults]` keys are:
 
 Supported `[taxonomy]` keys are `known_types` and `allowed_types`.
 
-Supported `[profiles.<name>]` keys are `required_frontmatter`, `optional_frontmatter`, and nested `taxonomy` settings. Supported `[bundles.<name>]` keys are the same path/glob/reserved-name settings as `[defaults]`, plus `profile`, `okf_cache_dir`, and `stable_id_field` (see below).
+Supported `[profiles.<name>]` keys are `required_frontmatter`, `optional_frontmatter`, nested `taxonomy` settings, and nested `type_fields.<type>` tables. Supported `[bundles.<name>]` keys are the same path/glob/reserved-name settings as `[defaults]`, plus `profile`, `okf_cache_dir`, and `stable_id_field` (see below).
+
+`[profiles.<name>.type_fields.<type>]` scopes required/optional frontmatter fields to a single concept `type`, applied additively on top of the profile-wide `required_frontmatter`/`optional_frontmatter` lists — a type-scoped entry adds requirements or exemptions for that type, it never drops the profile-wide baseline for it. Each type entry supports its own `required_frontmatter` and `optional_frontmatter` keys:
+
+```toml
+[profiles.default]
+required_frontmatter = ["title"]
+
+[profiles.default.type_fields.platform-implementation]
+required_frontmatter = ["platform"]
+
+[profiles.default.type_fields.concept]
+optional_frontmatter = ["platform"]
+```
+
+With this profile, every concept still needs `title` (the profile-wide requirement). Documents of type `platform-implementation` additionally require `platform`; documents of type `concept` may include `platform` without triggering the unknown-frontmatter-field warning, but it stays optional for that type. Documents of any other type are unaffected — a missing `type_fields` entry for a type behaves exactly as if `type_fields` were not configured at all.
 
 Relative paths are normalized against the resolved project root, and referenced files or directories do not need to exist yet. The exception is `okf_cache_dir`, which is a bundle-only key resolved relative to each bundle's `bundle_root` (see the bundle configuration example below). Unknown config keys fail closed with a configuration error so typos do not silently change behavior.
 
@@ -590,8 +605,8 @@ Matching is driven entirely by parsing the document with `markdown-it-py`: each 
 
 `validate_concept_document_with_profile(document, profile, project_taxonomy, *, is_directory_meta=False)` validates a concept document against a specific `ProfileConfig` and optional `TaxonomyConfig`, checking for:
 - Base OKF conformance.
-- Profile-required frontmatter fields (errors if missing; skipped if `is_directory_meta=True`).
-- Undocumented custom frontmatter fields (warnings if present but not defined in the profile or standard OKF fields; skipped if `is_directory_meta=True`).
+- Profile-required frontmatter fields (errors if missing; skipped if `is_directory_meta=True`). When the document's `type` has a matching `[profiles.<name>.type_fields.<type>]` entry, that type's `required_frontmatter` is checked additively alongside the profile-wide list.
+- Undocumented custom frontmatter fields (warnings if present but not defined in the profile, standard OKF fields, or the document's type-scoped `type_fields` required/optional lists; skipped if `is_directory_meta=True`).
 - Taxonomy type rules (errors if type violates profile/project `allowed_types`, warnings if type violates `known_types`). Note that if `is_directory_meta=True` is provided and the document type starts with an underscore (such as `_directory`), taxonomy checks are bypassed to accommodate local directory metadata without taxonomy configuration changes.
 
 `validate_bundle(bundle, config)` scans a bundle and validates all of its concept documents against the configured profile, returning a mapping of file paths to their respective validation findings. Any scan or parsing failures are reported as validation errors. It also runs `check_attribution_consistency()` (below) against every concept unconditionally, since the check is base spec behavior rather than profile-specific.

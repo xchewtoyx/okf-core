@@ -14,6 +14,7 @@ from okf_core.config import (
     OkfConfig,
     ProfileConfig,
     TaxonomyConfig,
+    TypeFieldsConfig,
     discover_config,
     load_config,
 )
@@ -204,6 +205,7 @@ __all__ = [
     "SearchConfigError",
     "SearchResult",
     "TaxonomyConfig",
+    "TypeFieldsConfig",
     "UnlinkedMentionsResult",
     "UnresolvedBrokenLink",
     "ValidationFinding",
