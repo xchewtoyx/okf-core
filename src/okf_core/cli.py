@@ -1187,10 +1187,16 @@ def source_add_cmd(
 
     click.echo(json.dumps(output, cls=_Encoder, indent=2))
     if dry_run:
-        click.echo(
-            f"Dry run: would add sources entry to {output['path']}",
-            err=True,
-        )
+        if output["would_change"]:
+            click.echo(
+                f"Dry run: would add sources entry to {output['path']}",
+                err=True,
+            )
+        else:
+            click.echo(
+                f"Dry run: source already represented in {output['path']}; nothing to do",
+                err=True,
+            )
     elif output["changed"]:
         click.echo(f"Added sources entry to {output['path']}", err=True)
     else:
