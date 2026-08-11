@@ -530,6 +530,33 @@ def test_plan_stamp_generated_different_value_is_not_noop(tmp_path: Path) -> Non
     assert plan.changed is True
 
 
+def test_plan_stamp_generated_overwrites_offset_naive_existing_at(
+    tmp_path: Path,
+) -> None:
+    """A pre-existing, non-conformant `generated.at` with no UTC offset
+    (this operation always writes an offset-aware one, but a hand-authored
+    document is not required to) is correctly treated as unequal to a
+    freshly validated, offset-aware candidate -- Python's `datetime.__eq__`
+    returns `False` rather than raising for a naive-vs-aware comparison, so
+    the merge proceeds and the ambiguous existing value is replaced,
+    exactly as `_validate_datetime_value`'s docstring on requiring a UTC
+    offset describes (a naive existing value could otherwise never be
+    recognized as a no-op against an equivalent aware candidate)."""
+    path = tmp_path / "topic.md"
+    _write(
+        path,
+        "---\ntype: concept\ngenerated: { by: human:alice, at: "
+        "2026-06-20T22:53:05 }\n---\nBody\n",  # no trailing 'Z': naive
+    )
+    bundle = _bundle(tmp_path)
+
+    plan = plan_stamp_generated(bundle, path, "human:alice", at=VALID_AT)
+
+    assert plan.changed is True
+    parsed = parse_concept_document(plan.proposed_content)
+    assert parsed.frontmatter["generated"] == {"by": "human:alice", "at": VALID_AT_DT}
+
+
 def test_plan_stamp_status_same_value_is_noop(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     _write(path, "---\ntype: concept\nstatus: stable\n---\nBody\n")
@@ -665,6 +692,20 @@ def test_plan_stamp_verified_rejects_non_list_non_mapping_existing_value(
     bundle = _bundle(tmp_path)
 
     with pytest.raises(DocumentChangePlanningError, match="mapping or list"):
+        plan_stamp_verified(bundle, path, "human:alice", at=VALID_AT)
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_plan_stamp_verified_rejects_existing_entry_that_is_not_a_mapping(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "topic.md"
+    original = "---\ntype: concept\nverified:\n  - just-a-string\n---\nBody\n"
+    _write(path, original)
+    bundle = _bundle(tmp_path)
+
+    with pytest.raises(DocumentChangePlanningError, match="must be a mapping"):
         plan_stamp_verified(bundle, path, "human:alice", at=VALID_AT)
 
     assert path.read_text(encoding="utf-8") == original

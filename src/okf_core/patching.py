@@ -790,10 +790,11 @@ def _validate_datetime_value(path: Path, value: Any, *, field_name: str) -> date
 
     The result must carry a UTC offset. This is required, not merely
     preferred, for two reasons: spec §5.2's own examples always carry one
-    (the trailing ``Z``), and comparing an offset-naive value against an
-    offset-aware one (the shape every value validated here produces) raises
-    ``TypeError`` rather than returning a boolean -- a crash this validator
-    exists to prevent, not just a canonicalization nicety. A naive value,
+    (the trailing ``Z``), and an offset-naive value is never equal (by
+    Python's own ``==``) to an offset-aware one representing the same wall
+    clock time -- the shape every value validated here produces -- so
+    without this requirement, a caller re-stamping with an equivalent naive
+    value would never be recognized as a no-op (AC3). A naive value,
     whether passed directly or parsed from a string with no offset, is
     rejected here rather than silently assumed to be UTC.
 
@@ -1647,15 +1648,4 @@ def _yaml_values_equal(left: Any, right: Any) -> bool:
             _yaml_values_equal(left_item, right_item)
             for left_item, right_item in zip(left, right)
         )
-    try:
-        return bool(left == right)
-    except TypeError:
-        # Same-type values can still refuse `==` (e.g. a naive vs.
-        # timezone-aware `datetime` -- both `type() is datetime`, but
-        # comparing them raises rather than returning `False`, as an
-        # aware-only `at` field newly written by #196's trust-stamping
-        # operations can meet a naive value in a hand-authored document).
-        # Not equal is the safe default: the merge proceeds and the
-        # ambiguous existing value is overwritten, rather than crashing
-        # with an unstructured `TypeError` or silently claiming a no-op.
-        return False
+    return bool(left == right)
