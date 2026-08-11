@@ -51,6 +51,66 @@ an oracle for "is this byte range code" (spans and blocks), which is the
 one thing a hand-rolled regex should not reimplement (backtick-string
 matching has spec-defined edge cases around run length and adjacency that
 the real parser already gets right).
+
+Locating ``code_inline`` spans by validated content match (round 5/6)
+-----------------------------------------------------------------------
+Extraction (above) was fixed for good in round 3 by never looking at
+tokens at all. But *exclusion* still needs one fact tokens alone don't
+carry: exactly which raw byte range each ``code_inline`` token occupies.
+``markdown_it`` sets ``.map`` (line range) on block tokens but never on
+inline tokens, and a ``code_inline``'s ``.content`` is normalized (line
+endings collapsed to spaces, one layer of surrounding whitespace trimmed)
+rather than a literal slice of source -- so its span has to be
+*relocated* in the raw text, not read off the token.
+
+Round 4 (``_iter_code_inline_tokens``) fixed relocation across nesting --
+walking every ``code_inline`` reachable from a paragraph's inline children
+in true document order, including ones parented under another token's own
+``.children`` (e.g. an ``image``'s alt text), rather than only the
+top-level list. What it did not anticipate: three more ways a *different*
+raw backtick character, belonging to no code span at all, can sit between
+one ``code_inline``'s search cursor and its real delimiters and get
+mistaken for one:
+
+4. An HTML comment (``html_inline``) containing a literal backtick.
+5. An autolink (``<uri>``) whose URI contains a literal backtick (legal
+   per CommonMark -- autolink content is not entity/escape-processed).
+6. A link or image destination (``](url)``) containing a literal
+   backtick -- and, independently, a backslash-escaped backtick
+   (``\\```) in ordinary prose, which ``markdown_it`` resolves to a
+   literal ``` ` ``` character in a ``text`` token's ``.content`` with no
+   trace of the escape left for a raw-text scan to see.
+
+Each of these looks like a new special case to enumerate and skip past --
+exactly the pattern that took three rounds to escape in extraction. The
+structural fix here is the same move made for extraction: stop trying to
+recognize *what* produced a stray backtick (comment syntax, autolink
+syntax, link-destination syntax, escape syntax, or anything not yet seen)
+and instead validate *whether* a candidate pairing is the right one, using
+a fact already on hand and already trusted -- the token's own
+``.content``. ``_find_code_inline_span`` finds a candidate backtick pair
+with ``_find_backtick_run`` (unchanged since round 1) as before, but only
+accepts it once the candidate's raw inner text, normalized exactly the way
+``markdown_it.rules_inline.backticks`` normalizes ``code_inline`` content
+(``_normalize_code_span_content``), equals the token's ``.content``. A
+candidate that fails resumes the search one character past its own
+(wrong) opening backtick, not past its wrong closing pair, so the true
+opening candidate -- wherever it is, including immediately adjacent to the
+rejected one -- is never skipped over.
+
+This closes the bug class rather than reopening it one construct at a
+time: the fix does not parse, recognize, or even know the names of HTML
+comments, autolinks, link destinations, or escape sequences. It has no
+list of "constructs to skip" to keep growing. *Any* source of a raw
+backtick that is not this token's own delimiters -- known now or
+discovered in round 7 -- fails the content check the same way, because the
+text between a false pairing's endpoints is, by construction, not this
+span's content. The only way this validation could accept a wrong pairing
+is a coincidental collision where unrelated raw text between two false
+delimiters normalizes to the exact same string as the real span's content
+-- vanishingly unlikely for real documents, and not a new failure mode
+introduced by this fix (the pre-round-5 code had no defense against it
+either, since it never checked content at all).
 """
 
 from __future__ import annotations
@@ -163,6 +223,64 @@ def _find_backtick_run(text: str, start: int, length: int) -> int | None:
         pos = idx + 1
 
 
+def _normalize_code_span_content(raw: str) -> str:
+    """Reproduce ``markdown_it``'s own ``code_inline`` content normalization.
+
+    Mirrors ``markdown_it.rules_inline.backticks.backtick`` exactly: line
+    endings become a single space each, then one leading and one trailing
+    space are stripped if the result has both and is not all spaces. This
+    is not a place to be "close enough" -- it exists solely so a candidate
+    raw slice can be compared byte-for-byte against ``token.content``, and
+    a normalization that drifted from markdown_it's own would either reject
+    genuine spans (false negatives) or, worse, accept a wrong pairing that
+    happens to normalize to the same string under the wrong rule.
+    """
+    content = raw.replace("\n", " ")
+    if content.startswith(" ") and content.endswith(" ") and len(content.strip()) > 0:
+        content = content[1:-1]
+    return content
+
+
+def _find_code_inline_span(
+    para_text: str, cursor: int, markup: str, expected_content: str
+) -> tuple[int, int] | None:
+    """Locate *this* ``code_inline`` token's own (start, end) span at/after *cursor*.
+
+    Design (structural fix for issue #197 recurrence #5/#6 -- see module
+    docstring): a candidate backtick pair found by ``_find_backtick_run`` is
+    only accepted once its raw inner text, normalized the same way
+    ``markdown_it`` normalizes ``code_inline`` content, equals *this*
+    token's own ``expected_content``. A candidate that fails the check is
+    rejected and the search resumes one character past its opening
+    backtick -- not past its (wrong) closing backtick -- so the next
+    candidate open position is still reachable, including one that starts
+    immediately after the rejected one.
+
+    This is what makes the fix construct-agnostic: it does not need to
+    recognize an HTML comment, an autolink, a link/image destination, a
+    backslash-escaped backtick, or any other source of a stray backtick
+    character between here and the token's true delimiters. Whatever
+    produced that backtick, the raw text it delimits cannot normalize to
+    *this* token's own known content (short of an almost-impossible
+    coincidental collision), so the validation step rejects it and the
+    cursor keeps advancing until it reaches the pairing ``markdown_it``
+    itself identified when it emitted this token in the first place.
+    """
+    length = len(markup)
+    pos = cursor
+    while True:
+        open_pos = _find_backtick_run(para_text, pos, length)
+        if open_pos is None:
+            return None
+        close_pos = _find_backtick_run(para_text, open_pos + length, length)
+        if close_pos is None:
+            return None
+        raw_inner = para_text[open_pos + length : close_pos]
+        if _normalize_code_span_content(raw_inner) == expected_content:
+            return open_pos, close_pos + length
+        pos = open_pos + 1
+
+
 def _iter_code_inline_tokens(children: Sequence[Any]) -> Iterator[Any]:
     """Yield every ``code_inline`` token reachable from *children*, in raw-text order.
 
@@ -200,15 +318,18 @@ def _code_inline_ranges(
     iterated directly, so a ``code_inline`` nested inside another token
     (e.g. inside an ``image``'s alt text) is found alongside top-level
     ones, in the same left-to-right order they appear in *para_text*. Each
-    code span is located by re-finding its opening/closing backtick run
-    directly in *para_text*, starting the search for span *n+1* only after
-    span *n*'s close -- so two code spans using the same delimiter length
-    in one paragraph resolve in document order rather than both matching
-    the first run found. With every descendant visited in true document
-    order, a span whose delimiters can't be relocated should not happen --
-    markdown_it only emits ``code_inline`` for an actual backtick-delimited
-    run in the source, and the monotonically-advancing cursor now walks
-    every one of those runs in the order they occur -- so this is a
+    span is located by ``_find_code_inline_span``, which validates a
+    candidate backtick pair against the token's own known content before
+    accepting it -- see that function's docstring and the module docstring
+    for why this is what makes span-finding immune to stray backticks
+    coming from *any* other inline construct, not just the three the
+    fix was reproduced against. The search for span *n+1* starts only
+    after span *n*'s accepted close, so two code spans using the same
+    delimiter length in one paragraph resolve in document order rather
+    than both matching the first run found. With every descendant visited
+    in true document order, a span that can never validate should not
+    happen -- markdown_it only emits ``code_inline`` for an actual
+    backtick-delimited run in the source -- so a ``None`` result here is a
     defensive skip (never mis-locating a real footnote occurrence) rather
     than a known-reachable path.
     """
@@ -216,16 +337,11 @@ def _code_inline_ranges(
     cursor = 0
     for child in _iter_code_inline_tokens(children):
         markup = getattr(child, "markup", "") or "`"
-        length = len(markup)
-        open_pos = _find_backtick_run(para_text, cursor, length)
-        if open_pos is None:
+        span = _find_code_inline_span(para_text, cursor, markup, child.content)
+        if span is None:
             continue
-        close_pos = _find_backtick_run(para_text, open_pos + length, length)
-        if close_pos is None:
-            continue
-        end = close_pos + length
-        ranges.append((open_pos, end))
-        cursor = end
+        ranges.append(span)
+        cursor = span[1]
     return ranges
 
 

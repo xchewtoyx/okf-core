@@ -220,6 +220,94 @@ def test_extract_finds_label_after_image_with_plain_alt_text() -> None:
     assert extract_footnote_occurrences(body) == ()
 
 
+def test_extract_finds_occurrence_after_code_span_preceded_by_html_comment_backtick() -> (
+    None
+):
+    """Round 5 (researcher reproduction, HTML comment): an ``html_inline``
+    token (e.g. an HTML comment) can contain a literal backtick that has
+    nothing to do with any code span. The old cursor-based search treated
+    that backtick as a delimiter candidate for the *next* ``code_inline``
+    token, mispairing it with the real span's opening backtick and
+    producing a wrong exclusion range that swallowed the footnote label in
+    between. Validating a candidate pairing's content against the token's
+    own known content (rather than accepting the first backtick-shaped
+    match) rejects the false pairing and finds the real span instead."""
+    body = "Some text <!-- a ` stray backtick --> [^mylabel] and `real` code.\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="mylabel", line=1, is_definition=False),
+    )
+
+
+def test_extract_finds_occurrence_after_code_span_preceded_by_autolink_backtick() -> (
+    None
+):
+    """Round 5 (researcher reproduction, autolink): an autolink's URI is
+    legal CommonMark even when it contains a literal backtick (autolink
+    content is not escape/entity-processed). That backtick is exposed as a
+    plain ``text`` token's content, but the old cursor-based search still
+    treated it as a delimiter candidate for the next real code span,
+    mispairing and swallowing the footnote label between them."""
+    body = "See <http://example.com/a`b> [^mylabel] and then `real` code.\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="mylabel", line=1, is_definition=False),
+    )
+
+
+def test_extract_finds_occurrence_after_code_span_preceded_by_link_destination_backtick() -> (
+    None
+):
+    """Round 5 (researcher reproduction, link destination): a regular
+    ``[text](url)`` link's destination is not represented by any inline
+    child token at all (only the label text is), so a backtick inside the
+    destination is invisible to a token-type-based scan yet still present
+    in the raw source the cursor walks. The old search mispaired it with
+    the next real code span's opening backtick, swallowing the footnote
+    label in between."""
+    body = "See [text](http://example.com/a`b) [^mylabel] and then `real` code.\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="mylabel", line=1, is_definition=False),
+    )
+
+
+def test_extract_finds_occurrence_after_code_span_preceded_by_escaped_backtick() -> (
+    None
+):
+    """Round 6: a backslash-escaped backtick (``\\```) in ordinary prose is
+    resolved by markdown_it into a literal backtick character inside a
+    plain ``text`` token's ``.content`` -- the escape itself leaves no
+    trace for a raw-text scan to see. This is not fixed by recognizing an
+    escape syntax (the structural fix does not look for one); it is fixed
+    the same way as the other three cases, by rejecting any candidate
+    pairing whose content does not match the real span's."""
+    body = "Some text \\` still prose [^mylabel] and `real` code.\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="mylabel", line=1, is_definition=False),
+    )
+
+
+def test_extract_finds_both_spans_with_repeated_html_comments_between_them() -> None:
+    """Generality check: the fix must not depend on there being exactly one
+    confusing construct in the paragraph. Two separate HTML comments, each
+    with their own stray backtick, sit before two separate real code
+    spans -- if the fix were a special case for "the first" comment rather
+    than a general content-validated search, this would still mispair."""
+    body = "A <!-- ` --> [^one] `code1` B <!-- ` --> [^two] `code2` C\n"
+    occurrences = extract_footnote_occurrences(body)
+
+    assert occurrences == (
+        FootnoteOccurrence(label="one", line=1, is_definition=False),
+        FootnoteOccurrence(label="two", line=1, is_definition=False),
+    )
+
+
 def test_extract_finds_label_with_nested_code_span() -> None:
     """Round 3's other trigger shape: a code span nested inside the label
     (`` [^lab`code`el] ``) fires markdown-it's ``backticks`` rule mid-label.
@@ -334,6 +422,39 @@ def test_clean_document_with_real_code_span_after_image_caption_reports_nothing(
     body = "![diagram `caption`](img.png) See `[^hidden]` in the code.\n"
 
     assert check_attribution_consistency({}, body) == ()
+
+
+def test_clean_document_with_label_after_html_comment_backtick_reports_nothing() -> (
+    None
+):
+    """Companion to
+    ``test_extract_finds_occurrence_after_code_span_preceded_by_html_comment_backtick``
+    at the ``check_attribution_consistency`` layer: a clean label/id match
+    must not be misreported as dangling just because an HTML comment with a
+    stray backtick precedes it."""
+    frontmatter = {"sources": [{"id": "mylabel", "resource": "https://example.com"}]}
+    body = "Some text <!-- a ` stray backtick --> [^mylabel] and `real` code.\n"
+
+    assert check_attribution_consistency(frontmatter, body) == ()
+
+
+def test_dangling_label_after_html_comment_backtick_is_an_error_with_location() -> None:
+    """A dangling footnote label preceded by an HTML comment with a stray
+    backtick must still be reported, not silently swallowed by a wrongly
+    widened code-span exclusion range."""
+    frontmatter: dict[str, Any] = {}
+    body = "Some text <!-- a ` stray backtick --> [^missing] and `real` code.\n"
+
+    findings = check_attribution_consistency(frontmatter, body)
+
+    assert findings == (
+        ValidationFinding(
+            severity="error",
+            message="Footnote label 'missing' has no matching sources[].id",
+            field="missing",
+            line=1,
+        ),
+    )
 
 
 def test_clean_document_with_nested_autolink_label_reports_nothing() -> None:
