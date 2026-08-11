@@ -46,8 +46,8 @@ from okf_core import (
 )
 from okf_core.logs import log_append, plan_log_append
 from okf_core.moves import move_concept, plan_move_concept
-from okf_core.patching import plan_source_upsert, source_upsert
 from okf_core.orientation import ORIENTATION_GUIDE
+from okf_core.patching import plan_source_upsert, source_upsert
 from okf_core.repair import plan_graph_repair, repair_graph
 from okf_core.write_safety import check_bundle_write_safety
 
