@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import io
 import os
+import re
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from math import isfinite
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any, cast
@@ -71,10 +72,104 @@ __all__ = [
     "plan_markdown_link_rewrite",
     "plan_markdown_section_patch",
     "plan_source_upsert",
+    "plan_stamp_generated",
+    "plan_stamp_stale_after",
+    "plan_stamp_status",
+    "plan_stamp_verified",
     "source_upsert",
+    "stamp_generated",
+    "stamp_stale_after",
+    "stamp_status",
+    "stamp_verified",
 ]
 
 _MARKDOWN = MarkdownIt("commonmark")
+
+# `freezegun.freeze_time` finds every module-level attribute anywhere in
+# `sys.modules` that is (by identity) the real `datetime.datetime` class and
+# rebinds *that attribute* to its `FakeDatetime` subclass for the freeze's
+# duration -- not just names literally called `datetime`, and not just this
+# module. A plain `_REAL_DATETIME_TYPE = datetime` module global would be
+# found and patched the same as the `datetime` import itself, defeating the
+# point. Wrapping it in a 1-tuple hides it from that scan: freezegun checks
+# `attribute is real_datetime`, and the tuple *object* is never `is` the
+# class it merely contains, so `_REAL_DATETIME_TYPE[0]` stays the genuine
+# class through any freeze -- confirmed empirically, not merely by reading
+# freezegun's source. This is what lets `_validate_datetime_value` construct
+# a real `datetime.datetime` (matching what `_SUPPORTED_FRONTMATTER_SCALAR_TYPES`,
+# built the same way at the same time, actually contains) even when called
+# from inside a freeze.
+_REAL_DATETIME_TYPE = (datetime,)
+
+# Same freezegun module-attribute scan as `_REAL_DATETIME_TYPE` above, and
+# the same 1-tuple-hiding trick to survive it: `freeze_time` also finds and
+# rebinds every module-level attribute that is (by identity) the real
+# `datetime.date` class to `FakeDate` for the freeze's duration, so a plain
+# `_REAL_DATE_TYPE = date` module global would be patched exactly like the
+# `date` import itself. Confirmed empirically (not merely by reading
+# freezegun's source) that `date.fromisoformat` returns a `FakeDate`
+# instance while a freeze is active, and that `_REAL_DATE_TYPE[0]` stays the
+# genuine class throughout. `datetime.datetime` is itself a `date`
+# subclass, so `_REAL_DATETIME_TYPE[0]` also satisfies
+# `isinstance(x, _REAL_DATE_TYPE[0])` for real or fake datetimes alike --
+# callers that need to tell a datetime apart from a plain date must check
+# `_REAL_DATETIME_TYPE[0]` first, as `_validate_date_value` does.
+_REAL_DATE_TYPE = (date,)
+
+
+def _as_real_datetime(value: datetime) -> datetime:
+    """Rebuild ``value`` as a genuine ``datetime.datetime``, discarding any
+    subclass-ness (notably freezegun's ``FakeDatetime``).
+
+    Returns ``value`` itself, unchanged, when it is already the exact real
+    type -- rebuilding is only needed to strip a subclass, and reuses the
+    exact rebuild ``_validate_datetime_value`` has always performed inline;
+    shared here so ``_yaml_values_equal``'s no-op comparison (AC3) can apply
+    the identical normalization to its "current" operand, not just the
+    "candidate" operand callers pass through ``_validate_datetime_value``.
+    """
+    if type(value) is _REAL_DATETIME_TYPE[0]:
+        return value
+    return _REAL_DATETIME_TYPE[0](
+        value.year,
+        value.month,
+        value.day,
+        value.hour,
+        value.minute,
+        value.second,
+        value.microsecond,
+        tzinfo=value.tzinfo,
+    )
+
+
+def _as_real_date(value: date) -> date:
+    """``date`` counterpart of ``_as_real_datetime`` -- see its docstring."""
+    if type(value) is _REAL_DATE_TYPE[0]:
+        return value
+    return _REAL_DATE_TYPE[0](value.year, value.month, value.day)
+
+
+def _normalize_temporal_for_comparison(value: Any) -> Any:
+    """Rebuild ``value`` as a genuine ``datetime``/``date`` if it is a
+    subclass of either (notably freezegun's ``FakeDatetime``/``FakeDate``),
+    otherwise return it unchanged.
+
+    Used by ``_yaml_values_equal`` to normalize *both* operands of a no-op
+    comparison the same way ``_validate_datetime_value``/
+    ``_validate_date_value`` already normalize a stamping candidate --
+    without this, a "current" value parsed from the document by PyYAML
+    (whose ``construct_yaml_timestamp`` also calls ``datetime.datetime(...)``
+    dynamically, so it is likewise a ``FakeDatetime`` under
+    ``freeze_time``) would never compare exact-type-equal to an
+    already-normalized candidate while a freeze is active, breaking AC3's
+    no-op detection. Checks ``datetime`` before ``date`` since
+    ``datetime.datetime`` is itself a ``date`` subclass.
+    """
+    if isinstance(value, _REAL_DATETIME_TYPE[0]):
+        return _as_real_datetime(value)
+    if isinstance(value, _REAL_DATE_TYPE[0]):
+        return _as_real_date(value)
+    return value
 
 
 def _make_frontmatter_yaml() -> YAML:
@@ -698,6 +793,474 @@ def _upsert_source_entry(
     return [*current, candidate], True
 
 
+# ---------------------------------------------------------------------------
+# Trust and lifecycle stamping (OKF v0.2 §5.2 "generated"/"verified", §5.4
+# "status", §5.5 "stale_after"; #196)
+# ---------------------------------------------------------------------------
+
+_ACTOR_PATTERN = re.compile(r"(?:[^\s/:]+/[^\s/:]+)|(?:human:\S+)|(?:process:\S+)")
+
+_VALID_STATUS_VALUES = ("draft", "stable", "deprecated")
+
+
+def _validate_actor_string(path: Path, value: Any, *, field_name: str) -> str:
+    """Validate ``value`` as one OKF v0.2 §7 actor string.
+
+    Accepts exactly the three shapes §7 defines, matched against the whole
+    string (no partial match): ``<producer>/<version>`` (agents and tools,
+    e.g. ``reference_agent/gemini-2.5-pro``), ``human:<id>``, or
+    ``process:<id>``. Each segment/id must be non-empty and free of
+    whitespace; the ``<producer>/<version>`` shape additionally forbids a
+    second ``/`` or a ``:`` in either segment, so it can never be confused
+    with the ``human:``/``process:`` prefixed shapes. Anything else --
+    wrong shape, an empty segment, embedded whitespace, or a non-``str``
+    value entirely -- raises ``DocumentChangePlanningError`` before any
+    write, naming ``field_name`` (e.g. ``"generated.by"``) so a caller with
+    several actor-shaped fields in flight can tell which one failed.
+    """
+    if isinstance(value, str) and _ACTOR_PATTERN.fullmatch(value):
+        return value
+    raise DocumentChangePlanningError(
+        path,
+        f"{field_name} must be an actor string in the form "
+        f"'<producer>/<version>', 'human:<id>', or 'process:<id>' "
+        f"(OKF v0.2 §7): {value!r}",
+    )
+
+
+def _parse_iso_datetime_string(text: str) -> datetime:
+    """Parse an ISO 8601 datetime string, tolerating a trailing ``Z``.
+
+    ``datetime.fromisoformat`` only accepts a bare ``Z`` UTC designator from
+    Python 3.11 onward; okf-core supports runtime Python 3.10+ (AGENTS.md),
+    and spec §5.2's own example (``2026-06-20T22:53:05Z``) uses exactly that
+    form, so the ``Z`` is rewritten to the ``+00:00`` offset
+    ``fromisoformat`` has always accepted before parsing. Raises
+    ``ValueError`` -- the same as ``fromisoformat`` itself -- for anything
+    that still isn't parseable after that rewrite.
+
+    Parses via ``_REAL_DATETIME_TYPE`` rather than the module-global
+    ``datetime`` name so the result is always a genuine ``datetime.datetime``
+    even when called from inside a ``freezegun.freeze_time`` context, which
+    rebinds that name to ``FakeDatetime`` -- see ``_REAL_DATETIME_TYPE``'s
+    own comment.
+    """
+    candidate = text[:-1] + "+00:00" if text[-1:] in ("Z", "z") else text
+    return _REAL_DATETIME_TYPE[0].fromisoformat(candidate)
+
+
+def _validate_datetime_value(path: Path, value: Any, *, field_name: str) -> datetime:
+    """Validate/coerce ``value`` into a timezone-aware ``datetime`` for a §5.2 ``at`` field.
+
+    Accepts either a native ``datetime.datetime`` or an ISO 8601 string (see
+    ``_parse_iso_datetime_string``); anything else -- including a bare
+    ``datetime.date``, which is a different, day-only shape -- raises
+    ``DocumentChangePlanningError`` before any write, as does a string that
+    fails to parse.
+
+    The result must carry a UTC offset. This is required, not merely
+    preferred, for two reasons: spec §5.2's own examples always carry one
+    (the trailing ``Z``), and an offset-naive value is never equal (by
+    Python's own ``==``) to an offset-aware one representing the same wall
+    clock time -- the shape every value validated here produces -- so
+    without this requirement, a caller re-stamping with an equivalent naive
+    value would never be recognized as a no-op (AC3). A naive value,
+    whether passed directly or parsed from a string with no offset, is
+    rejected here rather than silently assumed to be UTC.
+
+    A ``datetime.datetime`` *subclass* instance (notably ``freezegun``'s
+    ``FakeDatetime`` -- the documented way to test ``plan_stamp_generated``/
+    ``plan_stamp_verified``'s "defaults to real UTC now" behavior
+    deterministically) is rebuilt as a genuine ``datetime.datetime`` here,
+    via ``_REAL_DATETIME_TYPE`` rather than the module-global ``datetime``
+    name (which a ``freeze_time`` context rebinds to ``FakeDatetime`` for
+    its duration, making a same-module ``type(value) is datetime`` check
+    unreliable -- see ``_REAL_DATETIME_TYPE``'s own comment).
+    ``_merge_frontmatter``'s value validator deliberately checks
+    ``type(value)`` against an exact set of allowed types rather than
+    ``isinstance`` -- that strictness is what lets it also tell ``bool``
+    apart from ``int`` (``bool`` is an ``int`` subclass) -- so an
+    unconverted subclass instance would otherwise be rejected downstream as
+    an unsupported type, not because its value is wrong.
+    """
+    if isinstance(value, _REAL_DATETIME_TYPE[0]):
+        candidate = _as_real_datetime(value)
+    elif isinstance(value, str):
+        try:
+            candidate = _parse_iso_datetime_string(value)
+        except ValueError as exc:
+            raise DocumentChangePlanningError(
+                path,
+                f"{field_name} must be an ISO 8601 datetime: {value!r} ({exc})",
+            ) from exc
+    else:
+        raise DocumentChangePlanningError(
+            path,
+            f"{field_name} must be a datetime.datetime or an ISO 8601 "
+            f"datetime string: {value!r}",
+        )
+    if candidate.tzinfo is None:
+        raise DocumentChangePlanningError(
+            path,
+            f"{field_name} must include a UTC offset (e.g. a trailing "
+            f"'Z'): {value!r}",
+        )
+    return candidate
+
+
+def _validate_date_value(path: Path, value: Any, *, field_name: str) -> date:
+    """Validate/coerce ``value`` into a ``datetime.date`` for a §5.5 ``stale_after`` field.
+
+    Accepts either a native ``datetime.date`` or an ISO 8601 ``YYYY-MM-DD``
+    string; a ``datetime.datetime`` is rejected -- §5.5 defines
+    ``stale_after`` as "an absolute date", not a timestamp, so accepting one
+    would silently drop its time-of-day component. Anything else, or a
+    string that fails to parse as a calendar date, raises
+    ``DocumentChangePlanningError`` before any write.
+
+    Checks and parses via ``_REAL_DATETIME_TYPE``/``_REAL_DATE_TYPE`` rather
+    than the module-global ``datetime``/``date`` names, mirroring
+    ``_validate_datetime_value`` (see ``_REAL_DATETIME_TYPE``'s own
+    comment). This matters under a ``freeze_time`` context, which rebinds
+    both module-global names to ``FakeDatetime``/``FakeDate`` for the
+    freeze's duration: ``date.fromisoformat`` would hand back a
+    ``FakeDate`` instance that fails ``_merge_frontmatter``'s exact-
+    ``type()`` scalar check downstream -- confirmed empirically, not
+    merely by reading freezegun's source. A ``datetime.date`` *subclass*
+    instance (``FakeDate``) is rebuilt as a genuine ``datetime.date`` via
+    ``_as_real_date``, the same way ``_validate_datetime_value`` rebuilds a
+    ``datetime`` subclass via ``_as_real_datetime``, for the same reason:
+    ``_merge_frontmatter``'s value validator checks ``type(value)``
+    against an exact set of allowed types, not ``isinstance``.
+    """
+    if isinstance(value, _REAL_DATETIME_TYPE[0]):
+        raise DocumentChangePlanningError(
+            path,
+            f"{field_name} must be a calendar date (YYYY-MM-DD), not a "
+            f"datetime: {value!r}",
+        )
+    if isinstance(value, _REAL_DATE_TYPE[0]):
+        return _as_real_date(value)
+    if isinstance(value, str):
+        try:
+            return _REAL_DATE_TYPE[0].fromisoformat(value)
+        except ValueError as exc:
+            raise DocumentChangePlanningError(
+                path,
+                f"{field_name} must be an ISO 8601 date (YYYY-MM-DD): "
+                f"{value!r} ({exc})",
+            ) from exc
+    raise DocumentChangePlanningError(
+        path,
+        f"{field_name} must be a datetime.date or an ISO 8601 date "
+        f"string: {value!r}",
+    )
+
+
+def plan_stamp_generated(
+    bundle: BundleConfig,
+    path: Path | str,
+    by: str,
+    *,
+    at: datetime | str | None = None,
+) -> DocumentChangePlan:
+    """Plan setting the top-level ``generated`` trust record (OKF v0.2 §5.2).
+
+    ``by`` (an actor, §7) and ``at`` (an ISO 8601 datetime) are validated
+    before any file is touched -- see ``_validate_actor_string`` and
+    ``_validate_datetime_value``. ``at`` defaults to the real current UTC
+    datetime when omitted; pass a fixed value for deterministic tests (the
+    same pattern ``plan_log_append``'s ``date`` parameter uses).
+
+    The write delegates entirely to ``plan_frontmatter_merge``: no-op
+    semantics (AC3 -- setting ``generated`` to a value that already matches
+    the document's current value writes nothing) come from that engine's
+    existing value-equality check, not from any pre-read this function
+    performs. A malformed pre-existing ``generated`` value in the document
+    is not separately validated or rejected here; ``generated`` is fully
+    replaced on every stamp (unlike ``verified``'s append-only history), so
+    an existing malformed value is simply treated as unequal and overwritten
+    with the freshly validated one, rather than blocking the operation.
+    """
+    resolved_path = Path(path)
+    validated_by = _validate_actor_string(resolved_path, by, field_name="generated.by")
+    validated_at = _validate_datetime_value(
+        resolved_path,
+        at if at is not None else datetime.now(timezone.utc),
+        field_name="generated.at",
+    )
+    return plan_frontmatter_merge(
+        bundle,
+        resolved_path,
+        {"generated": {"by": validated_by, "at": validated_at}},
+    )
+
+
+def stamp_generated(
+    bundle: BundleConfig,
+    path: Path | str,
+    by: str,
+    *,
+    at: datetime | str | None = None,
+) -> DocumentChangeResult:
+    """Plan and apply one ``generated`` trust-record stamp in a single call.
+
+    Mirrors ``source_upsert``'s relationship to ``plan_source_upsert``:
+    ``plan_stamp_generated`` alone is read-only and safe for a dry-run
+    preview, while this convenience wrapper also applies it, retaining the
+    same SHA-256 optimistic-concurrency protection.
+    """
+    plan = plan_stamp_generated(bundle, path, by, at=at)
+    return apply_document_change(bundle, plan)
+
+
+def plan_stamp_status(
+    bundle: BundleConfig,
+    path: Path | str,
+    status: str,
+) -> DocumentChangePlan:
+    """Plan setting the top-level ``status`` lifecycle field (OKF v0.2 §5.4).
+
+    ``status`` must be one of ``draft``, ``stable``, or ``deprecated``;
+    anything else raises ``DocumentChangePlanningError`` before any file is
+    touched. The write delegates to ``plan_frontmatter_merge``, so setting
+    ``status`` to its already-current value (AC3) is a no-op.
+    """
+    resolved_path = Path(path)
+    if not isinstance(status, str) or status not in _VALID_STATUS_VALUES:
+        raise DocumentChangePlanningError(
+            resolved_path,
+            "status must be one of 'draft', 'stable', 'deprecated' "
+            f"(OKF v0.2 §5.4): {status!r}",
+        )
+    return plan_frontmatter_merge(bundle, resolved_path, {"status": status})
+
+
+def stamp_status(
+    bundle: BundleConfig,
+    path: Path | str,
+    status: str,
+) -> DocumentChangeResult:
+    """Plan and apply one ``status`` lifecycle stamp in a single call.
+
+    Mirrors ``source_upsert``'s relationship to ``plan_source_upsert``:
+    ``plan_stamp_status`` alone is read-only and safe for a dry-run preview,
+    while this convenience wrapper also applies it, retaining the same
+    SHA-256 optimistic-concurrency protection.
+    """
+    plan = plan_stamp_status(bundle, path, status)
+    return apply_document_change(bundle, plan)
+
+
+def plan_stamp_stale_after(
+    bundle: BundleConfig,
+    path: Path | str,
+    stale_after: date | str,
+) -> DocumentChangePlan:
+    """Plan setting the top-level ``stale_after`` lifecycle field (OKF v0.2 §5.5).
+
+    ``stale_after`` must be a ``datetime.date`` or an ISO 8601 ``YYYY-MM-DD``
+    string; see ``_validate_date_value`` for the exact rejection cases
+    (wrong type, a datetime instead of a date, or an unparseable string),
+    all raised as ``DocumentChangePlanningError`` before any file is
+    touched. The write delegates to ``plan_frontmatter_merge``, so setting
+    ``stale_after`` to its already-current value (AC3) is a no-op.
+    """
+    resolved_path = Path(path)
+    validated = _validate_date_value(
+        resolved_path, stale_after, field_name="stale_after"
+    )
+    return plan_frontmatter_merge(bundle, resolved_path, {"stale_after": validated})
+
+
+def stamp_stale_after(
+    bundle: BundleConfig,
+    path: Path | str,
+    stale_after: date | str,
+) -> DocumentChangeResult:
+    """Plan and apply one ``stale_after`` lifecycle stamp in a single call.
+
+    Mirrors ``source_upsert``'s relationship to ``plan_source_upsert``:
+    ``plan_stamp_stale_after`` alone is read-only and safe for a dry-run
+    preview, while this convenience wrapper also applies it, retaining the
+    same SHA-256 optimistic-concurrency protection.
+    """
+    plan = plan_stamp_stale_after(bundle, path, stale_after)
+    return apply_document_change(bundle, plan)
+
+
+def plan_stamp_verified(
+    bundle: BundleConfig,
+    path: Path | str,
+    by: str,
+    *,
+    at: datetime | str | None = None,
+) -> DocumentChangePlan:
+    """Plan appending one OKF v0.2 §5.2 ``verified`` trust event.
+
+    ``by`` (an actor, §7) and ``at`` (an ISO 8601 datetime, defaulting to
+    the real current UTC datetime when omitted, same as
+    ``plan_stamp_generated``) are validated before any file is touched.
+
+    The document's existing ``verified`` value is read and validated the
+    same way each candidate event is (``_validate_existing_verified``): an
+    absent key is treated as an empty list (AC -- creating a conformant
+    list when absent); a bare ``{by, at}`` mapping -- spec §5.2's
+    single-verifier shorthand -- is normalized to a one-element list,
+    purely in memory; a list has every entry validated the same way.
+    Unlike ``plan_stamp_generated``'s replace-on-write semantics,
+    ``verified`` is append-only history, so a malformed pre-existing entry
+    is not silently discarded or overwritten -- it raises
+    ``DocumentChangePlanningError`` before any write, the same choice
+    ``plan_source_upsert``'s ``_validate_existing_sources`` makes for
+    ``sources``.
+
+    Identity for the no-op decision (AC3) is the exact ``(by, at)`` pair,
+    not just ``by``: spec §5.2 treats two checks by the same actor at
+    different times as distinct events (a human sign-off plus a later
+    nightly process re-check, or the same actor re-confirming after a
+    change), unlike ``plan_source_upsert``'s single-field identity key. When
+    an identical event is already present, the existing content is returned
+    completely untouched -- including an existing bare-mapping shape, which
+    is *not* rewritten into list form just to canonicalize it, since no-op
+    means no-op, zero bytes changed. When the event is new, it is appended
+    and the result is always written as a list (even when the result has
+    only one element), per this operation's canonical-form decision: once
+    ``plan_stamp_verified`` manages this field, its on-disk shape is always
+    a list, never a bare mapping, even though a bare mapping remains valid
+    input the next time this operation reads the document.
+
+    The write itself, when actually needed, delegates to the same
+    ``_merge_frontmatter`` engine ``plan_frontmatter_merge`` (#195) and
+    ``plan_source_upsert`` (#113) use, applied to the exact read
+    ``plan_document_change_from_reader`` performs -- never a separate,
+    earlier read -- so a concurrent edit to ``verified`` between planning
+    and applying is still reported as ``DocumentChangeConflictError``
+    rather than silently discarded.
+    """
+    resolved_path = Path(path)
+    validated_by = _validate_actor_string(resolved_path, by, field_name="verified.by")
+    validated_at = _validate_datetime_value(
+        resolved_path,
+        at if at is not None else datetime.now(timezone.utc),
+        field_name="verified.at",
+    )
+    candidate = {"by": validated_by, "at": validated_at}
+
+    def build_verified_update(resolved_path: Path, original_content: str) -> str:
+        try:
+            document = parse_concept_document(original_content)
+        except DocumentParseError as exc:
+            raise DocumentChangePlanningError(
+                resolved_path, f"Could not parse document frontmatter: {exc}"
+            ) from exc
+        current_events = _validate_existing_verified(
+            resolved_path, document.frontmatter.get("verified", _MISSING)
+        )
+        new_events, changed = _append_verified_event(current_events, candidate)
+        if not changed:
+            return original_content
+        return _merge_frontmatter(
+            resolved_path, original_content, {"verified": new_events}
+        )
+
+    return plan_document_change_from_reader(
+        bundle, resolved_path, build_verified_update
+    )
+
+
+def stamp_verified(
+    bundle: BundleConfig,
+    path: Path | str,
+    by: str,
+    *,
+    at: datetime | str | None = None,
+) -> DocumentChangeResult:
+    """Plan and apply one ``verified`` trust-event append in a single call.
+
+    Mirrors ``source_upsert``'s relationship to ``plan_source_upsert``:
+    ``plan_stamp_verified`` alone is read-only and safe for a dry-run
+    preview, while this convenience wrapper also applies it, retaining the
+    same SHA-256 optimistic-concurrency protection.
+    """
+    plan = plan_stamp_verified(bundle, path, by, at=at)
+    return apply_document_change(bundle, plan)
+
+
+def _validate_verified_entry(path: Path, entry: Any, *, context: str) -> dict[str, Any]:
+    """Validate one ``verified`` list entry has the §5.2 ``{by, at}`` shape.
+
+    Shared between the caller-supplied candidate event and each entry read
+    back from a document's existing ``verified`` value -- ``context``
+    distinguishes the two in any raised message, mirroring
+    ``_validate_source_entry``'s ``context`` parameter.
+    """
+    if not isinstance(entry, Mapping):
+        raise DocumentChangePlanningError(
+            path, f"{context} verified entry must be a mapping: {entry!r}"
+        )
+    validated_by = _validate_actor_string(
+        path, entry.get("by"), field_name=f"{context} verified entry 'by'"
+    )
+    validated_at = _validate_datetime_value(
+        path, entry.get("at"), field_name=f"{context} verified entry 'at'"
+    )
+    return {"by": validated_by, "at": validated_at}
+
+
+def _validate_existing_verified(path: Path, verified: Any) -> list[dict[str, Any]]:
+    """Validate/normalize a document's existing ``verified`` frontmatter value.
+
+    An absent ``verified`` key (the ``_MISSING`` sentinel) is treated as a
+    conformant empty list. A bare ``{by, at}`` mapping -- spec §5.2's
+    single-verifier shorthand, which "Consumers MUST treat ... as a
+    one-element list" -- is normalized to a one-element list, purely in
+    memory; the on-disk shape is left untouched unless ``plan_stamp_verified``
+    actually appends. A list has every entry validated the same way a
+    candidate event is. Anything else raises ``DocumentChangePlanningError``
+    before any write.
+    """
+    if verified is _MISSING:
+        return []
+    if isinstance(verified, Mapping):
+        return [_validate_verified_entry(path, verified, context="Existing")]
+    if isinstance(verified, list):
+        return [
+            _validate_verified_entry(path, entry, context="Existing")
+            for entry in verified
+        ]
+    raise DocumentChangePlanningError(
+        path,
+        "Existing 'verified' frontmatter must be a mapping or list, got "
+        f"{verified!r}",
+    )
+
+
+def _append_verified_event(
+    current: Sequence[Mapping[str, Any]],
+    candidate: Mapping[str, Any],
+) -> tuple[list[Mapping[str, Any]], bool]:
+    """Append ``candidate`` to ``current`` unless an identical event is already present.
+
+    Pure per-item helper (AGENTS.md's collector-loop-delegates-per-item
+    convention), structurally parallel to ``_upsert_source_entry`` but with
+    a different identity rule: spec §5.2 treats two checks by the same
+    actor at different times as distinct events, so identity here is the
+    exact ``(by, at)`` pair, not just ``by`` -- unlike ``_upsert_source_entry``'s
+    single-field identity key (``id``, falling back to ``resource``). On a
+    match, ``current`` is returned completely untouched -- same entries,
+    same content, same order -- so a true no-op never rewrites even an
+    existing bare-mapping value into list form. On no match, ``candidate``
+    is appended to the end.
+    """
+    if any(
+        entry["by"] == candidate["by"] and entry["at"] == candidate["at"]
+        for entry in current
+    ):
+        return list(current), False
+    return [*current, candidate], True
+
+
 def _patch_markdown_section(
     path: Path,
     content: str,
@@ -1137,14 +1700,31 @@ def _validate_merged_frontmatter(path: Path, proposed: str) -> None:
 # update value already constrained to plain builtin types by
 # `_validate_frontmatter_update_value`. Neither side is ever a value loaded
 # by the ruamel round-trip engine -- that engine's `CommentedMap`/`data` is
-# mutated directly and never routed through this comparison -- so a plain
-# `type(...) is not type(...)` check is sufficient here; there is no
-# ruamel-specific formatting subclass (e.g. `SingleQuotedScalarString`,
-# `ScalarInt`) for this comparison to ever see. Do not reintroduce
-# subclass normalization without first tracing a real call path that
-# passes a ruamel-loaded value here, per AGENTS.md's guidance against
-# defensive handling for scenarios that cannot happen.
+# mutated directly and never routed through this comparison -- so beyond the
+# temporal normalization below, a plain `type(...) is not type(...)` check
+# is sufficient here; there is no ruamel-specific formatting subclass (e.g.
+# `SingleQuotedScalarString`, `ScalarInt`) for this comparison to ever see.
+# Do not reintroduce *ruamel* subclass normalization without first tracing a
+# real call path that passes a ruamel-loaded value here, per AGENTS.md's
+# guidance against defensive handling for scenarios that cannot happen.
+#
+# The temporal normalization is a different, real scenario, not a
+# precautionary one: PyYAML's `construct_yaml_timestamp` calls
+# `datetime.datetime(...)` dynamically for every `left` operand this
+# function ever sees for a date/datetime field, so under
+# `freeze_time` `left` is a `FakeDatetime`/`FakeDate` exactly as often as a
+# stamping candidate would be without `_validate_datetime_value`/
+# `_validate_date_value`'s own rebuild -- but `right` (the candidate) is
+# *always* pre-normalized by one of those two validators before reaching
+# here, while `left` never was. `_normalize_temporal_for_comparison`
+# closes that asymmetry on both operands (a no-op on `right`, since it is
+# already real; the actual fix for `left`) before the exact-type check, so
+# AC3's no-op detection holds under a freeze for every field routed through
+# this comparison (`generated`, `status`, `stale_after`, `verified`), not
+# only whichever case a given test happens to freeze.
 def _yaml_values_equal(left: Any, right: Any) -> bool:
+    left = _normalize_temporal_for_comparison(left)
+    right = _normalize_temporal_for_comparison(right)
     left_type = type(left)
     if left_type is not type(right):
         return False

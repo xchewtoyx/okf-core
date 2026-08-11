@@ -2,6 +2,11 @@
 
 import importlib.metadata
 
+from okf_core.attribution import (
+    FootnoteOccurrence,
+    check_attribution_consistency,
+    extract_footnote_occurrences,
+)
 from okf_core.config import (
     BundleConfig,
     ConfigError,
@@ -108,7 +113,15 @@ from okf_core.patching import (
     plan_markdown_link_rewrite,
     plan_markdown_section_patch,
     plan_source_upsert,
+    plan_stamp_generated,
+    plan_stamp_stale_after,
+    plan_stamp_status,
+    plan_stamp_verified,
     source_upsert,
+    stamp_generated,
+    stamp_stale_after,
+    stamp_status,
+    stamp_verified,
 )
 from okf_core.paths import (
     ConceptPathError,
@@ -166,6 +179,7 @@ __all__ = [
     "FileMoveConflictError",
     "FileMovePlan",
     "FileMoveResult",
+    "FootnoteOccurrence",
     "GeneratedIndex",
     "GraphProblem",
     "IndexEntry",
@@ -201,11 +215,13 @@ __all__ = [
     "backlinks_to",
     "build_bundle_graph",
     "build_context_pack",
+    "check_attribution_consistency",
     "check_bundle_write_safety",
     "concept_id_to_path",
     "declared_okf_version",
     "discover_config",
     "entries_for_directory",
+    "extract_footnote_occurrences",
     "extract_markdown_links",
     "find_unlinked_mentions",
     "generate_index",
@@ -236,6 +252,10 @@ __all__ = [
     "plan_markdown_section_patch",
     "plan_move_concept",
     "plan_source_upsert",
+    "plan_stamp_generated",
+    "plan_stamp_stale_after",
+    "plan_stamp_status",
+    "plan_stamp_verified",
     "render_index_document",
     "render_log",
     "repair_graph",
@@ -243,6 +263,10 @@ __all__ = [
     "search_concepts",
     "serialize_concept_document",
     "source_upsert",
+    "stamp_generated",
+    "stamp_stale_after",
+    "stamp_status",
+    "stamp_verified",
     "validate_bundle",
     "validate_concept_document",
     "validate_concept_document_with_profile",

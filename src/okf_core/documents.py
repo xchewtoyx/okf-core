@@ -51,6 +51,10 @@ class ValidationFinding:
     severity: str  # "error" | "warning"
     message: str
     field: str | None = None
+    # 1-based source line the finding pertains to, when known (e.g. a
+    # footnote occurrence's line in the body); None for findings with no
+    # single source line (e.g. a frontmatter-only or whole-document finding).
+    line: int | None = None
 
 
 @dataclass

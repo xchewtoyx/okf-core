@@ -188,5 +188,60 @@ profile = "default"
     assert product_root / "other_type.md" not in findings
 
 
+def test_validate_bundle_reports_attribution_findings(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "docs"
+""".strip(),
+        encoding="utf-8",
+    )
+    docs_root = tmp_path / "docs"
+    docs_root.mkdir()
+
+    # clean.md: footnote label matches its sources[].id -- no findings.
+    _write_concept(
+        docs_root / "clean.md",
+        "---\ntype: concept\nsources:\n  - id: src-a\n    resource: https://example.com\n"
+        "---\nA claim.[^src-a]\n",
+    )
+    # dangling.md: footnote label with no matching sources[].id -- error.
+    _write_concept(
+        docs_root / "dangling.md",
+        "---\ntype: concept\n---\nA claim.[^missing]\n",
+    )
+    # unreferenced.md: sources[].id never cited by a footnote -- warning.
+    _write_concept(
+        docs_root / "unreferenced.md",
+        "---\ntype: concept\nsources:\n  - id: unused\n    resource: https://example.com\n"
+        "---\nNo citations here.\n",
+    )
+
+    config = load_config(config_path=config_path)
+    bundle = config.bundles["default"]
+    findings = validate_bundle(bundle, config)
+
+    assert docs_root / "clean.md" not in findings
+
+    assert findings[docs_root / "dangling.md"] == (
+        ValidationFinding(
+            severity="error",
+            message="Footnote label 'missing' has no matching sources[].id",
+            field="missing",
+            line=1,
+        ),
+    )
+
+    assert findings[docs_root / "unreferenced.md"] == (
+        ValidationFinding(
+            severity="warning",
+            message="sources[].id 'unused' is not referenced by any footnote",
+            field="unused",
+            line=None,
+        ),
+    )
+
+
 def _write_concept(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8", newline="\n")

@@ -171,9 +171,11 @@ Validates all concept documents against the configured profile:
 okf validate [--config PATH] [--bundle NAME] [--quiet]
 ```
 
-Output: `{"bundle": "...", "findings": {"path": [{"severity": "...", "message": "...", "field": "..."}]}}`
+Output: `{"bundle": "...", "findings": {"path": [{"severity": "...", "message": "...", "field": "...", "line": ...}]}}`
 
-Only paths with findings appear as keys. Exits `1` if any error-severity findings are present; exits `0` if there are only warnings or no findings.
+Only paths with findings appear as keys. `line` is the 1-based source line the finding pertains to when known (e.g. a footnote occurrence in the body), and `null` otherwise (e.g. a frontmatter-only finding). Exits `1` if any error-severity findings are present; exits `0` if there are only warnings or no findings.
+
+Findings include an attribution consistency check (spec §5.1): a `[^label]` footnote reference or `[^label]:` definition in the body whose label has no matching `sources[].id` in frontmatter is an error, and a declared `sources[].id` that no footnote ever cites is a warning (an unreferenced source is legal, so this is advisory rather than an error). A document with neither footnotes nor `sources` reports nothing from this check. This check recognizes only labels shaped like a safe slug (letters, digits, and hyphens; see `check_attribution_consistency` below) — a `sources[].id` that isn't slug-shaped can never be matched by a footnote reference, so it will always surface as the "unreferenced source" warning. Image alt text (`![...](...)`) is out of scope entirely: a `[^label]`-shaped construct inside an image's alt text, whether it exactly matches a label or merely contains one (e.g. `![Diagram [^label]](url.png)`), is never recognized as footnote syntax. A `sources[].id` cited only from image alt text will therefore always surface as the "unreferenced source" warning too — see `src/okf_core/attribution.py`'s module docstring ("Images are out of scope") for why.
 
 Use `--quiet` or `-q` to suppress validation findings (on stdout) and the validation summary (on stderr), leaving the exit code as the sole signal for validation success/failure. Note that configuration/load errors (which exit with code `2`) are still printed to stderr.
 
@@ -319,6 +321,54 @@ okf source-add PATH --resource RESOURCE [--id ID] [--title TITLE] [--author ACTO
 PATH is the concept file, relative to the bundle root or an absolute path resolving inside it. `--resource` is the only required field (a URL, bundle-relative path, or free-text scope description); every other option is an optional §5.1 field. The library owns `sources` list bookkeeping: an absent list is created, an existing list's order and content are preserved, and a source whose identity (`--id`, falling back to `--resource`) already matches an entry in the list is a no-op — the existing entry is left completely untouched rather than merged, so nothing is written. Every other frontmatter key, including the top-level `usage_window` sibling, is left untouched. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
 
 Exits `2` for an invalid `--last-modified` value, a missing `--resource`, or other config/usage error; exits `1` for malformed candidate/existing `sources` content, or for a stale-content write conflict.
+
+### `okf stamp-generated`
+
+Stamps a concept document's top-level `generated` trust record (OKF v0.2 §5.2):
+
+```sh
+okf stamp-generated PATH --by ACTOR [--at ISO8601] [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+`--by` is a required actor string (§7: `<producer>/<version>`, `human:<id>`, or `process:<id>`); `--at` is an ISO 8601 datetime with a UTC offset (e.g. a trailing `Z`), defaulting to the real current UTC datetime when omitted. Both are validated before any file is touched. Setting `generated` to a value that already matches the document's current value is a no-op — nothing is written. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
+
+Exits `1` for an invalid `--by`/`--at` value, or for a stale-content write conflict.
+
+### `okf stamp-verified`
+
+Appends one `verified` trust event to a concept document's frontmatter (OKF v0.2 §5.2):
+
+```sh
+okf stamp-verified PATH --by ACTOR [--at ISO8601] [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+`--by` and `--at` follow the same validation and default as `stamp-generated`. The library owns `verified` list bookkeeping: an absent value is created, an existing bare `{by, at}` mapping (spec §5.2's single-verifier shorthand) or list is read and normalized only in memory, and an event whose exact `--by`/`--at` pair already matches an existing entry is a no-op — unlike `source-add`'s identity rule, two checks by the same actor at different times are distinct events (§5.2), so only an *exact* match is a no-op, and an existing bare-mapping value is not rewritten into list form just to canonicalize it when nothing is appended. A genuinely new event is appended, and the field is always written back as a list from that point on. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
+
+Exits `1` for an invalid `--by`/`--at` value, malformed existing `verified` content, or a stale-content write conflict.
+
+### `okf stamp-status`
+
+Sets a concept document's top-level `status` lifecycle field (OKF v0.2 §5.4):
+
+```sh
+okf stamp-status PATH --status {draft|stable|deprecated} [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+`--status` must be one of `draft`, `stable`, or `deprecated`. Setting `status` to its already-current value is a no-op. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
+
+Exits `2` for an invalid `--status` choice (Click's own usage-error handling); exits `1` for a stale-content write conflict.
+
+### `okf stamp-stale-after`
+
+Sets a concept document's top-level `stale_after` lifecycle field (OKF v0.2 §5.5):
+
+```sh
+okf stamp-stale-after PATH --stale-after YYYY-MM-DD [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+`--stale-after` is an absolute ISO 8601 calendar date (not a datetime — a timestamp is rejected, since §5.5 defines an absolute date). Setting `stale_after` to its already-current value is a no-op. Output: `{"bundle": "...", "path": "...", "changed": true}` (`"would_change"` instead of `"changed"` for `--dry-run`).
+
+Exits `1` for an invalid `--stale-after` value or a stale-content write conflict.
 
 ### `okf graph-repair`
 
@@ -525,6 +575,14 @@ planning and applying is still reported as `DocumentChangeConflictError`
 rather than silently discarded. Applying uses `apply_document_change()` and
 retains the same stale-content protection.
 
+`plan_stamp_generated(bundle, path, by, *, at=None)` and `stamp_generated(bundle, path, by, *, at=None)` set a concept document's top-level `generated` trust record (OKF v0.2 §5.2), mirroring `plan_source_upsert`/`source_upsert`'s planning/applying pairing. `by` is a required actor string (§7: `<producer>/<version>`, `human:<id>`, or `process:<id>`); `at` is an ISO 8601 datetime -- a native `datetime.datetime` or a string, either way requiring a UTC offset (e.g. a trailing `Z`) -- defaulting to the real current UTC datetime when omitted (`None`), overridable for deterministic tests (e.g. via `freezegun`). Both are validated before any file is touched, raising `DocumentChangePlanningError` for a malformed actor, an unparseable or offset-naive datetime, or a `datetime.date` passed where a datetime is required. The write delegates entirely to `plan_frontmatter_merge`, so setting `generated` to a value that already matches the document's current value is a no-op (`plan.changed is False`, nothing written); a malformed pre-existing `generated` value is not separately rejected, since `generated` is fully replaced on every stamp rather than preserving history. Applying uses `apply_document_change()` and retains the same stale-content protection.
+
+`plan_stamp_verified(bundle, path, by, *, at=None)` and `stamp_verified(bundle, path, by, *, at=None)` append one `verified` trust event (OKF v0.2 §5.2) to a concept document's frontmatter. `by` and `at` are validated exactly as `plan_stamp_generated` validates them. The document's existing `verified` value is read and validated the same way each candidate event is: an absent key is treated as an empty list; a bare `{by, at}` mapping -- spec §5.2's single-verifier shorthand, which "Consumers MUST treat ... as a one-element list" -- is normalized to a one-element list, purely in memory; a list has every entry validated the same way, and a malformed existing entry raises `DocumentChangePlanningError` before any write (`verified` is append-only history, so a malformed entry is never silently discarded or overwritten, unlike `generated`'s replace-on-write semantics). Identity for the no-op decision is the exact `(by, at)` pair, not just `by`: spec §5.2 treats two checks by the same actor at different times as distinct events, unlike `plan_source_upsert`'s single-field identity key. When an identical event is already present, the existing content -- including an existing bare-mapping shape -- is returned completely untouched, so a true no-op never rewrites even a bare mapping into list form just to canonicalize it. When the event is new, it is appended and the result is always written as a list from that point on, even if the result has only one element. The write itself, when actually needed, delegates to the same `_merge_frontmatter` engine `plan_frontmatter_merge` and `plan_source_upsert` use, applied to the exact read `plan_document_change_from_reader` performs -- never a separate, earlier read -- so a concurrent edit to `verified` between planning and applying is still reported as `DocumentChangeConflictError` rather than silently discarded. Applying uses `apply_document_change()` and retains the same stale-content protection.
+
+`plan_stamp_status(bundle, path, status)` and `stamp_status(bundle, path, status)` set a concept document's top-level `status` lifecycle field (OKF v0.2 §5.4). `status` must be one of `draft`, `stable`, or `deprecated`; anything else raises `DocumentChangePlanningError` before any file is touched. The write delegates to `plan_frontmatter_merge`, so setting `status` to its already-current value is a no-op. Applying uses `apply_document_change()` and retains the same stale-content protection.
+
+`plan_stamp_stale_after(bundle, path, stale_after)` and `stamp_stale_after(bundle, path, stale_after)` set a concept document's top-level `stale_after` lifecycle field (OKF v0.2 §5.5). `stale_after` must be a `datetime.date` or an ISO 8601 `YYYY-MM-DD` string; a `datetime.datetime` is rejected, since §5.5 defines `stale_after` as an absolute date, not a timestamp. The write delegates to `plan_frontmatter_merge`, so setting `stale_after` to its already-current value is a no-op. Applying uses `apply_document_change()` and retains the same stale-content protection.
+
 `plan_markdown_link_rewrite(bundle, path, rewrites)` builds a safe plan to rewrite the target/href destinations of one or more inline Markdown links in the document body. `rewrites` must be a sequence of `LinkRewrite(old_target, new_target)` instances. The primitive operates strictly on the Markdown body, leaving the frontmatter completely untouched. Duplicate `old_target` inputs (after normalization) are rejected. The implementation uses a single-pass replacement to prevent offset drift and avoid double-replacement issues if multiple rewrites form chains.
 
 Matching is driven entirely by parsing the document with `markdown-it-py`: each link's resolved href is compared against a caller-supplied target normalized the same way, and only real inline links found by the parser are ever rewritten. Text that merely looks like a link — inside code spans, fenced code blocks, or reference-style syntax — is never touched, without needing a separate raw-text scan or safety cross-check. Reference-style links are not supported and cause planning to raise `DocumentChangePlanningError`. Applying the plan uses `apply_document_change()` and retains the same stale-content protection.
@@ -551,7 +609,13 @@ Matching is driven entirely by parsing the document with `markdown-it-py`: each 
 - Undocumented custom frontmatter fields (warnings if present but not defined in the profile, standard OKF fields, or the document's type-scoped `type_fields` required/optional lists; skipped if `is_directory_meta=True`).
 - Taxonomy type rules (errors if type violates profile/project `allowed_types`, warnings if type violates `known_types`). Note that if `is_directory_meta=True` is provided and the document type starts with an underscore (such as `_directory`), taxonomy checks are bypassed to accommodate local directory metadata without taxonomy configuration changes.
 
-`validate_bundle(bundle, config)` scans a bundle and validates all of its concept documents against the configured profile, returning a mapping of file paths to their respective validation findings. Any scan or parsing failures are reported as validation errors.
+`validate_bundle(bundle, config)` scans a bundle and validates all of its concept documents against the configured profile, returning a mapping of file paths to their respective validation findings. Any scan or parsing failures are reported as validation errors. It also runs `check_attribution_consistency()` (below) against every concept unconditionally, since the check is base spec behavior rather than profile-specific.
+
+`check_attribution_consistency(frontmatter, body)` joins the per-claim attribution footnotes in a concept's `body` against its `sources[].id` frontmatter (spec §5.1), returning a tuple of `ValidationFinding` objects. A `[^label]` footnote reference or `[^label]:` definition whose label has no matching `sources[].id` is an `"error"` finding with `field` set to the label and `line` set to its 1-based source line. A `sources[].id` that no footnote (reference or definition) ever cites is a `"warning"` finding with `field` set to the source id (`line` is `None`, since an unreferenced source has no single occurrence to point at) -- an unreferenced source is legal, so this is advisory rather than an error. A `sources` entry without an `id` is not a join candidate (`id` is optional per §5.1) and is silently skipped. `extract_footnote_occurrences(body)` returns the underlying `FootnoteOccurrence` tuple (`label`, `line`, `is_definition`) that `check_attribution_consistency()` joins against `sources[].id`; it is exported for callers that want the raw occurrences without the join.
+
+A footnote label is recognized only when it matches a restricted safe-slug shape: letters, digits, and hyphens (`[A-Za-z0-9-]+`), with no other label-shaped character immediately following the closing `]` (e.g. `[^label]with-trailing` is not recognized). A `[^label]`-shaped construct whose label falls outside this shape -- underscores, whitespace, brackets, or any other character -- is not recognized as footnote syntax at all: it is neither reported as an occurrence nor treated as a definition, the same as any other prose. This is an interpretation of "stable key" scoped to this check only; `sources[].id` elsewhere in the codebase (e.g. the source-upsert path) is read as-is with no such restriction. See `src/okf_core/attribution.py`'s module docstring for the full rule-by-rule soundness argument for why this shape can never be split or swallowed by any active CommonMark rule.
+
+Images (`![...](...)`) are out of scope entirely -- a `[^label]`-shaped construct inside an image's alt text is never recognized, whether it exactly matches a label (`![^label](img.png)`) or merely contains one alongside other text (`![Diagram [^label]](url.png)`); both are equally inert, not a partial-recognition special case. This sidesteps a class of bug (`src/okf_core/attribution.py`'s module docstring, "Images are out of scope") rather than solving it: an image's alt text lives on a nested token list this check never walks, unlike a link's text, which markdown-it-py flattens into the same list this check scans directly. A `sources[].id` cited only from image alt text always surfaces as the "unreferenced source" warning above, as a consequence.
 
 ### Concept ID and Path Resolution
 
