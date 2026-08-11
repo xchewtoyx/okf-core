@@ -921,22 +921,17 @@ def _validate_date_value(path: Path, value: Any, *, field_name: str) -> date:
     Checks and parses via ``_REAL_DATETIME_TYPE``/``_REAL_DATE_TYPE`` rather
     than the module-global ``datetime``/``date`` names, mirroring
     ``_validate_datetime_value`` (see ``_REAL_DATETIME_TYPE``'s own
-    comment). This matters in two distinct ways under a ``freeze_time``
-    context, which rebinds both module-global names to
-    ``FakeDatetime``/``FakeDate`` for the freeze's duration: an
-    ``isinstance(value, datetime)`` check against the rebound name would
-    incorrectly *fail* to reject a genuine (non-fake) ``datetime.datetime``
-    passed as ``value`` (a real ``datetime`` is not an instance of
-    ``FakeDatetime``, which only subclasses the real class), and
-    ``date.fromisoformat`` would hand back a ``FakeDate`` instance that
-    fails ``_merge_frontmatter``'s exact-``type()`` scalar check downstream
-    -- confirmed empirically, not merely by reading freezegun's source. A
-    ``datetime.date`` *subclass* instance (``FakeDate``) is rebuilt as a
-    genuine ``datetime.date`` via ``_as_real_date``, the same way
-    ``_validate_datetime_value`` rebuilds a ``datetime`` subclass via
-    ``_as_real_datetime``, for the same reason: ``_merge_frontmatter``'s
-    value validator checks ``type(value)`` against an exact set of allowed
-    types, not ``isinstance``.
+    comment). This matters under a ``freeze_time`` context, which rebinds
+    both module-global names to ``FakeDatetime``/``FakeDate`` for the
+    freeze's duration: ``date.fromisoformat`` would hand back a
+    ``FakeDate`` instance that fails ``_merge_frontmatter``'s exact-
+    ``type()`` scalar check downstream -- confirmed empirically, not
+    merely by reading freezegun's source. A ``datetime.date`` *subclass*
+    instance (``FakeDate``) is rebuilt as a genuine ``datetime.date`` via
+    ``_as_real_date``, the same way ``_validate_datetime_value`` rebuilds a
+    ``datetime`` subclass via ``_as_real_datetime``, for the same reason:
+    ``_merge_frontmatter``'s value validator checks ``type(value)``
+    against an exact set of allowed types, not ``isinstance``.
     """
     if isinstance(value, _REAL_DATETIME_TYPE[0]):
         raise DocumentChangePlanningError(
