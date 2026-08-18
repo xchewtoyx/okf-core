@@ -406,3 +406,45 @@ def test_section_patch_plan_retains_stale_hash_protection(tmp_path: Path) -> Non
         apply_document_change(bundle, plan)
 
     assert path.read_text(encoding="utf-8") == "## Target\nConcurrent.\n"
+
+
+def test_plan_section_patch_leaves_untargeted_gfm_table_intact(
+    tmp_path: Path,
+) -> None:
+    # AC1: an untargeted GFM table must survive semantically through
+    # plan_markdown_section_patch's parse -> mutate -> re-render pipeline,
+    # not just the heading/body text this module otherwise exercises.
+    path = tmp_path / "topic.md"
+    original = (
+        "---\n"
+        "type: concept\n"
+        "---\n"
+        "## Data\n"
+        "\n"
+        "| A | B |\n"
+        "| --- | --- |\n"
+        "| 1 | 2 |\n"
+        "\n"
+        "## Target\n"
+        "Old body.\n"
+    )
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_markdown_section_patch(
+        _bundle(tmp_path), path, "Target", "New body.", level=2
+    )
+
+    assert plan.proposed_content == (
+        "---\n"
+        "type: concept\n"
+        "---\n"
+        "## Data\n"
+        "\n"
+        "| A   | B   |\n"
+        "| --- | --- |\n"
+        "| 1   | 2   |\n"
+        "\n"
+        "## Target\n"
+        "\n"
+        "New body.\n"
+    )

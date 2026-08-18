@@ -430,3 +430,81 @@ def test_plan_link_rewrite_mismatch_rejections(
         match="Link target mismatch|Reference-style links",
     ):
         plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+
+
+def test_rewrite_markdown_links_skips_link_open_with_non_string_href(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `isinstance(href, str)` guard in `_rewrite_markdown_links`'s
+    link loop (pre-#198 code, carried over unchanged from the old
+    `_instrumented_link_rule`) skips any `link_open` token whose `href`
+    attribute is missing or not a string, rather than treating it as a
+    rewrite candidate. Real CommonMark + GFM-table parsing (this module's
+    only enabled markdown-it-py extensions) always produces a string
+    `href` -- even an empty link destination normalizes to `""` -- so this
+    token shape is unreachable through Markdown source text alone. It is
+    exercised here by injecting a synthetic token via
+    `_walk_link_open_tokens`, standing in for any token-construction path
+    (a plugin, a hand-built token tree) that might not guarantee a string
+    `href`. The injected token's `href` is a list (non-string and
+    unhashable) so that removing/inverting the guard produces an
+    observable `TypeError` from the dict lookup, rather than silently
+    matching nothing.
+    """
+    from markdown_it.token import Token
+
+    from okf_core import patching as patching_module
+
+    path = tmp_path / "topic.md"
+    path.write_text("[link](old)\n", encoding="utf-8")
+
+    real_walk = patching_module._walk_link_open_tokens
+
+    def _walk_with_injected_bad_token(tokens):
+        found = real_walk(tokens)
+        bad = Token("link_open", "a", 1)
+        bad.attrs["href"] = ["not", "a", "string"]
+        return [*found, bad]
+
+    monkeypatch.setattr(
+        patching_module, "_walk_link_open_tokens", _walk_with_injected_bad_token
+    )
+
+    plan = plan_markdown_link_rewrite(
+        _bundle(tmp_path), path, [LinkRewrite("old", "new")]
+    )
+
+    assert plan.changed is True
+    assert plan.proposed_content == "[link](new)\n"
+
+
+def test_plan_link_rewrite_leaves_untargeted_gfm_table_intact(
+    tmp_path: Path,
+) -> None:
+    # AC1: an untargeted GFM table must survive semantically through
+    # plan_markdown_link_rewrite/_rewrite_markdown_links's parse -> mutate
+    # -> re-render pipeline. The table cell's own link ("old") is not a
+    # rewrite target and must stay untouched while a real target elsewhere
+    # in the document ("old2") is rewritten.
+    path = tmp_path / "topic.md"
+    original = (
+        "| A | [link](old) |\n"
+        "| --- | --- |\n"
+        "| 1 | 2 |\n"
+        "\n"
+        "See [other](old2) too.\n"
+    )
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_markdown_link_rewrite(
+        _bundle(tmp_path), path, [LinkRewrite("old2", "new2")]
+    )
+
+    assert plan.changed is True
+    assert plan.proposed_content == (
+        "| A   | [link](old) |\n"
+        "| --- | ----------- |\n"
+        "| 1   | 2           |\n"
+        "\n"
+        "See [other](new2) too.\n"
+    )
