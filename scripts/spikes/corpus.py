@@ -17,55 +17,63 @@ from __future__ import annotations
 CORPUS: tuple[tuple[str, str], ...] = (
     (
         "frontmatter-and-body",
-        "---\n"
-        "type: concept\n"
-        "custom: keep\n"
-        "---\n"
-        "Introduction.\n"
-        "\n"
-        "## Target\n"
-        "Old body.\n"
-        "### Nested\n"
-        "Old nested body.\n"
-        "\n"
-        "## Next\n"
-        "Keep this.\n",
+        (
+            "---\n"
+            "type: concept\n"
+            "custom: keep\n"
+            "---\n"
+            "Introduction.\n"
+            "\n"
+            "## Target\n"
+            "Old body.\n"
+            "### Nested\n"
+            "Old nested body.\n"
+            "\n"
+            "## Next\n"
+            "Keep this.\n"
+        ),
     ),
     (
         "asterisk-bullets",
-        "# Heading\n" "\n" "* first\n" "* second\n" "  * nested\n" "* third\n",
+        ("# Heading\n" "\n" "* first\n" "* second\n" "  * nested\n" "* third\n"),
     ),
     (
         "okf-citations",
-        "# Concept\n"
-        "\n"
-        "Body prose referencing a source.\n"
-        "\n"
-        "# Citations\n"
-        "\n"
-        "1. [Title of Work](https://example.com/a)\n"
-        "2. [Second Source](https://example.com/b)\n",
+        (
+            "# Concept\n"
+            "\n"
+            "Body prose referencing a source.\n"
+            "\n"
+            "# Citations\n"
+            "\n"
+            "1. [Title of Work](https://example.com/a)\n"
+            "2. [Second Source](https://example.com/b)\n"
+        ),
     ),
     (
         "table",
-        "# Data\n"
-        "\n"
-        "| Name  | Value |\n"
-        "| ----- | ----- |\n"
-        "| alpha | 1     |\n"
-        "| beta  | 2     |\n",
+        (
+            "# Data\n"
+            "\n"
+            "| Name  | Value |\n"
+            "| ----- | ----- |\n"
+            "| alpha | 1     |\n"
+            "| beta  | 2     |\n"
+        ),
     ),
     (
         "html-comment",
-        "# Notes\n"
-        "\n"
-        "<!-- editorial note: do not remove -->\n"
-        "\n"
-        "Visible prose.\n",
+        (
+            "# Notes\n"
+            "\n"
+            "<!-- editorial note: do not remove -->\n"
+            "\n"
+            "Visible prose.\n"
+        ),
     ),
     (
         "trailing-whitespace",
-        "# Heading\n" "\n" "Line with two trailing spaces.  \n" "Next line.\n",
+        ("# Heading\n" "\n" "Line with two trailing spaces.  \n" "Next line.\n"),
     ),
     (
         "crlf-line-endings",

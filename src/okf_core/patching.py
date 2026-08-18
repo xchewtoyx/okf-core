@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import os
 import re
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, MutableMapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from math import isfinite
@@ -15,6 +15,8 @@ from urllib.parse import quote, urlsplit, urlunsplit
 
 import yaml
 from markdown_it import MarkdownIt
+from mdformat.plugins import PARSER_EXTENSIONS
+from mdformat.renderer import MDRenderer
 from ruamel.yaml import YAML
 from ruamel.yaml import YAMLError as RuamelYAMLError
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
@@ -46,8 +48,6 @@ from okf_core.documents import (
 )
 
 if TYPE_CHECKING:
-    from markdown_it.rules_core.state_core import StateCore
-    from markdown_it.rules_inline.state_inline import StateInline
     from markdown_it.token import Token
 
 __all__ = [
@@ -83,7 +83,44 @@ __all__ = [
     "stamp_verified",
 ]
 
+
+# Markdown-side canonical serialization engine (ADR-0002 "Markdown side",
+# amended by issue #198). `_MARKDOWN` is CommonMark plus GFM tables (AC1)
+# -- `.enable("table")` turns on markdown-it-py's own built-in (but
+# commonmark-preset-disabled) table rule; no plugin package is needed for
+# *parsing*. `_MARKDOWN_RENDERER` is `mdformat`'s own `MDRenderer`, together
+# with `mdformat.plugins.PARSER_EXTENSIONS["tables"]` (published by the
+# `mdformat-gfm` dependency) supplying the table renderer functions
+# `MDRenderer` has no built-in support for. Both the enable() call and the
+# plugin registry are public, documented markdown-it-py/mdformat API --
+# unlike the deleted inline/core parser-rule instrumentation this engine
+# replaces, nothing here reaches into an internals module.
 _MARKDOWN = MarkdownIt("commonmark")
+_MARKDOWN.enable("table")
+_MARKDOWN_RENDERER = MDRenderer()
+_MARKDOWN_RENDER_OPTIONS: Mapping[str, Any] = {
+    "parser_extension": [PARSER_EXTENSIONS["tables"]],
+    "mdformat": {"wrap": "keep"},
+}
+
+
+def _render_markdown_tokens(
+    tokens: Sequence[Token], env: MutableMapping[str, Any]
+) -> str:
+    """Render a (sub)tree of markdown-it-py tokens to canonical Markdown.
+
+    `tokens` need not be the whole document -- any balanced open/close
+    token sequence (a full document, or one section's body) renders
+    standalone, which is what makes the no-op/idempotency comparisons in
+    `_patch_markdown_section` possible. `env` should be the `dict` an
+    earlier `_MARKDOWN.parse(...)` call on the same document populated
+    (carrying its `references`, for any reference-style link definitions
+    elsewhere in the document to survive an edit untouched); a fresh `{}`
+    is fine for a document/fragment with no reference-style links.
+    """
+
+    return _MARKDOWN_RENDERER.render(tokens, _MARKDOWN_RENDER_OPTIONS, env)
+
 
 # `freezegun.freeze_time` finds every module-level attribute anywhere in
 # `sys.modules` that is (by identity) the real `datetime.datetime` class and
@@ -212,9 +249,17 @@ def plan_markdown_section_patch(
     """Plan replacement or insertion of one named CommonMark section.
 
     A section is identified by exact, case-sensitive parsed heading content and
-    heading level. Existing ATX and Setext headings are supported. The heading
-    itself is preserved when replacing a section; an absent section is appended
-    using ATX syntax.
+    heading level. Existing ATX and Setext headings are supported for locating
+    the target section; output is always canonical Markdown (ADR-0002
+    "Markdown side", amended by #198) -- a matched Setext heading renders as
+    ATX on output (Setext is convergence-eligible, not a preserved style), and
+    surrounding block spacing/list-marker/table style converge to `mdformat`'s
+    canonical form. The heading's own text and level are preserved exactly
+    when replacing a section; an absent section is appended using ATX syntax.
+    Untargeted content survives semantically, not necessarily byte-for-byte
+    (R-C1); a request whose body is already semantically present under the
+    target heading is a no-op that rewrites nothing, the same "no-op never
+    writes" behavior `plan_frontmatter_merge` documents for frontmatter.
     """
 
     return _plan_document_change(
@@ -252,168 +297,26 @@ def _normalize_target(target: str) -> str:
     return _MARKDOWN.normalizeLink(target)
 
 
-@dataclass(frozen=True)
-class _LinkOccurrence:
-    """The exact source span of one real inline link's destination."""
+def _walk_link_open_tokens(tokens: Sequence[Token]) -> list[Token]:
+    """Collect every real inline "link_open" token in a (sub)tree, in order.
 
-    dest_start: int
-    dest_end: int
-    href: str
-
-
-_LINK_OCCURRENCES_ENV_KEY = "_okf_link_rewrite_occurrences"
-_BLOCK_OFFSET_ENV_KEY = "_okf_link_rewrite_block_offset"
-
-
-def _locate_link_destination(
-    state: StateInline, label_start: int
-) -> tuple[int, int] | None:
-    """Re-derive a just-parsed link's destination span using the parser's own helpers.
-
-    markdown-it-py's inline tokens carry no character offsets, so this replays
-    the label/destination lookup with the same ``state.md.helpers`` functions
-    the "link" rule itself used a moment earlier, instead of re-scanning the
-    raw text with a regex. Returns None for reference-style links, which have
-    no literal destination text in the body to rewrite.
+    markdown-it-py's block tokenizer always produces one flat top-level list
+    -- block-level nesting (list items, table cells, blockquotes, ...) is
+    represented entirely by open/close token pairs, never by nested Python
+    lists. The only real nesting is inline-level: each "inline" token's own
+    `.children` holds that block's character-level tokens, which is where
+    "link_open" tokens actually live. CommonMark forbids nested links, so one
+    shallow pass over every top-level "inline" token's direct children finds
+    them all -- no recursive tree walk is needed.
     """
 
-    label_end = state.md.helpers.parseLinkLabel(state, label_start, True)
-    if label_end < 0:
-        return None
-    pos = label_end + 1
-    maximum = state.posMax
-    if pos >= maximum or state.src[pos] != "(":
-        return None
-    pos += 1
-    while pos < maximum and state.src[pos] in ("\t", " ", "\n"):
-        pos += 1
-    dest_start = pos
-    result = state.md.helpers.parseLinkDestination(state.src, pos, maximum)
-    if result.ok:
-        return dest_start, result.pos
-    if pos < maximum and state.src[pos] == ")":
-        # Empty destination, e.g. `[label]()`: parseLinkDestination reports
-        # this as unmatched, but the "link" rule itself still treats it as a
-        # real link with an empty href, so record a zero-length span here too.
-        return dest_start, dest_start
-    return None
-
-
-def _find_block_offset(src: str, token: Token) -> int | None:
-    """Locate one block-level "inline" token's content within the whole source.
-
-    markdown-it-py parses each block's inline content as an independent
-    string, so positions captured while parsing it are relative to that
-    block, not the document. `.map` gives the block's original line range, so
-    its content can be found unambiguously within that range and used as a
-    baseline to translate block-relative offsets back to document offsets.
-    """
-
-    if token.map is None:
-        return None
-    line_offsets = _line_offsets(src)
-    start_line, end_line = token.map
-    if not (0 <= start_line < len(line_offsets)) or not (
-        0 <= end_line < len(line_offsets)
-    ):
-        return None
-    found = src.find(token.content, line_offsets[start_line], line_offsets[end_line])
-    return found if found >= 0 else None
-
-
-def _instrumented_core_inline_rule(state: StateCore) -> None:
-    """Wrap the core "inline" rule to record each block's absolute start offset.
-
-    This mirrors the library's own rule (see markdown_it.rules_core.inline)
-    exactly, adding only the offset bookkeeping `_instrumented_link_rule`
-    needs to translate its block-relative spans into document-relative ones.
-    """
-
-    for token in state.tokens:
-        if token.type != "inline":
-            continue
-        if token.children is None:
-            token.children = []
-        state.env[_BLOCK_OFFSET_ENV_KEY] = _find_block_offset(state.src, token)
-        state.md.inline.parse(token.content, state.md, state.env, token.children)
-    state.env.pop(_BLOCK_OFFSET_ENV_KEY, None)
-
-
-def _instrumented_link_rule(state: StateInline, silent: bool) -> bool:
-    """Wrap the "link" rule to record each real link's destination span as it parses.
-
-    This is a pure observer: it defers entirely to the library's own rule for
-    matching and token creation, and only inspects the outcome afterward, so
-    it cannot change what the parser recognizes as a link.
-    """
-
-    label_start = state.pos
-    tokens_before = len(state.tokens)
-    assert _link_inline_rule is not None
-    matched = _link_inline_rule(state, silent)
-    if matched and not silent and len(state.tokens) > tokens_before:
-        # state.push() flushes any pending plain text into its own token first,
-        # so the link_open this call produced isn't necessarily at tokens_before.
-        token = next(
-            (t for t in state.tokens[tokens_before:] if t.type == "link_open"), None
-        )
-        if token is not None:
-            href = token.attrGet("href")
-            location = _locate_link_destination(state, label_start)
-            block_offset = state.env.get(_BLOCK_OFFSET_ENV_KEY)
-            if (
-                location is not None
-                and isinstance(href, str)
-                and isinstance(block_offset, int)
-            ):
-                dest_start, dest_end = location
-                state.env.setdefault(_LINK_OCCURRENCES_ENV_KEY, []).append(
-                    _LinkOccurrence(
-                        dest_start=block_offset + dest_start,
-                        dest_end=block_offset + dest_end,
-                        href=href,
-                    )
-                )
-    return matched
-
-
-_link_inline_rule: Callable[[StateInline, bool], bool] | None = None
-_LINK_REWRITE_MARKDOWN: MarkdownIt | None = None
-
-
-def _get_link_rewrite_markdown(resolved_path: Path) -> MarkdownIt:
-    """Build (once) the MarkdownIt instance instrumented for link-span capture.
-
-    The instrumentation wraps markdown-it-py's own "link" inline rule and
-    "inline" core rule -- undocumented implementation details, not public API.
-    Importing them lazily, only when link rewriting is actually requested,
-    keeps a hypothetical upstream internal refactor from breaking every
-    consumer of this module instead of just this one primitive.
-    """
-
-    global _link_inline_rule, _LINK_REWRITE_MARKDOWN
-    if _LINK_REWRITE_MARKDOWN is None:
-        try:
-            from markdown_it.rules_inline import link as link_rule
-        except ImportError as exc:
-            raise DocumentChangePlanningError(
-                resolved_path,
-                "plan_markdown_link_rewrite requires markdown-it-py internals "
-                f"that are unavailable in this installed version: {exc}",
-            ) from exc
-        _link_inline_rule = link_rule
-        md = MarkdownIt("commonmark")
-        md.core.ruler.at("inline", _instrumented_core_inline_rule)
-        md.inline.ruler.at("link", _instrumented_link_rule)
-        _LINK_REWRITE_MARKDOWN = md
-    return _LINK_REWRITE_MARKDOWN
-
-
-def _format_destination(new_target: str, *, wrap: bool) -> str:
-    if not wrap:
-        return new_target
-    escaped = new_target.replace("<", "\\<").replace(">", "\\>")
-    return f"<{escaped}>"
+    return [
+        child
+        for token in tokens
+        if token.type == "inline" and token.children
+        for child in token.children
+        if child.type == "link_open"
+    ]
 
 
 def _validate_link_rewrites(resolved_path: Path, rewrites: Any) -> None:
@@ -463,77 +366,76 @@ def plan_markdown_link_rewrite(
     blocks, or in frontmatter - is never touched. Duplicate old_target entries
     (after normalization) are rejected. Reference-style links are not
     supported and cause planning to raise DocumentChangePlanningError.
+
+    The rewritten destination is written in `okf-core`'s canonical Markdown
+    form (ADR-0002 "Markdown side", amended by #198): `new_target` is
+    normalized the same way `old_target` is matched (so the value that
+    round-trips back out on a later parse is the normalized one, keeping
+    output idempotent -- see the module's round-trip property tests), and
+    `mdformat`'s renderer decides bracket-wrapping/escaping, not this
+    function -- a caller-preferred original bracketing or quote style around
+    an untouched link is not preserved (R-C1: canonical, not byte-identical).
+    Touching any link in the document converges the *whole* document's
+    Markdown body to canonical form (R-C2), the same convergence-on-first-
+    touch behavior `plan_frontmatter_merge` applies to frontmatter.
     """
     resolved_path = Path(path)
     _validate_link_rewrites(resolved_path, rewrites)
 
-    def rewrite_links(resolved_path: Path, original_content: str) -> str:
-        if not rewrites:
-            return original_content
-
-        try:
-            document = parse_concept_document(original_content)
-        except DocumentParseError as exc:
-            raise DocumentChangePlanningError(
-                resolved_path,
-                f"Could not parse document frontmatter: {exc}",
-            ) from exc
-
-        body = document.body
-        body_offset = len(original_content) - len(body)
-        frontmatter_content = original_content[:body_offset]
-
-        # markdown-it-py normalizes CRLF/CR to LF internally before parsing, so
-        # parser-derived offsets are only valid against an equally-normalized
-        # copy of the body. The original line-ending style is restored below.
-        line_ending = _first_line_ending(body)
-        normalized_body = _normalize_line_endings(body)
-
-        env: dict[str, Any] = {}
-        _get_link_rewrite_markdown(resolved_path).parse(normalized_body, env)
-        if env.get("references"):
-            raise DocumentChangePlanningError(
-                resolved_path,
-                "Reference-style links are not supported by the link rewriter.",
-            )
-
-        occurrences_by_href: dict[str, list[_LinkOccurrence]] = {}
-        for occurrence in env.get(_LINK_OCCURRENCES_ENV_KEY, []):
-            occurrences_by_href.setdefault(occurrence.href, []).append(occurrence)
-
-        all_matches: list[tuple[_LinkOccurrence, LinkRewrite]] = [
-            (occurrence, r)
-            for r in rewrites
-            for occurrence in occurrences_by_href.get(
-                _normalize_target(r.old_target), []
-            )
-        ]
-
-        # Sort matches in reverse order of their start positions to prevent offset drift
-        all_matches.sort(key=lambda item: item[0].dest_start, reverse=True)
-
-        patched_body = normalized_body
-        for occurrence, r in all_matches:
-            wrap = patched_body[occurrence.dest_start] == "<" or (
-                " " in r.new_target or "(" in r.new_target or ")" in r.new_target
-            )
-            new_target_str = _format_destination(r.new_target, wrap=wrap)
-            patched_body = (
-                patched_body[: occurrence.dest_start]
-                + new_target_str
-                + patched_body[occurrence.dest_end :]
-            )
-
-        if line_ending != "\n":
-            patched_body = patched_body.replace("\n", line_ending)
-
-        return frontmatter_content + patched_body
-
     return _plan_document_change(
         bundle,
         Path(path),
-        rewrite_links,
+        lambda resolved_path, original_content: _rewrite_markdown_links(
+            resolved_path, original_content, rewrites
+        ),
     )
+
+
+def _rewrite_markdown_links(
+    path: Path, content: str, rewrites: Sequence[LinkRewrite]
+) -> str:
+    if not rewrites:
+        return content
+
+    try:
+        document = parse_concept_document(content)
+    except DocumentParseError as exc:
+        raise DocumentChangePlanningError(
+            path,
+            f"Could not parse document frontmatter: {exc}",
+        ) from exc
+
+    body = document.body
+    body_offset = len(content) - len(body)
+    frontmatter_content = content[:body_offset]
+
+    env: dict[str, Any] = {}
+    tokens = _MARKDOWN.parse(body, env)
+    if env.get("references"):
+        raise DocumentChangePlanningError(
+            path,
+            "Reference-style links are not supported by the link rewriter.",
+        )
+
+    new_target_by_normalized_old = {
+        _normalize_target(r.old_target): _normalize_target(r.new_target)
+        for r in rewrites
+    }
+
+    changed = False
+    for link_open in _walk_link_open_tokens(tokens):
+        href = link_open.attrGet("href")
+        if not isinstance(href, str):
+            continue
+        new_href = new_target_by_normalized_old.get(href)
+        if new_href is not None:
+            link_open.attrSet("href", new_href)
+            changed = True
+
+    if not changed:
+        return content
+
+    return frontmatter_content + _render_markdown_tokens(tokens, env)
 
 
 def link_target_for_new_location(
@@ -1268,7 +1170,7 @@ def _patch_markdown_section(
     body: str,
     level: int,
 ) -> str:
-    _validate_section_request(path, heading, body, level)
+    heading_tokens = _validate_section_request(path, heading, body, level)
     try:
         document = parse_concept_document(content)
     except DocumentParseError as exc:
@@ -1278,52 +1180,108 @@ def _patch_markdown_section(
 
     document_body = document.body
     body_offset = len(content) - len(document_body)
-    tokens = _MARKDOWN.parse(document_body)
-    matches: list[tuple[int, int]] = []
-    target_tag = f"h{level}"
-    for index, token in enumerate(tokens):
-        if (
-            token.type != "heading_open"
-            or token.tag != target_tag
-            or token.map is None
-            or index + 1 >= len(tokens)
-        ):
-            continue
-        inline = tokens[index + 1]
-        if inline.type == "inline" and inline.content == heading:
-            matches.append((index, token.map[1]))
+    env: dict[str, Any] = {}
+    tokens = _MARKDOWN.parse(document_body, env)
 
+    heading_index = _locate_section_heading(path, tokens, heading, level)
+    new_body_tokens = _MARKDOWN.parse(body, env)
+    _reject_body_heading_at_or_above_level(path, new_body_tokens, level)
+
+    if heading_index is None:
+        appended_tokens = [*tokens, *heading_tokens, *new_body_tokens]
+        return content[:body_offset] + _render_markdown_tokens(appended_tokens, env)
+
+    # heading_open, inline, heading_close: three tokens for the matched
+    # heading itself (kept verbatim -- see the docstring on
+    # plan_markdown_section_patch), followed by the section's own body.
+    section_body_start = heading_index + 3
+    section_body_end = _section_body_end(tokens, section_body_start, level)
+
+    # Semantic no-op check (R-C3/AC3-style, mirroring _merge_frontmatter's
+    # "already-equal value writes nothing"): compare the *canonical render*
+    # of the existing section body against the requested one, not their
+    # source bytes -- a non-canonical document's untouched formatting must
+    # not be churned by a request that doesn't actually change the section.
+    existing_rendered = _render_markdown_tokens(
+        tokens[section_body_start:section_body_end], env
+    )
+    new_rendered = _render_markdown_tokens(new_body_tokens, env)
+    if existing_rendered == new_rendered:
+        return content
+
+    replaced_tokens = [
+        *tokens[:section_body_start],
+        *new_body_tokens,
+        *tokens[section_body_end:],
+    ]
+    return content[:body_offset] + _render_markdown_tokens(replaced_tokens, env)
+
+
+def _locate_section_heading(
+    path: Path, tokens: Sequence[Token], heading: str, level: int
+) -> int | None:
+    """Return the token index of the level-`level` heading matching `heading`.
+
+    Matches an existing ATX or Setext heading by exact, case-sensitive
+    parsed inline content and level. Returns None when absent; raises
+    DocumentChangePlanningError when more than one such heading exists.
+    """
+
+    target_tag = f"h{level}"
+    matches = [
+        index
+        for index, token in enumerate(tokens)
+        if token.type == "heading_open"
+        and token.tag == target_tag
+        and index + 1 < len(tokens)
+        and tokens[index + 1].type == "inline"
+        and tokens[index + 1].content == heading
+    ]
     if len(matches) > 1:
         raise DocumentChangePlanningError(
             path,
             f"Document contains multiple level-{level} headings named {heading!r}",
         )
+    return matches[0] if matches else None
 
-    line_ending = _first_line_ending(content)
-    normalized_body = _ensure_structural_line_ending(body, line_ending)
-    if not matches:
-        return _append_markdown_section(
-            content,
-            heading,
-            normalized_body,
-            level,
-            line_ending,
+
+def _section_body_end(tokens: Sequence[Token], body_start: int, level: int) -> int:
+    """Index of the token ending one section's body: the next heading at or
+    above `level`, or the end of the document when none follows."""
+
+    for index in range(body_start, len(tokens)):
+        token = tokens[index]
+        if token.type == "heading_open" and int(token.tag[1:]) <= level:
+            return index
+    return len(tokens)
+
+
+def _reject_body_heading_at_or_above_level(
+    path: Path, body_tokens: Sequence[Token], level: int
+) -> None:
+    """Reject a section body containing a heading at or above `level`.
+
+    A section's own boundary is "up to the next heading at or above this
+    level" (see `_section_body_end`) -- the same rule this operation uses to
+    *locate* where a section ends. A body containing such a heading would
+    read back, on a later edit, as if that heading itself started a new
+    section, silently duplicating content instead of converging (the
+    ambiguity a plain token splice can't detect after the boundary
+    information is lost to re-serialization and reparse). Surfacing this at
+    planning time, before any write, follows AGENTS.md's "surface problems
+    explicitly" rule rather than producing structurally ambiguous output.
+    """
+
+    if any(
+        token.type == "heading_open" and int(token.tag[1:]) <= level
+        for token in body_tokens
+    ):
+        raise DocumentChangePlanningError(
+            path,
+            f"Section body cannot contain a heading at or above level {level}: "
+            "it would be indistinguishable from the section's own boundary "
+            "on a later edit",
         )
-
-    token_index, section_start_line = matches[0]
-    section_end_line = len(document_body.splitlines(keepends=True))
-    for token in tokens[token_index + 1 :]:
-        if token.type != "heading_open" or token.map is None:
-            continue
-        token_level = int(token.tag[1:])
-        if token_level <= level:
-            section_end_line = token.map[0]
-            break
-
-    offsets = _line_offsets(document_body)
-    section_start = body_offset + offsets[section_start_line]
-    section_end = body_offset + offsets[section_end_line]
-    return f"{content[:section_start]}{normalized_body}{content[section_end:]}"
 
 
 def _validate_section_request(
@@ -1331,7 +1289,15 @@ def _validate_section_request(
     heading: str,
     body: str,
     level: int,
-) -> None:
+) -> list[Token]:
+    """Validate a section-patch request; return the heading's own ATX tokens.
+
+    The returned `[heading_open, inline, heading_close]` triple is reused
+    verbatim by `_patch_markdown_section`'s append branch, so the ATX
+    round-trip check below and the tokens the append path actually splices
+    in can never drift apart.
+    """
+
     if (
         not isinstance(heading, str)
         or not heading
@@ -1350,10 +1316,11 @@ def _validate_section_request(
         )
     generated_heading = _MARKDOWN.parse(f"{'#' * level} {heading}\n")
     if (
-        len(generated_heading) < 2
+        len(generated_heading) < 3
         or generated_heading[0].type != "heading_open"
         or generated_heading[1].type != "inline"
         or generated_heading[1].content != heading
+        or generated_heading[2].type != "heading_close"
     ):
         raise DocumentChangePlanningError(
             path,
@@ -1361,65 +1328,7 @@ def _validate_section_request(
         )
     if not isinstance(body, str):
         raise DocumentChangePlanningError(path, "Section body must be a string")
-
-
-def _append_markdown_section(
-    content: str,
-    heading: str,
-    body: str,
-    level: int,
-    line_ending: str,
-) -> str:
-    trailing_line_endings = _count_trailing_line_endings(content)
-    separator = line_ending * max(0, 2 - trailing_line_endings) if content else ""
-    heading_line = f"{'#' * level} {heading}{line_ending}"
-    return f"{content}{separator}{heading_line}{body}"
-
-
-def _ensure_structural_line_ending(body: str, line_ending: str) -> str:
-    if body and not body.endswith(("\n", "\r")):
-        return f"{body}{line_ending}"
-    return body
-
-
-def _first_line_ending(content: str) -> str:
-    for index, character in enumerate(content):
-        if character == "\n":
-            return "\n"
-        if character == "\r":
-            if index + 1 < len(content) and content[index + 1] == "\n":
-                return "\r\n"
-            return "\r"
-    return "\n"
-
-
-def _normalize_line_endings(text: str) -> str:
-    """Collapse CRLF/CR line endings to LF, mirroring markdown-it-py's own normalization."""
-
-    return text.replace("\r\n", "\n").replace("\r", "\n")
-
-
-def _count_trailing_line_endings(content: str) -> int:
-    count = 0
-    position = len(content)
-    while position > 0 and count < 2:
-        if position >= 2 and content[position - 2 : position] == "\r\n":
-            position -= 2
-        elif content[position - 1] in "\r\n":
-            position -= 1
-        else:
-            break
-        count += 1
-    return count
-
-
-def _line_offsets(content: str) -> tuple[int, ...]:
-    offsets = [0]
-    position = 0
-    for line in content.splitlines(keepends=True):
-        position += len(line)
-        offsets.append(position)
-    return tuple(offsets)
+    return generated_heading[:3]
 
 
 def _merge_frontmatter(

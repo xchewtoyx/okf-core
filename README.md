@@ -420,15 +420,20 @@ graph = build_bundle_graph(config.bundles["default"], manifest)
 
 ### Safe Document Changes
 
-The YAML frontmatter primitive (`plan_frontmatter_merge`) below has moved to
-`okf-core`'s documented canonical output form, per `docs/decisions/` (ADR-0001
-and ADR-0002) — see that primitive's own paragraphs for the specifics. The
-Markdown-body primitives (`plan_markdown_section_patch`,
-`plan_markdown_link_rewrite`, and friends) still preserve untouched content
-byte-for-byte; that engine has not moved yet, pending issue #198's
-Markdown-side re-verification of ADR-0002's canonical-form direction. Treat
-the byte-preservation behavior documented below for those primitives as
-current and accurate until #198 lands.
+Every write primitive below — YAML frontmatter (`plan_frontmatter_merge`) and
+the Markdown-body primitives (`plan_markdown_section_patch`,
+`plan_markdown_link_rewrite`, and friends) alike — targets `okf-core`'s
+documented canonical output form, per `docs/decisions/` (ADR-0001 and
+ADR-0002; the Markdown-side decision landed with issue #198). Untargeted
+content survives an edit *semantically*, not necessarily byte-for-byte:
+headings, lists, tables, code fences, and link titles keep their meaning, but
+block spacing, list markers, heading markup (Setext converges to ATX), and
+line endings (always LF) may converge to the canonical style on a document's
+first edit. This is expected one-time formatting churn, not a defect — a
+non-canonical but spec-conformant document is always accepted; there is no
+"canonicalize the bundle first" precondition, and a request that doesn't
+actually change anything (by canonical/data-model comparison, not source
+bytes) never rewrites the file.
 
 `plan_document_change(bundle, path, proposed_content, *, allow_missing=False)`
 prepares an inspectable full-content change for one UTF-8 file under a
@@ -483,22 +488,27 @@ non-UTF-8 input are rejected. Other focused patch operations are planned
 separately.
 
 `plan_markdown_section_patch(bundle, path, heading, body, *, level=1)` builds
-the same inspectable `DocumentChangePlan` for one named Markdown section.
-Sections are matched case-sensitively by exact parsed Markdown heading content
-and level. Existing ATX (`# Heading`) and Setext headings are supported and
-their original heading syntax is preserved. A section body extends through
-nested lower-level headings and stops before the next heading of equal or
-higher level. Multiple matching headings are rejected as ambiguous. Heading
-input that would parse differently when generated as ATX Markdown is rejected
-rather than producing a section that cannot be matched idempotently.
+the same inspectable `DocumentChangePlan` for one named Markdown section, via
+parse → locate/replace the heading's token subtree → re-render canonically
+(ADR-0002). Sections are matched case-sensitively by exact parsed Markdown
+heading content and level; existing ATX (`# Heading`) and Setext headings are
+both supported for *matching*, but output is always canonical ATX — a matched
+Setext heading renders as ATX, the same convergence-on-first-touch churn
+frontmatter's block-style normalization already documents. A section body
+extends through nested lower-level headings and stops before the next heading
+of equal or higher level; a replacement `body` containing a heading at or
+above the target `level` is rejected (`DocumentChangePlanningError`), since it
+would be indistinguishable from the section's own boundary on a later edit.
+Multiple matching headings are rejected as ambiguous. Heading input that would
+parse differently when generated as ATX Markdown is rejected rather than
+producing a section that cannot be matched idempotently.
 
 When no matching heading exists, the section is appended at the end using ATX
-syntax. Existing bytes are retained and only the minimum separating line
-endings are inserted. Replacement body bytes are used as supplied; when a body
-does not end in a line ending, the document's first detected line-ending style
-is appended to keep subsequent Markdown structurally separate. Equivalent
-content produces a no-op plan. Applying the plan uses
-`apply_document_change()` and retains its stale-content protection.
+syntax. A request whose body is already semantically present under the target
+heading (by canonical rendering, not source bytes) is a no-op that rewrites
+nothing — the same "no-op never writes" behavior `plan_frontmatter_merge`
+documents for frontmatter. Applying the plan uses `apply_document_change()`
+and retains its stale-content protection.
 
 `plan_frontmatter_merge(bundle, path, updates)` builds a safe plan for a
 shallow merge of selected top-level YAML frontmatter fields. Frontmatter is
@@ -583,9 +593,9 @@ retains the same stale-content protection.
 
 `plan_stamp_stale_after(bundle, path, stale_after)` and `stamp_stale_after(bundle, path, stale_after)` set a concept document's top-level `stale_after` lifecycle field (OKF v0.2 §5.5). `stale_after` must be a `datetime.date` or an ISO 8601 `YYYY-MM-DD` string; a `datetime.datetime` is rejected, since §5.5 defines `stale_after` as an absolute date, not a timestamp. The write delegates to `plan_frontmatter_merge`, so setting `stale_after` to its already-current value is a no-op. Applying uses `apply_document_change()` and retains the same stale-content protection.
 
-`plan_markdown_link_rewrite(bundle, path, rewrites)` builds a safe plan to rewrite the target/href destinations of one or more inline Markdown links in the document body. `rewrites` must be a sequence of `LinkRewrite(old_target, new_target)` instances. The primitive operates strictly on the Markdown body, leaving the frontmatter completely untouched. Duplicate `old_target` inputs (after normalization) are rejected. The implementation uses a single-pass replacement to prevent offset drift and avoid double-replacement issues if multiple rewrites form chains.
+`plan_markdown_link_rewrite(bundle, path, rewrites)` builds a safe plan to rewrite the target/href destinations of one or more inline Markdown links in the document body, via parse → mutate matching `link_open` token hrefs → re-render canonically (ADR-0002). `rewrites` must be a sequence of `LinkRewrite(old_target, new_target)` instances. The primitive operates strictly on the Markdown body, leaving the frontmatter completely untouched. Duplicate `old_target` inputs (after normalization) are rejected.
 
-Matching is driven entirely by parsing the document with `markdown-it-py`: each link's resolved href is compared against a caller-supplied target normalized the same way, and only real inline links found by the parser are ever rewritten. Text that merely looks like a link — inside code spans, fenced code blocks, or reference-style syntax — is never touched, without needing a separate raw-text scan or safety cross-check. Reference-style links are not supported and cause planning to raise `DocumentChangePlanningError`. Applying the plan uses `apply_document_change()` and retains the same stale-content protection.
+Matching is driven entirely by parsing the document with `markdown-it-py`: each link's resolved href is compared against a caller-supplied target normalized the same way, and only real inline links found by the parser are ever rewritten. Text that merely looks like a link — inside code spans, fenced code blocks, or reference-style syntax — is never touched, without needing a separate raw-text scan or safety cross-check. Reference-style links are not supported and cause planning to raise `DocumentChangePlanningError`. `new_target` is normalized the same way `old_target` is matched and re-rendered via `mdformat`'s own bracket-wrapping/escaping and always-double-quoted title style, not the target's original source styling — this keeps a rewritten destination idempotent (a later parse recovers the same value) rather than merely close to the caller's literal input. Applying the plan uses `apply_document_change()` and retains the same stale-content protection.
 
 `plan_file_move(bundle, source, dest)` prepares an inspectable relocation of one existing bundle file, returning a `FileMovePlan` with the resolved source/dest paths and the source's SHA-256 hash. Planning reads and hashes the source but never moves it; source and dest resolving to the same path produces an idempotent no-op plan (`.noop`). `apply_file_move(bundle, plan)` rechecks bundle write safety and the source's current hash, then relocates the file with a create-hard-link-then-unlink sequence rather than an atomic replace: this means a destination that appears concurrently after planning is never silently overwritten (`FileMoveConflictError` is raised instead), at the cost of requiring source and dest to reside on the same filesystem. If the link succeeds but removing the source fails, both copies are left in place rather than losing the document.
 

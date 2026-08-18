@@ -37,7 +37,7 @@ An ADR has these sections:
 | ADR | Title | Status |
 | --- | --- | --- |
 | [0001](0001-supersede-round-trip-refactor-descope.md) | Supersede the round-trip refactor descope | ACCEPTED |
-| [0002](0002-canonical-serialization-form.md) | Canonical serialization form | ACCEPTED (framework + YAML); PROPOSED (Markdown) |
+| [0002](0002-canonical-serialization-form.md) | Canonical serialization form | ACCEPTED (framework + YAML + Markdown) |
 | [0003](0003-attribution-footnote-label-charset.md) | Attribution footnote label charset | ACCEPTED |
 
 ## Registered spike-era decisions
@@ -49,9 +49,9 @@ into the ADR that governs their current adoption status:
 
 - `docs/spikes/148-round-trip-refactor-descope.md` — superseded by
   [ADR-0001](0001-supersede-round-trip-refactor-descope.md).
-- `docs/spikes/149-markdown-round-trip.md` — evidence referenced by
-  [ADR-0002](0002-canonical-serialization-form.md); adoption status PROPOSED,
-  pending issue #198.
+- `docs/spikes/149-markdown-round-trip.md` — evidence re-verified and
+  adopted by [ADR-0002](0002-canonical-serialization-form.md) (Markdown
+  side, ACCEPTED via issue #198).
 - `docs/spikes/issue-117-yaml-frontmatter-editing.md` — evidence adopted by
   [ADR-0002](0002-canonical-serialization-form.md) (YAML side, ACCEPTED).
 - `docs/spikes/177-postmortem-delivery-loop-design.md` — design-only spike,
