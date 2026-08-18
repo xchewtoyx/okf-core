@@ -1,8 +1,7 @@
 # ADR-0002: Canonical serialization form
 
-- **Status:** ACCEPTED (decision framework, and the YAML-side choice below).
-  PROPOSED (the Markdown-side choice) — not yet binding on implementation
-  work; see "Markdown side" below.
+- **Status:** ACCEPTED (decision framework, the YAML-side choice, and —
+  amended by issue #198 — the Markdown-side choice below).
 - **Depends on:** ADR-0001 (supersedes the byte-identity contract that made
   this decision unnecessary before).
 - **Related:** `[replan-requirements]`
@@ -126,30 +125,122 @@ does not touch them):
   already present, at its already-present type, produces no write — per
   R-A4, no-op equality is semantic (same data model), not byte equality.
 
-### Markdown side — PROPOSED, not accepted
+### Markdown side — FIRM (amended by issue #198)
 
-This ADR deliberately does **not** make a firm Markdown-side choice yet.
-`docs/spikes/149-markdown-round-trip.md` recommended Strategy A
-(`mdformat`) under the old byte-identity framing, including a temporary
-`markdown-it-py < 4` pin to satisfy `mdformat` 0.7.x's dependency
-constraint. Under R-C1/R-C2, `mdformat`'s canonical-input precondition is
-no longer disqualifying (see Framework, point 5) — but that does not by
-itself make Strategy A the right choice under the new contract, and the
-renderer choice plus the markdown-it-py 4.x-vs-<4 pin question both need
-re-verification against the actual R-C1/R-C2/R-C3 fit criteria, not
-inherited from a spike run against a different requirement. Issue #198 is
-scoped to re-verify `docs/spikes/149-markdown-round-trip.md`'s evidence
-under the new contract and record a firm decision here (as an amendment to
-this ADR or a superseding ADR).
+**Adopt Strategy A (`mdformat`)** for the token-tree mutate-and-re-render
+engine `plan_markdown_section_patch`/`plan_markdown_link_rewrite` use, per
+`docs/spikes/149-markdown-round-trip.md`'s evidence — re-verified below
+against R-C1/R-C2/R-C3 (not the retired byte-identity axis the spike was
+originally scored on) rather than inherited unexamined. The spike's
+Strategy-B (`tree-sitter`) alternative is re-rejected on the same grounds:
+byte-exact fidelity is no longer the deciding property (Framework point 5),
+so its native-binary dependency cost buys nothing this contract needs.
 
-A firm choice now would be premature: it would either re-litigate #198's
-work before that issue runs, or lock in Strategy A's dependency pin without
-having re-checked whether it's still the right tradeoff once the scoring
-axis has changed. Until #198 lands, Markdown-side writes continue on the
-existing engines described in ADR-0001; this is not a regression, since
-ADR-0001 already documents those engines' byte-pinning tests as
-characterization baselines rather than the contract implementors optimize
-for going forward.
+**Renderer:** `mdformat.renderer.MDRenderer`, fed tokens from the existing
+`markdown-it-py` parser instance (`_MARKDOWN` in `patching.py`) rather than
+`mdformat`'s own private parser-construction helpers — `MDRenderer.render(
+tokens, options, env)` is `mdformat`'s own documented public entry point for
+this exact "render an externally-produced token stream" use case, and
+`mdformat.plugins.PARSER_EXTENSIONS` (also public) supplies the GFM-table
+renderer functions `MDRenderer` has no built-in support for. This keeps the
+engine's only markdown-it-py/mdformat coupling to public, documented API —
+the property AC3 (`grep -r "rules_inline" src/` empty) checks for — unlike
+the deleted inline/core rule instrumentation this replaces.
+
+**Table support (AC1):** `mdformat-gfm`, using only its `"tables"` extension
+entry point (`mdit.enable("table")` plus the matching renderer functions),
+not its full `"gfm"` bundle — this adds GFM table parsing/rendering without
+also pulling in strikethrough, autolinks, or task-list syntax AC1 never
+asked for. The standalone `mdformat-tables` package was rejected: at
+re-verification time its latest release (`1.0.0`) still declared
+`mdformat>=0.7.5,<0.8.0`, forcing a downgrade to `mdformat` 0.7.x; the
+`mdformat-gfm` package's `"tables"` extension entry point provides
+identical table rendering (same `update_mdit`/`RENDERERS` shape) while
+declaring `mdformat>=0.7.5` with no upper bound, so it resolves cleanly
+against current `mdformat`. `mdformat-frontmatter` is not a dependency:
+frontmatter is sliced off (`_split_frontmatter`) before the Markdown body
+ever reaches the parser/renderer, so it never needs to pass through
+`mdformat` at all — the same division of ownership the spike's "Frontmatter
+boundary" note anticipated.
+
+**`markdown-it-py` version pin: unchanged (no downgrade needed).** The
+spike's "one thing #148 must plan around" flagged a `markdown-it-py < 4`
+pin as the likely cost of adopting `mdformat`, because `mdformat` 0.7.x
+(current at spike time) capped `markdown-it-py<4`. At #198's
+re-verification, current `mdformat` (`1.0.0`) declares
+`markdown-it-py<5,>=1` — the `<4` cap was lifted upstream between the spike
+and this issue. `pyproject.toml`'s existing `markdown-it-py >= 3, < 5` pin
+already accommodates this; installing `mdformat`/`mdformat-gfm` resolves
+`markdown-it-py` to `4.x` (verified: `4.2.0`) under that same pin. No pin
+change ships with #198.
+
+**Observable canonical-form properties**, mirroring the YAML side's
+"documented canonical form" structure:
+
+- **Heading style:** always ATX on output. A Setext heading is still
+  matched by its parsed content/level (locating a section doesn't require
+  the document to already be canonical, per R-C2), but renders as ATX —
+  `MDRenderer`'s own heading renderer has no Setext output form at all, so
+  this isn't a policy choice this ADR could make differently.
+- **Block spacing:** a blank line always separates a heading from its
+  following block and between sibling block-level elements, per
+  `mdformat`'s own defaults — regardless of the source document's spacing.
+- **List markers:** `-` for the primary bullet list nesting level,
+  alternating with `*` for consecutive sibling lists at the same level
+  (`mdformat`'s own default disambiguation rule, `get_list_marker_type`).
+- **Tables:** GFM pipe-table syntax, column-padded and delimiter-aligned per
+  each column's declared alignment (`mdformat-gfm`'s `"tables"` extension
+  default rendering).
+- **Link destinations:** bracket-wrapped (`<...>`) only when the
+  destination contains a space, parenthesis, or ASCII control character
+  (`mdformat`'s `maybe_add_link_brackets`); otherwise unwrapped. A link
+  title is always double-quoted on output regardless of the source's
+  quote/paren title style. `plan_markdown_link_rewrite`'s `new_target` is
+  normalized (`_normalize_target`, the same normalizer already used to
+  *match* `old_target`) before being written into a `link_open` token's
+  `href` — required for R-C1 idempotency: an unnormalized destination
+  containing e.g. a literal `>` or non-ASCII character renders once as
+  literal text but re-parses to a percent-encoded value, so a second
+  render of the reparsed document would differ from the first (see
+  `tests/test_markdown_canonical_roundtrip.py`).
+- **Line endings:** always LF, mirroring the YAML side's own LF-always
+  choice and for the same reason (avoids fragile CRLF post-processing) —
+  the four line-ending bookkeeping helpers the old splice engine needed
+  (`_first_line_ending`, `_normalize_line_endings`,
+  `_count_trailing_line_endings`, `_ensure_structural_line_ending`) have no
+  canonical-engine equivalent; `mdformat`'s renderer only ever emits LF.
+
+**Section-body ambiguity guard (a new constraint the token-tree engine
+requires that the old splice engine did not, since it never reparsed its
+own output as tokens):** `plan_markdown_section_patch` rejects a
+replacement `body` that itself parses to a heading at or above the target
+section's own `level`
+(`_reject_body_heading_at_or_above_level`) — discovered by this issue's own
+`hypothesis` idempotency property test generating `body="#"`. Such a body
+is structurally indistinguishable, on a later reparse, from the section's
+own boundary (`_section_body_end`'s "next heading at or above this level
+ends the section" rule, the same rule used to *locate* where a section
+ends), which would silently duplicate content rather than converge. This is
+a documented limitation of the operation, not a defect: surfaced at
+planning time via `DocumentChangePlanningError`, per AGENTS.md's "surface
+problems explicitly" rule, rather than producing ambiguous output.
+
+**R-C2 "convergence, not precondition" applies identically to Markdown:**
+per the Framework above, planning never requires a document to already be
+canonical. A non-canonical but spec-conformant document (mixed CRLF,
+Setext headings, tight block spacing, non-canonical table padding) is
+accepted, and its first edit converges the *whole* Markdown body to
+canonical form — not just the section/link an edit targets — the same
+scope `_normalize_container_style` already applies on the YAML side. This
+retires the spike-era design (`docs/spikes/149-markdown-round-trip.md`'s
+"Proposed design" §1, "Assert canonical input... raises
+`DocumentChangePlanningError` if the document is not already canonical")
+of planning-time rejection of non-canonical input; that design predates
+R-C2 and is superseded by it, not carried forward. A request that doesn't
+actually change a section's/link's canonical content is still a no-op that
+writes nothing (mirroring `plan_frontmatter_merge`'s no-op semantics), so
+an untouched document's formatting is never churned by a call that
+resolves to no real change.
 
 ## Alternatives rejected
 
@@ -181,6 +272,9 @@ for going forward.
   framework's one-way-door rule) — e.g. a `ruamel.yaml` maintenance issue
   that makes it non-viable, or a future Python version floor change that
   reopens YAMLRocks' disqualification.
-- **Markdown side:** resolves into a firm decision when issue #198 lands
-  its re-verification. Until then, this section stays PROPOSED and does
-  not bind implementation work.
+- **Markdown side:** now firm (issue #198). Revisit only via a new recorded
+  decision (the same one-way-door rule as the YAML side) — e.g. an
+  `mdformat`/`mdformat-gfm` maintenance issue that makes either non-viable,
+  or a future `markdown-it-py` major-version bump `mdformat` doesn't follow
+  (re-opening the version-pin question this ADR currently resolves as "no
+  change needed").

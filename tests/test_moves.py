@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+from markdown_it import MarkdownIt
 
 import okf_core.moves as moves_module
 from okf_core import (
@@ -16,6 +17,35 @@ from okf_core import (
     move_concept,
     plan_move_concept,
 )
+
+# #198 replaced the link-rewrite engine's line-offset splicer (which left
+# untouched bytes exactly as written) with parse -> mutate token tree ->
+# canonical re-render (ADR-0002): a rewritten file's *whole* content is no
+# longer guaranteed byte-identical to "the old content with only the link
+# destination substituted," even though nothing about `move_concept`'s own
+# contract -- every inbound link gets repaired -- has changed. Assertions
+# below that check the outcome of an actual link rewrite therefore compare
+# at link level (`_link_hrefs`, the destinations `move_concept` promises to
+# repair) rather than the whole file's bytes; assertions on files nothing
+# touched (an unrelated link, a rejected/aborted move, `index.md` -- a
+# different, unrelated engine) stay exact, since those still assert "nothing
+# changed," not "the canonical engine's chosen formatting."
+_LINK_MARKDOWN = MarkdownIt("commonmark")
+
+
+def _link_hrefs(text: str) -> list[str]:
+    """Every real inline link's href in `text`, in document order."""
+    hrefs: list[str] = []
+    for token in _LINK_MARKDOWN.parse(text):
+        if token.type != "inline" or not token.children:
+            continue
+        for child in token.children:
+            if child.type != "link_open":
+                continue
+            href = child.attrGet("href")
+            assert isinstance(href, str)
+            hrefs.append(href)
+    return hrefs
 
 
 def _bundle(root: Path) -> BundleConfig:
@@ -62,7 +92,7 @@ def test_move_concept_rewrites_single_referring_file(tmp_path: Path) -> None:
     assert result.updated_files == (a,)
     assert not old.exists()
     assert new.read_text(encoding="utf-8") == "Body.\n"
-    assert a.read_text(encoding="utf-8") == "See [link](new.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new.md"]
 
 
 def test_move_concept_rewrites_multiple_referring_files(tmp_path: Path) -> None:
@@ -78,8 +108,8 @@ def test_move_concept_rewrites_multiple_referring_files(tmp_path: Path) -> None:
 
     assert result.moved is True
     assert set(result.updated_files) == {a, b}
-    assert a.read_text(encoding="utf-8") == "See [link](new.md).\n"
-    assert b.read_text(encoding="utf-8") == "Also [link](new.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new.md"]
+    assert _link_hrefs(b.read_text(encoding="utf-8")) == ["new.md"]
 
 
 def test_move_concept_dedupes_multiple_links_to_same_target_in_one_file(
@@ -94,9 +124,9 @@ def test_move_concept_dedupes_multiple_links_to_same_target_in_one_file(
     result = move_concept(_bundle(tmp_path), old, new)
 
     assert result.moved is True
-    assert (
-        a.read_text(encoding="utf-8") == "First [x](new.md) and second [y](new.md).\n"
-    )
+    # Both occurrences (distinct link texts, same target) must be rewritten
+    # -- neither merged away nor left stale.
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new.md", "new.md"]
 
 
 def test_move_concept_idempotent_noop_when_source_equals_dest(tmp_path: Path) -> None:
@@ -126,7 +156,7 @@ def test_move_concept_preserves_fragment_and_query_in_rewritten_link(
 
     move_concept(_bundle(tmp_path), old, new)
 
-    assert a.read_text(encoding="utf-8") == "See [link](new.md#section?x=1).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new.md#section?x=1"]
 
 
 def test_move_concept_preserves_absolute_style_links(tmp_path: Path) -> None:
@@ -138,7 +168,7 @@ def test_move_concept_preserves_absolute_style_links(tmp_path: Path) -> None:
 
     move_concept(_bundle(tmp_path), old, new)
 
-    assert a.read_text(encoding="utf-8") == "See [link](/topics/renamed.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["/topics/renamed.md"]
 
 
 def test_move_concept_percent_encodes_special_characters_in_rewritten_link(
@@ -152,7 +182,7 @@ def test_move_concept_percent_encodes_special_characters_in_rewritten_link(
 
     move_concept(_bundle(tmp_path), old, new)
 
-    assert a.read_text(encoding="utf-8") == "See [link](new%20file.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new%20file.md"]
 
 
 def test_move_concept_rewrites_relative_links_across_sibling_and_cousin_directories(
@@ -166,7 +196,7 @@ def test_move_concept_rewrites_relative_links_across_sibling_and_cousin_director
 
     move_concept(_bundle(tmp_path), old, new)
 
-    assert a.read_text(encoding="utf-8") == "See [link](../sub3/deep/new.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["../sub3/deep/new.md"]
 
 
 def test_move_concept_handles_self_referential_link(tmp_path: Path) -> None:
@@ -178,7 +208,7 @@ def test_move_concept_handles_self_referential_link(tmp_path: Path) -> None:
 
     assert result.moved is True
     assert not old.exists()
-    assert new.read_text(encoding="utf-8") == "Self: [self](renamed.md)\n"
+    assert _link_hrefs(new.read_text(encoding="utf-8")) == ["renamed.md"]
 
 
 def test_move_concept_rebases_self_link_when_directory_changes(tmp_path: Path) -> None:
@@ -190,7 +220,7 @@ def test_move_concept_rebases_self_link_when_directory_changes(tmp_path: Path) -
 
     assert result.moved is True
     assert not old.exists()
-    assert new.read_text(encoding="utf-8") == "Self: [self](new.md)\n"
+    assert _link_hrefs(new.read_text(encoding="utf-8")) == ["new.md"]
 
 
 def test_move_concept_rebases_own_outbound_links_when_directory_changes(
@@ -205,7 +235,7 @@ def test_move_concept_rebases_own_outbound_links_when_directory_changes(
     result = move_concept(_bundle(tmp_path), old, new)
 
     assert result.moved is True
-    assert new.read_text(encoding="utf-8") == "See [sibling](../../sub1/sibling.md).\n"
+    assert _link_hrefs(new.read_text(encoding="utf-8")) == ["../../sub1/sibling.md"]
     # The sibling itself is untouched -- only its href text in the moved
     # file changed, not the sibling file or its own content.
     assert sibling.read_text(encoding="utf-8") == "Body.\n"
@@ -222,7 +252,7 @@ def test_move_concept_does_not_rebase_own_outbound_links_in_same_directory(
 
     move_concept(_bundle(tmp_path), old, new)
 
-    assert new.read_text(encoding="utf-8") == "See [sibling](sibling.md).\n"
+    assert _link_hrefs(new.read_text(encoding="utf-8")) == ["sibling.md"]
 
 
 def test_move_concept_preserves_absolute_style_outbound_links(tmp_path: Path) -> None:
@@ -234,7 +264,7 @@ def test_move_concept_preserves_absolute_style_outbound_links(tmp_path: Path) ->
 
     move_concept(_bundle(tmp_path), old, new)
 
-    assert new.read_text(encoding="utf-8") == "See [abs](/sub1/sibling.md).\n"
+    assert _link_hrefs(new.read_text(encoding="utf-8")) == ["/sub1/sibling.md"]
 
 
 def test_move_concept_aborts_when_a_file_fails_to_scan(tmp_path: Path) -> None:
@@ -276,7 +306,7 @@ def test_move_concept_succeeds_despite_stable_id_only_manifest_problems(
     result = move_concept(bundle, old, new)
 
     assert result.moved is True
-    assert a.read_text(encoding="utf-8") == "See [link](new.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new.md"]
 
 
 def test_move_concept_regenerates_index_in_source_and_dest_directories(
@@ -517,7 +547,7 @@ def test_move_concept_accepts_absolute_paths_inside_bundle_root(tmp_path: Path) 
 
     assert result.moved is True
     assert new.exists()
-    assert a.read_text(encoding="utf-8") == "See [link](new.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new.md"]
 
 
 def test_move_concept_write_safety_refused_leaves_everything_untouched(
@@ -572,7 +602,7 @@ def test_move_concept_resumes_after_manual_partial_application(tmp_path: Path) -
     # Simulate a previous, interrupted run that only got as far as rewriting a.md.
     prep = plan_move_concept(bundle, old, new)
     apply_document_change(bundle, prep.link_rewrite_plans[a])
-    assert a.read_text(encoding="utf-8") == "See [link](new.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new.md"]
     assert old.exists()
 
     result = move_concept(bundle, old, new)
@@ -580,8 +610,8 @@ def test_move_concept_resumes_after_manual_partial_application(tmp_path: Path) -
     assert result.moved is True
     assert not old.exists()
     assert new.read_text(encoding="utf-8") == "Body.\n"
-    assert a.read_text(encoding="utf-8") == "See [link](new.md).\n"
-    assert b.read_text(encoding="utf-8") == "Also [link](new.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new.md"]
+    assert _link_hrefs(b.read_text(encoding="utf-8")) == ["new.md"]
 
 
 def test_move_concept_raises_and_leaves_source_at_original_location_on_conflict(
@@ -612,5 +642,7 @@ def test_move_concept_raises_and_leaves_source_at_original_location_on_conflict(
     # concept file exactly where it started.
     assert old.exists()
     assert not new.exists()
-    assert a.read_text(encoding="utf-8") == "See [link](new.md).\n"
+    assert _link_hrefs(a.read_text(encoding="utf-8")) == ["new.md"]
+    # b's apply was refused (simulated conflict), so it stays exactly as
+    # written -- not a canonical-render question, a plain "untouched" one.
     assert b.read_text(encoding="utf-8") == "Also [link](old.md).\n"

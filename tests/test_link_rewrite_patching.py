@@ -77,9 +77,16 @@ def test_plan_link_rewrite_second_paragraph(tmp_path: Path) -> None:
     assert plan.proposed_content == "Intro.\n\n[link](new)\n"
 
 
-def test_plan_link_rewrite_crlf_line_endings(tmp_path: Path) -> None:
-    # markdown-it-py normalizes CRLF to LF internally before parsing; the
-    # rewrite must still land on the right bytes and preserve CRLF on output.
+def test_plan_link_rewrite_crlf_input_converges_to_lf_canonical_output(
+    tmp_path: Path,
+) -> None:
+    # Retires the pre-#198 CRLF-preservation assertion (a drift oracle: it
+    # pinned the old span-splice engine's choice to restore the document's
+    # original line-ending style, not a requirement of the rewrite contract
+    # itself). The rewrite must still land on the right link; canonical
+    # output is always LF (ADR-0002 amendment), so CRLF input converges on
+    # this first edit -- the same one-time formatting cost the YAML
+    # frontmatter engine already documents for its own LF-always choice.
     path = tmp_path / "topic.md"
     path.write_bytes(b"Intro.\r\n\r\n[link](old) more text.\r\n")
 
@@ -88,7 +95,8 @@ def test_plan_link_rewrite_crlf_line_endings(tmp_path: Path) -> None:
     )
 
     assert plan.changed is True
-    assert plan.proposed_content == "Intro.\r\n\r\n[link](new) more text.\r\n"
+    assert "\r" not in plan.proposed_content
+    assert plan.proposed_content == "Intro.\n\n[link](new) more text.\n"
 
 
 def test_plan_link_rewrite_empty_destination(tmp_path: Path) -> None:
@@ -157,116 +165,151 @@ def test_plan_link_rewrite_invalid_inputs(tmp_path: Path) -> None:
         plan_markdown_link_rewrite(_bundle(tmp_path), path, [LinkRewrite(123, "new_dest")])  # type: ignore
 
 
+# --- Retired/updated byte-preservation cases (#198) -------------------------
+#
+# The link-rewrite engine used to splice a replacement span into the
+# unmodified source string, choosing bracket-wrapping/escaping from the
+# *original* destination's own style (`_format_destination`'s
+# `patched_body[occurrence.dest_start] == "<"` check) and leaving an
+# untouched title's quote/paren style exactly as written. #198 replaced that
+# with parse -> mutate `link_open` href -> re-render through `mdformat`'s
+# `MDRenderer`, which decides bracket-wrapping and title quoting itself from
+# the *new* content (`maybe_add_link_brackets`, always-double-quoted titles)
+# -- a canonical, idempotent contract (ADR-0002), not a byte-identity one.
+# The following expectations below are updated in place (not deleted, since
+# each case's own correctness oracle -- "this href/link-text/whitespace
+# variation is still located and rewritten, nothing else changes" --
+# survives unchanged); only the byte-preservation-specific detail moved:
+#
+# - "bracketed_destination": original `<old>` bracketing does not carry over
+#   to `new` (no bracket-requiring characters in `new` itself), so the
+#   canonical result is unbracketed `[link](new)`, not `[link](<new>)`.
+# - "single_quoted_title"/"parenthesized_title": both canonicalize to
+#   `mdformat`'s always-double-quoted title form (`[link](new "title")`),
+#   the same "one documented output form" ADR-0002 requires -- the original
+#   single-quote/paren title *style* is not a preserved value.
+# - "spaces_in_bracketed_destination": a destination-side space is written
+#   as `%20` (percent-encoded, matching how the write side is now
+#   normalized the same way the match side already was -- see
+#   `test_plan_link_rewrite_output_is_idempotent` in
+#   test_markdown_canonical_roundtrip.py for why this is required for
+#   idempotency, not merely a style choice), not preserved as a literal
+#   space inside `<...>` brackets.
+# - "angle_bracket_in_new_target_is_escaped": renamed in spirit to "percent
+#   encoded", since normalizing before write means a literal `>` in
+#   `new_target` is percent-encoded (`%3E`) rather than backslash-escaped
+#   inside brackets -- both are correct CommonMark destinations for the same
+#   value, but percent-encoding is `okf-core`'s now-canonical form.
 @pytest.mark.parametrize(
     ("original", "old_target", "new_target", "expected"),
     [
-        pytest.param("[link](old)", "old", "new", "[link](new)", id="standard"),
+        pytest.param("[link](old)", "old", "new", "[link](new)\n", id="standard"),
         pytest.param(
             "[some link text](old)",
             "old",
             "new",
-            "[some link text](new)",
+            "[some link text](new)\n",
             id="spaces_in_link_text",
         ),
         pytest.param(
             "[link\ntext](old)",
             "old",
             "new",
-            "[link\ntext](new)",
+            "[link\ntext](new)\n",
             id="newline_in_link_text",
         ),
         pytest.param(
             "[a\\]b](old)",
             "old",
             "new",
-            "[a\\]b](new)",
+            "[a\\]b](new)\n",
             id="escaped_brackets_in_link_text",
         ),
         pytest.param(
-            "[link](<old>)", "old", "new", "[link](<new>)", id="bracketed_destination"
+            "[link](<old>)", "old", "new", "[link](new)\n", id="bracketed_destination"
         ),
         pytest.param(
             '[link](old "title")',
             "old",
             "new",
-            '[link](new "title")',
+            '[link](new "title")\n',
             id="double_quoted_title",
         ),
         pytest.param(
             "[link](old 'title')",
             "old",
             "new",
-            "[link](new 'title')",
+            '[link](new "title")\n',
             id="single_quoted_title",
         ),
         pytest.param(
             "[link](old (title))",
             "old",
             "new",
-            "[link](new (title))",
+            '[link](new "title")\n',
             id="parenthesized_title",
         ),
         pytest.param(
             "[link](<old target>)",
             "old target",
             "new target",
-            "[link](<new target>)",
+            "[link](new%20target)\n",
             id="spaces_in_bracketed_destination",
         ),
         pytest.param(
             "[link](old\\)target)",
             "old)target",
             "new)target",
-            "[link](<new)target>)",
+            "[link](<new)target>)\n",
             id="escaped_parenthesis_in_unbracketed_destination",
         ),
         pytest.param(
             "[link](old#sec)",
             "old#sec",
             "new#sec",
-            "[link](new#sec)",
+            "[link](new#sec)\n",
             id="fragment_destination",
         ),
         pytest.param(
             "[link](foo%2Fbar)",
             "foo%2Fbar",
             "foo%2Fnew",
-            "[link](foo%2Fnew)",
+            "[link](foo%2Fnew)\n",
             id="percent_encoded_destination",
         ),
         pytest.param(
             "[link](<a b>)",
             "a%20b",
             "new b",
-            "[link](<new b>)",
+            "[link](new%20b)\n",
             id="percent_encoded_old_target_matches_bracketed_space",
         ),
         pytest.param(
             "[intro](café.md)",
             "café.md",
             "intro.md",
-            "[intro](intro.md)",
+            "[intro](intro.md)\n",
             id="non_ascii_percent_encoded_href",
         ),
         pytest.param(
             "\\![label](old)",
             "old",
             "new",
-            "\\![label](new)",
+            "\\![label](new)\n",
             id="escaped_image_marker_is_a_real_link",
         ),
         pytest.param(
             "[link](<old>)",
             "old",
             "new>target",
-            "[link](<new\\>target>)",
-            id="angle_bracket_in_new_target_is_escaped",
+            "[link](new%3Etarget)\n",
+            id="angle_bracket_in_new_target_is_percent_encoded",
         ),
         pytest.param(
             "[a [b] c](old)",
             "old",
             "new",
-            "[a [b] c](new)",
+            "[a [b] c](new)\n",
             id="nested_brackets_in_label",
         ),
         pytest.param(
@@ -280,14 +323,14 @@ def test_plan_link_rewrite_invalid_inputs(tmp_path: Path) -> None:
             "Here is a real [link](old)\n```markdown\n[link](old)\n```\n",
             "old",
             "new",
-            "Here is a real [link](new)\n```markdown\n[link](old)\n```\n",
+            "Here is a real [link](new)\n\n```markdown\n[link](old)\n```\n",
             id="mixed_fenced_code",
         ),
         pytest.param(
             "`[fake](old)` and [a [b] c](old)",
             "old",
             "new",
-            "`[fake](old)` and [a [b] c](new)",
+            "`[fake](old)` and [a [b] c](new)\n",
             id="fake_code_span_and_nested_bracket_label_disambiguated",
         ),
     ],
@@ -387,3 +430,81 @@ def test_plan_link_rewrite_mismatch_rejections(
         match="Link target mismatch|Reference-style links",
     ):
         plan_markdown_link_rewrite(_bundle(tmp_path), path, rewrites)
+
+
+def test_rewrite_markdown_links_skips_link_open_with_non_string_href(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `isinstance(href, str)` guard in `_rewrite_markdown_links`'s
+    link loop (pre-#198 code, carried over unchanged from the old
+    `_instrumented_link_rule`) skips any `link_open` token whose `href`
+    attribute is missing or not a string, rather than treating it as a
+    rewrite candidate. Real CommonMark + GFM-table parsing (this module's
+    only enabled markdown-it-py extensions) always produces a string
+    `href` -- even an empty link destination normalizes to `""` -- so this
+    token shape is unreachable through Markdown source text alone. It is
+    exercised here by injecting a synthetic token via
+    `_walk_link_open_tokens`, standing in for any token-construction path
+    (a plugin, a hand-built token tree) that might not guarantee a string
+    `href`. The injected token's `href` is a list (non-string and
+    unhashable) so that removing/inverting the guard produces an
+    observable `TypeError` from the dict lookup, rather than silently
+    matching nothing.
+    """
+    from markdown_it.token import Token
+
+    from okf_core import patching as patching_module
+
+    path = tmp_path / "topic.md"
+    path.write_text("[link](old)\n", encoding="utf-8")
+
+    real_walk = patching_module._walk_link_open_tokens
+
+    def _walk_with_injected_bad_token(tokens):
+        found = real_walk(tokens)
+        bad = Token("link_open", "a", 1)
+        bad.attrs["href"] = ["not", "a", "string"]
+        return [*found, bad]
+
+    monkeypatch.setattr(
+        patching_module, "_walk_link_open_tokens", _walk_with_injected_bad_token
+    )
+
+    plan = plan_markdown_link_rewrite(
+        _bundle(tmp_path), path, [LinkRewrite("old", "new")]
+    )
+
+    assert plan.changed is True
+    assert plan.proposed_content == "[link](new)\n"
+
+
+def test_plan_link_rewrite_leaves_untargeted_gfm_table_intact(
+    tmp_path: Path,
+) -> None:
+    # AC1: an untargeted GFM table must survive semantically through
+    # plan_markdown_link_rewrite/_rewrite_markdown_links's parse -> mutate
+    # -> re-render pipeline. The table cell's own link ("old") is not a
+    # rewrite target and must stay untouched while a real target elsewhere
+    # in the document ("old2") is rewritten.
+    path = tmp_path / "topic.md"
+    original = (
+        "| A | [link](old) |\n"
+        "| --- | --- |\n"
+        "| 1 | 2 |\n"
+        "\n"
+        "See [other](old2) too.\n"
+    )
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_markdown_link_rewrite(
+        _bundle(tmp_path), path, [LinkRewrite("old2", "new2")]
+    )
+
+    assert plan.changed is True
+    assert plan.proposed_content == (
+        "| A   | [link](old) |\n"
+        "| --- | ----------- |\n"
+        "| 1   | 2           |\n"
+        "\n"
+        "See [other](new2) too.\n"
+    )

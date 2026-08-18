@@ -7,9 +7,15 @@
 >
 > **Current adoption status:** see
 > [`docs/decisions/0002-canonical-serialization-form.md`](../decisions/0002-canonical-serialization-form.md)
-> ("Markdown side"). The Markdown-side canonical form is currently PROPOSED,
-> not accepted — this spike's evidence and renderer choice are pending
-> re-verification under issue #198's new (non-byte) contract.
+> ("Markdown side"). Re-verified and **ACCEPTED** via issue #198 under
+> R-C1/R-C2/R-C3 (not the byte-identity axis this spike was originally
+> scored against — see the ADR's evidence table caveat below). Strategy A
+> (`mdformat`) is adopted as originally recommended; two details this
+> spike could not have known are resolved differently by the ADR: the
+> `markdown-it-py < 4` pin below turned out to be unnecessary (current
+> `mdformat` relaxed its own pin to `< 5`), and table support ships via
+> `mdformat-gfm`'s `"tables"` extension rather than the now-stale standalone
+> `mdformat-tables` package.
 
 - **Issue:** [#149](https://github.com/xchewtoyx/okf-core/issues/149) (`type:design`)
 - **Epic:** [#11](https://github.com/xchewtoyx/okf-core/issues/11) safe patch operations
@@ -65,6 +71,19 @@ Measured on this environment (Linux x86_64, CPython 3.11) with
 
 Reproduce with `.venv/bin/python scripts/spikes/strategy_a_mdformat.py` and
 `.venv/bin/python scripts/spikes/strategy_b_treesitter.py`.
+
+**Re-verification note (issue #198):** the "Fidelity — raw input preserved"
+and "Precondition" rows above were scored under the byte-identity contract
+ADR-0001 has since retired; under R-C1/R-C2 (ADR-0002) they are not
+disqualifying — a non-canonical raw input is accepted, and its first edit
+converges the whole document to canonical form rather than requiring a
+corpus-wide `okf format` pass first. The other rows (dependency footprint,
+cross-platform install, edit-safety/idempotence, fit with the existing
+`markdown-it-py` stack) still favor Strategy A on the same grounds recorded
+below, independent of that scoring-axis change. "`markdown-it-py`
+compatibility" is superseded outright, not merely re-scored: current
+`mdformat` (`1.0.0`) declares `markdown-it-py<5,>=1`, so no downgrade from
+the project's `>= 3, < 5` pin is needed (see ADR-0002 "Markdown side").
 
 ## Decision: Strategy A
 
