@@ -495,6 +495,14 @@ def test_parse_unexpected_content_nested_two_levels_deep_reported_once() -> None
         ("h3_heading", "### sub heading\n", "sub-heading"),
         ("blockquote", "> quoted stuff\n", "blockquote"),
         ("ordered_list", "1. foo\n", "ordered_list_open"),
+        # #199: routing this module onto the shared engine's MarkdownIt
+        # instance means it now inherits GFM table parsing (`.enable("table")`,
+        # added for patching.py by #198) -- a pipe-table-shaped block, which
+        # previously parsed as one or more bare paragraphs, now parses as one
+        # `table_open`/`table_close` block instead. Still reported and
+        # skipped either way; only the descriptor noun phrase changes (see
+        # `_stray_block_descriptor`).
+        ("table", "| a | b |\n| - | - |\n| 1 | 2 |\n\n", "a table"),
     ],
 )
 def test_parse_stray_block_under_date_heading_reported_and_skipped(

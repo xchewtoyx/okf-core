@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from hypothesis import example, given
+from hypothesis import assume, example, given
 from hypothesis import strategies as st
 
 from okf_core import (
@@ -304,15 +304,23 @@ def test_apply_link_suggestions_uses_custom_heading_and_level(
 # ---------------------------------------------------------------------------
 # Hypothesis round-trip: `_link_suggestion_line` interpolates a target
 # concept's (arbitrary, human-authored) `title` into Markdown link *text*
-# (`- [title](href)`) via `_escape_link_text`. Per AGENTS.md's "Round-Trip
-# Property Tests for Markdown Interpolation" rule, this must recover the
-# same title value on reparse across markdown-significant characters, not
-# just hand-picked examples -- see test_index_span.py's `_TEXT_ALPHABET` for
-# the same rationale applied to a sibling link-text renderer: `[`, `]`, and
-# `\` are the characters unescaped link text cannot safely carry (an
-# unescaped bracket breaks the enclosing link's own delimiter matching);
-# quotes and parens are inert in text position but included for parity with
-# that established alphabet.
+# (`- [title](href)`) via the shared `markdown_engine` module's
+# `link_children`/`render_inline_children` primitives (#199). Per AGENTS.md's
+# "Round-Trip Property Tests for Markdown Interpolation" rule, this must
+# recover the same title value on reparse across markdown-significant
+# characters, not just hand-picked examples -- see test_index_span.py's
+# `_TEXT_ALPHABET` for the same rationale applied to a sibling link-text
+# renderer: `[`, `]`, and `\` are the characters unescaped link text cannot
+# safely carry (an unescaped bracket breaks the enclosing link's own
+# delimiter matching); quotes and parens are inert in text position but
+# included for parity with that established alphabet. A run of two or more
+# consecutive spaces in `title` is excluded, same as test_index_span.py's
+# `test_render_span_link_round_trips`: the shared engine's canonical
+# renderer collapses an internal whitespace run in literal text content to
+# a single space when reconstructing the link (the same "canonical, not
+# byte-identical" convergence ADR-0002 documents elsewhere) -- a deliberate
+# normalization, not the identity function this test otherwise checks for
+# every other character in the alphabet.
 # ---------------------------------------------------------------------------
 
 _TITLE_ALPHABET = 'ab01 .-"()[]\\'
@@ -329,6 +337,7 @@ _TARGET_PATH = Path("alpha.md")
 @example(title="Alpha [ Gamma")  # unbalanced bracket
 @example(title="Alpha \\ Beta")  # bare backslash
 def test_link_suggestion_line_round_trips_title(title: str) -> None:
+    assume("  " not in title)
     suggestion = _suggestion(_SOURCE_PATH, _TARGET_PATH, title=title)
 
     line = _link_suggestion_line(suggestion)

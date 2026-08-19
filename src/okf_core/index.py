@@ -9,13 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import yaml
-from markdown_it import MarkdownIt
 
-from okf_core._markdown_inline import (
-    inline_token_source,
-    render_linked_span,
-    token_line,
-)
 from okf_core.documents import (
     ConceptDocument,
     ValidationFinding,
@@ -25,12 +19,16 @@ from okf_core.documents import (
     validate_concept_document_with_profile,
 )
 from okf_core.manifest import BundleManifest, ConceptManifestEntry
+from okf_core.markdown_engine import MARKDOWN as _MARKDOWN
+from okf_core.markdown_engine import link_children as _link_children
+from okf_core.markdown_engine import render_inline_children as _render_inline_children
+from okf_core.markdown_engine import render_span as _render_span
+from okf_core.markdown_engine import text_children as _text_children
+from okf_core.markdown_engine import token_line as _token_line
 from okf_core.versions import normalize_okf_version_declaration
 
 if TYPE_CHECKING:
     from okf_core.config import BundleConfig, ProfileConfig, TaxonomyConfig
-
-_MARKDOWN = MarkdownIt("commonmark")
 
 _DESC_SEP = re.compile(r"^\s+-\s+")
 
@@ -724,37 +722,6 @@ def _normalize_inline(s: str) -> str:
     return re.sub(r"[\r\n]+", " ", s).strip()
 
 
-def _md_escape(s: str) -> str:
-    """Escape backslash then markdown link delimiters so output round-trips."""
-    return (
-        s.replace("\\", "\\\\")
-        .replace("[", "\\[")
-        .replace("]", "\\]")
-        .replace(")", "\\)")
-    )
-
-
-_inline_content = inline_token_source
-"""Alias kept for call sites within this module; see ``_markdown_inline``."""
-
-_render_suffix_span = render_linked_span
-"""Reconstitute the Markdown source of the tokens following the title link.
-
-Inner link pairs become ``[text](href)``, or ``[text](href "title")`` when
-the link carries a title; every other token passes through
-``_inline_content``. Shared with ``logs.py``'s entry-prose renderer via
-``_markdown_inline.render_linked_span`` -- see that module for the
-implementation.
-"""
-
-
-def _render_span(children: list[Any]) -> str:
-    """Render a run of inline children with no link tokens back to Markdown source."""
-    return "".join(
-        c for c in (_inline_content(child) for child in children) if c is not None
-    )
-
-
 def _title_link_bounds(children: list[Any]) -> tuple[int, int] | str:
     """Locate the title link's open/close indices, or return an error message.
 
@@ -784,7 +751,7 @@ def _description_from_suffix(children: list[Any]) -> tuple[str | None, str | Non
     valid inside a ``" - description"`` suffix (``_DESC_SEP``).
     """
     has_link = any(child.type == "link_open" for child in children)
-    suffix = _render_suffix_span(children)
+    suffix = _render_span(children)
     m = _DESC_SEP.match(suffix)
     if has_link and not m:
         return (
@@ -824,11 +791,18 @@ def _entry_from_inline_token(
     return IndexEntry(title=title, link=href, description=description), None
 
 
-_token_line = token_line
-
-
 def _render_entry(entry: IndexEntry) -> str:
-    base = f"* [{_md_escape(entry.title)}]({_md_escape(entry.link)})"
+    """Render one ``IndexEntry`` as a ``* [title](link) - description`` bullet.
+
+    ``title``/``link``/``description`` are plain semantic strings here (from
+    manifest frontmatter, not previously-parsed Markdown source -- unlike
+    ``parse_index``'s own ``IndexEntry`` values) so each is embedded as
+    literal link/text content via the shared engine's ``link_children``/
+    escaping, not reparsed as Markdown. This is the module's only remaining
+    write-side Markdown assembly; escaping itself lives entirely in
+    ``markdown_engine`` (#199 AC1).
+    """
+    children = _link_children(entry.link, entry.title)
     if entry.description:
-        return f"{base} - {entry.description}"
-    return base
+        children = [*children, *_text_children(f" - {entry.description}")]
+    return f"* {_render_inline_children(children)}"

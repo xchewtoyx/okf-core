@@ -14,10 +14,10 @@ from urllib.parse import quote, unquote, urlsplit
 
 from markdown_it import MarkdownIt
 
-from okf_core._markdown_inline import _escape_link_text
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError, parse_concept_document
 from okf_core.manifest import BundleManifest, ConceptManifestEntry, scan_bundle
+from okf_core.markdown_engine import link_children, render_inline_children
 from okf_core.patching import (
     DocumentChangePlan,
     apply_document_change,
@@ -700,11 +700,22 @@ def link_suggestion_href(suggestion: LinkSuggestion) -> str:
 
 
 def _link_suggestion_line(suggestion: LinkSuggestion) -> str:
-    """Render `suggestion` as one Markdown bullet: `- [title](href)`."""
+    """Render `suggestion` as one Markdown bullet: `- [title](href)`.
+
+    `suggestion.target_title` is arbitrary, human-authored text embedded as
+    literal Markdown link *text* -- built via the shared `markdown_engine`
+    engine's own `link_children`/`render_inline_children` primitives (#199),
+    the canonical, sole-sanctioned place for Markdown escaping, rather than
+    a bespoke escaping helper: `link_children` wraps `target_title` as a
+    literal text child of a fresh `[text](href)` link, and
+    `render_inline_children` renders it back through `mdformat`'s renderer,
+    which escapes `[`, `]`, and backslash exactly when needed for the
+    result to round-trip on reparse.
+    """
 
     href = link_suggestion_href(suggestion)
-    text = _escape_link_text(suggestion.target_title)
-    return f"- [{text}]({href})\n"
+    link = render_inline_children(link_children(href, suggestion.target_title))
+    return f"- {link}\n"
 
 
 @dataclass(frozen=True)
