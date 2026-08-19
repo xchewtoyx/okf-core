@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.5.0-alpha.3] - 2026-08-19
+
 ### Added
 
 - **`okf unlinked-mentions --apply` and `plan_link_suggestions_apply`/`apply_link_suggestions`**: writes selected `find_unlinked_mentions` link suggestions back into their source concept's body as standard inline Markdown links (`- [target_title](target_href)`), appended under a `## See also` section by default (`--heading`/`--heading-level` override it). `--select SOURCE_ID:TARGET_ID` (repeatable) restricts which discovered suggestions are applied; omitting it applies every discovered suggestion. Built on the new `plan_markdown_section_append` primitive (`patching.py`), which appends to a section's *existing* body instead of replacing it wholesale (reading the document exactly once via `plan_document_change_from_reader`, mirroring `plan_source_upsert`) and merges into an already-list-terminated section rather than opening a second, visually distinct list. A suggestion whose target already has a link in the section is skipped, so re-applying an overlapping selection is idempotent. `LinkSuggestion` gains a `target_title` field, and the new `link_suggestion_href()` computes the source-relative, percent-encoded link destination a suggestion would be written with. (#61)
@@ -198,7 +200,8 @@ Initial release.
 - **`generate_index()` / `parse_index()`**: produce and parse conformant `index.md` files; entries grouped by type and sorted alphabetically; round-trips without loss.
 - **CLI (`okf`)**: `scan`, `validate`, `index` commands. JSON to stdout, summary to stderr, exit 2 on config/usage errors.
 
-[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.5.0-alpha.1...HEAD
+[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.5.0-alpha.3...HEAD
+[0.5.0-alpha.3]: https://github.com/xchewtoyx/okf-core/compare/v0.5.0-alpha.1...v0.5.0-alpha.3
 [0.5.0-alpha.1]: https://github.com/xchewtoyx/okf-core/compare/v0.4.2...v0.5.0-alpha.1
 [0.4.2]: https://github.com/xchewtoyx/okf-core/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/xchewtoyx/okf-core/compare/v0.4.0...v0.4.1
