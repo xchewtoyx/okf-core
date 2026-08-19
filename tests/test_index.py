@@ -362,6 +362,26 @@ def test_round_trip_backslash_before_bracket(tmp_path: Path) -> None:
     assert parsed.sections[0].entries[0].title == "foo\\]bar"
 
 
+def test_round_trip_description_metacharacters(tmp_path: Path) -> None:
+    # #199: _render_entry routes entry.description through the shared
+    # engine's escaping (_text_children/_render_inline_children) rather than
+    # raw string concatenation -- assert the semantic round-trip for a
+    # description containing markdown-significant characters (brackets,
+    # parens, backslash, angle bracket), the same property
+    # test_round_trip_metacharacters and
+    # test_round_trip_backslash_before_bracket above assert for title. The
+    # angle bracket matters for the mutation check: bare brackets/parens/
+    # backslash alone happen to survive an unescaped round trip here since
+    # the description sits outside any `[...]`/`(...)` link construct, but
+    # an unescaped `<tag>` is swallowed as a raw HTML inline span on reparse.
+    desc = "Has ]bracket[ and (parens) and back\\slash and <tag>"
+    e = _entry(tmp_path / "a.md", tmp_path, title="Alpha", description=desc)
+    result = generate_index(tmp_path, [e])
+    assert result.problems == ()
+    parsed = parse_index(result.body)
+    assert parsed.sections[0].entries[0].description == desc
+
+
 def test_generate_multiline_title_normalized(tmp_path: Path) -> None:
     # YAML multiline strings can embed \n; title must stay single-line
     e = ConceptManifestEntry(
