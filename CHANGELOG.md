@@ -6,7 +6,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.5.0-alpha.3] - 2026-08-19
+## [0.5.0] - 2026-08-19
 
 ### Added
 
@@ -200,8 +200,8 @@ Initial release.
 - **`generate_index()` / `parse_index()`**: produce and parse conformant `index.md` files; entries grouped by type and sorted alphabetically; round-trips without loss.
 - **CLI (`okf`)**: `scan`, `validate`, `index` commands. JSON to stdout, summary to stderr, exit 2 on config/usage errors.
 
-[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.5.0-alpha.3...HEAD
-[0.5.0-alpha.3]: https://github.com/xchewtoyx/okf-core/compare/v0.5.0-alpha.1...v0.5.0-alpha.3
+[Unreleased]: https://github.com/xchewtoyx/okf-core/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/xchewtoyx/okf-core/compare/v0.5.0-alpha.1...v0.5.0
 [0.5.0-alpha.1]: https://github.com/xchewtoyx/okf-core/compare/v0.4.2...v0.5.0-alpha.1
 [0.4.2]: https://github.com/xchewtoyx/okf-core/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/xchewtoyx/okf-core/compare/v0.4.0...v0.4.1
