@@ -518,9 +518,13 @@ and retains its stale-content protection.
 
 `plan_markdown_section_append(bundle, path, heading, lines, *, level=1)` adds
 to a section's *existing* body instead of replacing it wholesale: it reads
-the section's current body and appends `lines` after it, leaving content
-already in the section (and the rest of the document) untouched. An absent
-section is created the same way `plan_markdown_section_patch` documents
+the section's current body and appends `lines` after it. Content already in
+the section, and the rest of the document, survives semantically, not
+necessarily byte-for-byte — the same convergence `plan_markdown_section_patch`
+documents above: output is always canonical Markdown, so surrounding block
+spacing/list-marker/table style outside the target section can also converge
+to `mdformat`'s canonical form. An absent section is created the same way
+`plan_markdown_section_patch` documents
 (appended at the end in ATX syntax); a `lines` element that itself parses to
 a heading at or above `level` is rejected for the same reason a replacement
 body containing one is. A `lines` element carrying exactly one inline

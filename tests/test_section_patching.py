@@ -632,6 +632,107 @@ def test_section_append_rejects_line_containing_heading_at_or_above_level(
         )
 
 
+def test_section_append_rejects_blank_or_whitespace_only_line(
+    tmp_path: Path,
+) -> None:
+    # Copilot review (PR #217 round 1, Finding 1a): `_validate_append_lines`
+    # only checks each `lines` element is a string, not that it carries real
+    # content -- a whitespace-only element is never filtered by dedup either
+    # (it has no link target, so it's always "kept"). Left unguarded, the
+    # combined kept content parses to zero block tokens and
+    # `_append_markdown_section_body` raised an uncaught `IndexError`
+    # indexing `new_tokens[0]`, instead of surfacing a clear error per
+    # AGENTS.md's "Surface problems explicitly; never fail silently".
+    path = tmp_path / "topic.md"
+    path.write_text("Intro.\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="blank"):
+        plan_markdown_section_append(
+            _bundle(tmp_path), path, "See also", ["   \n"], level=2
+        )
+
+
+def test_section_append_falls_back_to_new_blocks_when_new_content_is_not_one_list(
+    tmp_path: Path,
+) -> None:
+    # Copilot review (PR #217 round 1, Finding 1b): CommonMark starts a new
+    # list whenever the bullet marker changes, so `lines` elements using
+    # different markers ("- " then "* ") parse to *two* separate top-level
+    # `bullet_list_open`/`bullet_list_close` pairs, not one. The
+    # merge-into-existing-trailing-list branch assumed `new_tokens[-1]` is
+    # always the `bullet_list_close` matching `new_tokens[0]`'s
+    # `bullet_list_open` -- false here -- and spliced `new_tokens[1:-1]`
+    # regardless, injecting a stray close/open list-boundary pair into what
+    # was meant to be one flat run of list items instead of erroring or
+    # falling back safely. `_is_single_top_level_bullet_list` now gates the
+    # merge branch so this case takes the same append-as-new-block(s) path
+    # already used when the section doesn't end in a list at all.
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path),
+        path,
+        "See also",
+        ["- [Beta](beta.md)\n", "* [Gamma](gamma.md)\n"],
+        level=2,
+    )
+
+    assert plan.proposed_content == (
+        "## See also\n\n"
+        "- [Alpha](alpha.md)\n\n"
+        "* [Beta](beta.md)\n\n"
+        "- [Gamma](gamma.md)\n"
+    )
+
+
+def test_section_append_falls_back_to_new_block_for_non_list_content(
+    tmp_path: Path,
+) -> None:
+    # `_is_single_top_level_bullet_list`'s leading guard: new content that
+    # isn't list-shaped at all (a plain sentence, no link) must never be
+    # routed into the merge-with-existing-list branch, even though the
+    # section already ends in one.
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path), path, "See also", ["Just a sentence.\n"], level=2
+    )
+
+    assert plan.proposed_content == (
+        "## See also\n\n- [Alpha](alpha.md)\n\nJust a sentence.\n"
+    )
+
+
+def test_section_append_falls_back_to_new_block_when_list_has_trailing_content(
+    tmp_path: Path,
+) -> None:
+    # `_is_single_top_level_bullet_list`'s stray-boundary check: new content
+    # that opens a bullet list but doesn't *end* in that list's own close
+    # token (a list item followed by a trailing paragraph, all within one
+    # `lines` element) must also fall back to appending as a new block
+    # rather than merging -- the list's own close token shows up as a
+    # "stray" level-0 boundary inside `tokens[1:-1]` in this case.
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path),
+        path,
+        "See also",
+        ["- [Beta](beta.md)\n\nTrailing prose.\n"],
+        level=2,
+    )
+
+    assert plan.proposed_content == (
+        "## See also\n\n"
+        "- [Alpha](alpha.md)\n\n"
+        "* [Beta](beta.md)\n\n"
+        "Trailing prose.\n"
+    )
+
+
 def test_section_append_rejects_non_sequence_lines(tmp_path: Path) -> None:
     path = tmp_path / "topic.md"
     path.write_text("Intro.\n", encoding="utf-8")

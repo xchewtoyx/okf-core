@@ -917,6 +917,26 @@ def test_unlinked_mentions_apply_is_idempotent(tmp_path: Path) -> None:
     written = (tmp_path / "source.md").read_text(encoding="utf-8")
     assert written.count("[Alpha](alpha.md)") == 1
 
+    # Copilot review (PR #217 round 1, Finding 4): the stderr summary used to
+    # lead with "Applied N link suggestion(s)", wording that implies a write
+    # happened whenever N suggestions were selected/processed -- misleading
+    # for any caller of the underlying `apply_link_suggestions` (its own
+    # docstring: "re-running with the same ... suggestion set only
+    # re-touches files whose plan is not already a no-op", so N and the
+    # number of files actually touched are not the same count and can
+    # diverge). The reworded summary states the two counts separately
+    # ("N link suggestion(s) selected" / "M file(s) updated") instead of
+    # using "Applied" to describe the suggestion count. This CLI's own
+    # re-scan on every invocation happens to move both counts to 0 together
+    # on this exact re-run (the mention is no longer "unlinked" once
+    # linked), so both figures below are 0 -- still exercising the exact
+    # reworded phrasing for the no-write case, distinct from first's
+    # nonzero/changed case above.
+    assert "1 link suggestion(s) selected" in first.stderr
+    assert "1 file(s) updated" in first.stderr
+    assert "0 link suggestion(s) selected" in second.stderr
+    assert "0 file(s) updated" in second.stderr
+
 
 def test_unlinked_mentions_apply_custom_heading(tmp_path: Path) -> None:
     config_path = _write_unlinked_mentions_config(tmp_path)

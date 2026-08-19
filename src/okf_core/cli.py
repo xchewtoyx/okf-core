@@ -650,7 +650,7 @@ def unlinked_mentions_cmd(
     }
     click.echo(json.dumps(output, cls=_Encoder, indent=2))
     click.echo(
-        f"Applied {len(applied.applied_suggestions)} link suggestion(s) in bundle "
+        f"{len(applied.applied_suggestions)} link suggestion(s) selected in bundle "
         f"{bundle.name!r}: {len(applied.updated_files)} file(s) updated",
         err=True,
     )

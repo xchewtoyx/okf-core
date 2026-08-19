@@ -272,7 +272,12 @@ def plan_markdown_section_append(
     Unlike `plan_markdown_section_patch` (which replaces a section's whole
     body with caller-supplied text), this reads the section's current body
     and appends `lines` after it -- content already in the section, and the
-    rest of the document, is left completely untouched. An absent section is
+    rest of the document, is preserved semantically, not necessarily
+    byte-for-byte (R-C1), the same convergence `plan_markdown_section_patch`
+    documents for its own untargeted content: output is always canonical
+    Markdown (ADR-0002 "Markdown side", amended by #198), so surrounding
+    block spacing/list-marker/table style outside the target section can
+    also converge to `mdformat`'s canonical form. An absent section is
     created the same way `plan_markdown_section_patch` documents (appended
     at the end, in ATX syntax); a `lines` element that itself parses to a
     heading at or above `level` is rejected the same way a replacement body
@@ -1349,6 +1354,43 @@ def _section_ends_with_bullet_list(
     )
 
 
+def _is_single_top_level_bullet_list(tokens: Sequence[Token]) -> bool:
+    """Whether `tokens` is *exactly* one bullet list: nothing else at the
+    top level, before or after it.
+
+    `_append_markdown_section_body`'s merge branch assumes `tokens[-1]` is
+    the `bullet_list_close` matching `tokens[0]`'s `bullet_list_open`, then
+    splices `tokens[1:-1]` into an existing trailing list. That assumption
+    fails when the parsed content is more than one top-level block -- e.g.
+    two `lines` elements using different bullet markers (`- `/`* `), which
+    CommonMark parses as two separate lists back to back, each its own
+    `bullet_list_open`/`bullet_list_close` pair at level 0 (a marker change
+    always starts a new list); or a list followed by trailing non-list
+    content (a list item followed by a lazily-non-continued paragraph).
+    Either way `tokens[1:-1]` would carry a stray boundary token spliced
+    into what is supposed to be a flat run of list items, corrupting the
+    token stream. This check gates the merge branch so a false positive
+    falls through to the general append-as-new-block(s) path instead, which
+    handles an arbitrary token sequence safely.
+
+    Only `tokens[0]` is checked explicitly for `bullet_list_open`; a
+    `tokens[-1]` check is unnecessary once `tokens[0]` is confirmed open at
+    level 0 and no *other* level-0 list boundary appears in `tokens[1:-1]`:
+    every level-0 open must still have a matching level-0 close somewhere in
+    `tokens` (a real parse never leaves one dangling), and having ruled out
+    every position except the very last one, that close can only be
+    `tokens[-1]` -- so confirming it separately would just recheck what the
+    absence of any other boundary already guarantees.
+    """
+
+    if not tokens or tokens[0].type != "bullet_list_open" or tokens[0].level != 0:
+        return False
+    return not any(
+        token.level == 0 and token.type in ("bullet_list_open", "bullet_list_close")
+        for token in tokens[1:-1]
+    )
+
+
 def _dedupe_appended_lines(
     path: Path,
     lines: Sequence[str],
@@ -1414,12 +1456,26 @@ def _append_markdown_section_body(
         return content
 
     new_tokens = _MARKDOWN.parse("".join(kept_lines), env)
+    if not new_tokens:
+        # Every kept line was blank or whitespace-only (`_validate_append_
+        # lines` only checks each element is a string, not that it carries
+        # real content), so the combined source parses to zero block
+        # tokens. Distinct from the `not kept_lines` no-op above: those
+        # lines were never *filtered out* by dedup -- a whitespace-only
+        # line never carries a link target, so it is always "kept" -- they
+        # simply have nothing to append. Surface this explicitly rather
+        # than indexing into an empty `new_tokens` below.
+        raise DocumentChangePlanningError(
+            path,
+            "Appended lines produced no content after parsing "
+            "(blank or whitespace-only)",
+        )
 
     if heading_index is None:
         combined = [*tokens, *heading_tokens, *new_tokens]
         return content[:body_offset] + _render_markdown_tokens(combined, env)
 
-    if new_tokens[0].type == "bullet_list_open" and _section_ends_with_bullet_list(
+    if _is_single_top_level_bullet_list(new_tokens) and _section_ends_with_bullet_list(
         tokens, section_start, section_end
     ):
         # Merge the new items into the section's existing trailing list
