@@ -58,6 +58,20 @@ def _inline_children(src: str) -> list:
         # rather than reinserted raw -- so a bracket inside link text, which
         # the pre-#199 render_linked_span could not round-trip, now does.
         (" - see [a\\]b](y)", " - see [a\\]b](y)"),
+        # regression (#216 Copilot review): an inner link whose own text
+        # carries inline markup must keep that markup as markup, not have
+        # it escaped to literal characters. Before the fix, render_span
+        # flattened the link's inner tokens to a plain string via
+        # _span_token_source (["**", "Bold", "**"] -> "**Bold**") and
+        # handed that string to link_children as *literal* text, so the
+        # asterisks were re-escaped to `\*\*Bold\*\*` and the bold
+        # formatting was lost on round-trip.
+        (
+            " - see [**Bold** text](target.md)",
+            " - see [**Bold** text](target.md)",
+        ),
+        (" - see [*em* text](target.md)", " - see [*em* text](target.md)"),
+        (" - see [`code` text](target.md)", " - see [`code` text](target.md)"),
     ],
 )
 def test_render_span_round_trips(src: str, expected: str) -> None:
@@ -232,6 +246,23 @@ def test_link_inside_description_is_captured() -> None:
     parsed = parse_index("# S\n\n* [A](a.md) - see [B](b.md)\n")
     assert parsed.sections[0].entries == (
         IndexEntry(title="A", link="a.md", description="see [B](b.md)"),
+    )
+
+
+def test_formatted_link_inside_description_round_trips() -> None:
+    # regression (#216 Copilot review): an embedded link whose own text
+    # carries inline markup (bold here) must keep that markup through
+    # index.py's real entry-title/description extraction path
+    # (_render_span, called by _description_from_suffix), not just through
+    # a direct render_span call -- see test_render_span_round_trips for the
+    # unit-level version of this same regression.
+    parsed = parse_index("# S\n\n* [A](a.md) - see [**Bold** text](target.md)\n")
+    assert parsed.sections[0].entries == (
+        IndexEntry(
+            title="A",
+            link="a.md",
+            description="see [**Bold** text](target.md)",
+        ),
     )
 
 

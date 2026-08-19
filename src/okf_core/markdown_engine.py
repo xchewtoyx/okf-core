@@ -123,6 +123,26 @@ def text_children(content: str) -> list[Token]:
     return [Token("text", "", 0, content=content)]
 
 
+def _link_title_attr(title: str | None) -> str | None:
+    """Pre-escape a link title's own backslashes, or return None if falsy.
+
+    ``mdformat``'s link-title renderer only backslash-escapes a literal
+    ``"`` (to protect the title's own delimiter), not a literal backslash,
+    so a title containing ``\\`` needs one explicit pre-escape here before
+    ``mdformat``'s own quote-escaping runs, the same two-step order the
+    retired ``_markdown_inline._escape_title`` used ("backslashes must be
+    escaped first so a pre-existing ``\\"`` in the title isn't
+    double-escaped by the subsequent quote pass") -- this is the one place
+    in the module where the shared renderer's own escaping isn't sufficient
+    on its own and a small, explicit rule is still needed. Both
+    ``link_children`` (freshly-constructed literal link text) and
+    ``render_span`` (already-parsed link text) build a link's ``title``
+    attribute through this one helper, so the rule lives in exactly one
+    place.
+    """
+    return title.replace("\\", "\\\\") if title else None
+
+
 def link_children(href: str, text: str, title: str | None = None) -> list[Token]:
     """Build one link's inline child tokens: ``[text](href "title")``.
 
@@ -133,22 +153,13 @@ def link_children(href: str, text: str, title: str | None = None) -> list[Token]
     normalization (e.g. percent-encoding) should call ``MARKDOWN.normalizeLink``
     themselves first, matching what parsing an existing link already
     applies to its ``href``. ``title`` is omitted from the rendered link
-    entirely when falsy (``None`` or ``""``).
-
-    A title, unlike ``text``, is *not* escaped by ``render_inline_children``
-    -- ``mdformat``'s link-title renderer only backslash-escapes a literal
-    ``"`` (to protect the title's own delimiter), not a literal backslash,
-    so a title containing ``\\`` needs one explicit pre-escape here before
-    ``mdformat``'s own quote-escaping runs, the same two-step order the
-    retired ``_markdown_inline._escape_title`` used ("backslashes must be
-    escaped first so a pre-existing ``\\"`` in the title isn't
-    double-escaped by the subsequent quote pass") -- this is the one place
-    in the module where the shared renderer's own escaping isn't sufficient
-    on its own and a small, explicit rule is still needed.
+    entirely when falsy (``None`` or ``""``); see ``_link_title_attr`` for
+    the escaping it gets otherwise.
     """
     attrs: dict[str, Any] = {"href": href}
-    if title:
-        attrs["title"] = title.replace("\\", "\\\\")
+    title_attr = _link_title_attr(title)
+    if title_attr is not None:
+        attrs["title"] = title_attr
     return [
         Token("link_open", "a", 1, attrs=attrs),
         *text_children(text),
@@ -187,16 +198,28 @@ def render_span(children: Sequence[Token]) -> str:
     code spans, line breaks, emphasis/strong delimiters) passes through
     ``_span_token_source`` unescaped, recovering the parser's own semantic
     value. An embedded link is reconstructed as ``[text](href)`` -- or
-    ``[text](href "title")`` when it carries a title -- via this module's
-    one link-building/escaping primitive (``link_children`` +
-    ``render_inline_children``), so a link's own text/title *are* escaped
-    exactly as needed to survive being freshly re-serialized here, the same
-    escaping the write side uses; nested links are not supported (CommonMark
-    itself forbids them). Used by ``index.py``'s entry-title/description
-    extraction and ``logs.py``'s entry-prose extraction (``parse_index``/
-    ``parse_log``) -- every reconstitution of already-parsed content in the
-    codebase shares this one function rather than each caller re-deriving
-    its own walk.
+    ``[text](href "title")`` when it carries a title -- by re-wrapping the
+    link's *original, already-parsed* inner tokens (not a flattened string)
+    between a fresh ``link_open``/``link_close`` pair and handing the whole
+    sequence to ``render_inline_children``. This is deliberately *not*
+    ``link_children`` (which is for freshly-constructed literal text, e.g.
+    the write side building a brand new link): a link's inner tokens can
+    themselves carry markup (``strong_open``/``text``/``strong_close`` for
+    ``[**Bold**](x)``), and flattening that markup to a string first --
+    the pre-fix behavior -- then handing it to ``link_children`` as
+    *literal* text would escape the markup's own delimiters (``\\*\\*``)
+    instead of letting them render as formatting; passing the original
+    tokens through, as this function's plain-content branch already does,
+    keeps each inner token rendering by its own type (a plain ``text``
+    child still gets escaped exactly as ``text_children`` would, since its
+    ``.content`` is the same parser-recovered literal value). ``title`` is
+    escaped via ``_link_title_attr``, the same helper ``link_children``
+    uses, so the backslash pre-escape rule lives in one place; nested links
+    are not supported (CommonMark itself forbids them). Used by
+    ``index.py``'s entry-title/description extraction and ``logs.py``'s
+    entry-prose extraction (``parse_index``/``parse_log``) -- every
+    reconstitution of already-parsed content in the codebase shares this
+    one function rather than each caller re-deriving its own walk.
     """
     parts: list[str] = []
     i = 0
@@ -209,15 +232,20 @@ def render_span(children: Sequence[Token]) -> str:
             title_attr = child.attrGet("title")
             title = title_attr if isinstance(title_attr, str) else None
             i += 1
-            inner: list[str] = []
+            inner_tokens: list[Token] = []
             while i < n and children[i].type != "link_close":
-                content = _span_token_source(children[i])
-                if content is not None:
-                    inner.append(content)
+                inner_tokens.append(children[i])
                 i += 1
-            parts.append(
-                render_inline_children(link_children(href, "".join(inner), title))
-            )
+            attrs: dict[str, Any] = {"href": href}
+            link_title_attr = _link_title_attr(title)
+            if link_title_attr is not None:
+                attrs["title"] = link_title_attr
+            link_tokens = [
+                Token("link_open", "a", 1, attrs=attrs),
+                *inner_tokens,
+                Token("link_close", "a", -1),
+            ]
+            parts.append(render_inline_children(link_tokens))
             i += 1  # consume the matching link_close
         else:
             content = _span_token_source(child)
