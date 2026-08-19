@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from okf_core import (
     ValidationFinding,
     entries_for_directory,
@@ -331,6 +333,54 @@ bundle_root = "product"
     findings = validate_bundle(bundle, config)
 
     assert (product_root / "index.md") not in findings
+
+
+def test_validate_bundle_reports_read_error_on_index_md_as_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A committed index.md that exists but can't be read (e.g. a permission
+    error, or a concurrent delete after the is_file() check) is surfaced as
+    a warning finding rather than propagating an uncaught OSError -- the
+    same "surface problems explicitly" channel as every other drift finding."""
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "docs"
+
+[bundles.product]
+bundle_root = "product"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    product_root = tmp_path / "product"
+    product_root.mkdir()
+    _write_concept(
+        product_root / "alpha.md", "---\ntype: concept\ntitle: Alpha\n---\nBody\n"
+    )
+    index_path = product_root / "index.md"
+    _write_concept(index_path, "# Concept\n\n* [Alpha](alpha.md)\n")
+
+    original_read_text = Path.read_text
+
+    def raising_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == index_path:
+            raise OSError("Permission denied")
+        return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", raising_read_text)
+
+    config = load_config(config_path=config_path)
+    bundle = config.bundles["product"]
+    findings = validate_bundle(bundle, config)
+
+    assert index_path in findings
+    assert len(findings[index_path]) == 1
+    finding = findings[index_path][0]
+    assert finding.severity == "warning"
+    assert "could not read index.md for drift check" in finding.message
+    assert "Permission denied" in finding.message
 
 
 def test_validate_bundle_strips_root_okf_version_frontmatter_before_diffing(

@@ -19,10 +19,11 @@ def _entry(
     bundle_root: Path,
     *,
     concept_id: str = "stub",
+    type_: str = "concept",
     title: str | None = None,
     description: str | None = None,
 ) -> ConceptManifestEntry:
-    fm: dict = {"type": "concept"}
+    fm: dict = {"type": type_}
     if title is not None:
         fm["title"] = title
     if description is not None:
@@ -155,6 +156,32 @@ def test_diff_index_reports_changed_title(tmp_path: Path) -> None:
     assert finding.severity == "warning"
     assert finding.field == "alpha.md"
     assert "title changed from 'Old Title' to 'New Title'" in finding.message
+
+
+def test_diff_index_reports_changed_section(tmp_path: Path) -> None:
+    """A concept's `type` changed since the committed index.md was written,
+    moving its entry to a different generated heading. Title is held equal
+    on both sides so this isolates the section-change signal specifically."""
+    alpha = _entry(
+        tmp_path / "alpha.md",
+        tmp_path,
+        concept_id="alpha",
+        type_="decision",
+        title="Alpha",
+    )
+    generated = generate_index(tmp_path, [alpha])
+
+    committed = parse_index("# Concept\n\n* [Alpha](alpha.md)\n")
+
+    findings = diff_index(generated, committed)
+    assert len(findings) == 1
+    finding = findings[0]
+    assert finding.severity == "warning"
+    assert finding.field == "alpha.md"
+    assert finding.message == (
+        "index.md entry 'alpha.md' is stale: "
+        "section changed from 'Concept' to 'Decision'"
+    )
 
 
 def test_diff_index_reports_multiple_changed_fields_in_one_finding(
