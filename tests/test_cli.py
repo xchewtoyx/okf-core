@@ -402,6 +402,62 @@ def test_validate_config_error_exits_2(tmp_path: Path) -> None:
     assert result.exit_code == 2
 
 
+def test_validate_reports_index_drift_and_stays_exit_zero(tmp_path: Path) -> None:
+    """Seeded index drift (#200): a committed index.md that predates a newly
+    added concept file surfaces in `okf validate`'s JSON findings, counts
+    toward the warning summary, and -- being advisory-only -- does not affect
+    the exit code."""
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "alpha.md", title="Alpha")
+    _write_concept(tmp_path / "beta.md", title="Beta")
+    # Committed before beta.md existed -- beta.md is missing from it.
+    (tmp_path / "index.md").write_text(
+        "# Concept\n\n* [Alpha](alpha.md)\n", encoding="utf-8"
+    )
+
+    result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    index_key = str(tmp_path / "index.md")
+    assert index_key in data["findings"]
+    drift_findings = data["findings"][index_key]
+    assert len(drift_findings) == 1
+    assert drift_findings[0]["severity"] == "warning"
+    assert drift_findings[0]["field"] == "beta.md"
+    assert "beta.md" in drift_findings[0]["message"]
+    assert "1 warnings" in result.stderr
+
+
+def test_validate_index_drift_warning_does_not_mask_coexisting_error(
+    tmp_path: Path,
+) -> None:
+    """An error-severity finding elsewhere in the bundle still fails the
+    command even though the index-drift findings alongside it are only
+    warnings."""
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "alpha.md", title="Alpha")
+    bad = tmp_path / "no_type.md"
+    bad.write_text("---\ntitle: Missing Type\n---\nBody\n", encoding="utf-8")
+    # Committed index.md predates both files -- pure advisory drift.
+    (tmp_path / "index.md").write_text("# Concept\n\n", encoding="utf-8")
+
+    result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    data = json.loads(result.stdout)
+    assert data["findings"][str(bad)][0]["severity"] == "error"
+    index_key = str(tmp_path / "index.md")
+    assert index_key in data["findings"]
+    assert all(f["severity"] == "warning" for f in data["findings"][index_key])
+
+
 # ---------------------------------------------------------------------------
 # okf list-concepts
 # ---------------------------------------------------------------------------

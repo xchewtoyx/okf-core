@@ -10,8 +10,9 @@ import pytest
 
 import okf_core.cli as cli_module
 from okf_core.change_envelope import DocumentChangeConflictError
-from okf_core.cli import _concept_directories, _echo_index_result, _index_one_directory
+from okf_core.cli import _echo_index_result, _index_one_directory
 from okf_core.config import BundleConfig
+from okf_core.index import concept_directories
 from okf_core.manifest import BundleManifest, ConceptManifestEntry, ManifestProblem
 
 
@@ -45,7 +46,7 @@ def _bundle(bundle_root: Path) -> BundleConfig:
 
 
 # ---------------------------------------------------------------------------
-# _concept_directories
+# concept_directories
 # ---------------------------------------------------------------------------
 
 
@@ -60,7 +61,7 @@ def test_concept_directories_includes_nested_intermediate_dirs(tmp_path: Path) -
 
     manifest = BundleManifest(bundle_name="docs", concepts=(nested_entry,))
 
-    concept_dirs, concepts_by_parent = _concept_directories(
+    concept_dirs, concepts_by_parent = concept_directories(
         manifest, resolved_bundle_root
     )
 
@@ -84,7 +85,7 @@ def test_concept_directories_swallows_out_of_root_concept(tmp_path: Path) -> Non
 
     manifest = BundleManifest(bundle_name="docs", concepts=(outside_entry,))
 
-    concept_dirs, concepts_by_parent = _concept_directories(
+    concept_dirs, concepts_by_parent = concept_directories(
         manifest, resolved_bundle_root
     )
 

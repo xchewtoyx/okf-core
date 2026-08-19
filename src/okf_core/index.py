@@ -12,6 +12,7 @@ import yaml
 
 from okf_core.documents import (
     ConceptDocument,
+    ValidationFinding,
     parse_concept_document,
     serialize_concept_document,
     validate_concept_document,
@@ -158,6 +159,36 @@ def entries_for_directory(
     return direct_entries, sorted(subdirs)
 
 
+def concept_directories(
+    manifest: BundleManifest, resolved_bundle_root: Path
+) -> tuple[set[Path], dict[Path, list[ConceptManifestEntry]]]:
+    """Return the set of concept-bearing directories and their direct entries.
+
+    ``concept_dirs`` is seeded with ``resolved_bundle_root`` and extended with
+    every ancestor directory (up to the bundle root) of each concept's parent
+    directory. ``concepts_by_parent`` maps each concept's resolved parent
+    directory to the concepts directly within it; concepts outside
+    ``resolved_bundle_root`` are excluded from ``concept_dirs`` but still recorded in ``concepts_by_parent``.
+    """
+    concept_dirs = {resolved_bundle_root}
+    concepts_by_parent: dict[Path, list[ConceptManifestEntry]] = {}
+
+    for c in manifest.concepts:
+        try:
+            resolved_path = c.path.resolve()
+            curr = resolved_path.parent
+            concepts_by_parent.setdefault(curr, []).append(c)
+
+            curr.relative_to(resolved_bundle_root)
+            while curr != resolved_bundle_root and curr.parts:
+                concept_dirs.add(curr)
+                curr = curr.parent
+        except ValueError:
+            pass
+
+    return concept_dirs, concepts_by_parent
+
+
 def parse_index(content: str) -> ParsedIndex:
     """Parse an index.md body into structured sections and entries.
 
@@ -221,6 +252,164 @@ def parse_index(content: str) -> ParsedIndex:
         )
 
     return ParsedIndex(sections=tuple(sections), problems=tuple(problems))
+
+
+@dataclass(frozen=True)
+class _FlatIndexEntry:
+    """One parsed index entry together with the heading it appeared under."""
+
+    heading: str
+    entry: IndexEntry
+
+
+def _flatten_sections(sections: Sequence[IndexSection]) -> dict[str, _FlatIndexEntry]:
+    """Map each entry's ``link`` to its ``(heading, entry)``, keyed for diffing.
+
+    A link repeated across sections (e.g. hand-duplicated) keeps its last
+    occurrence; ``diff_index`` reports semantic content drift, not duplicate-
+    entry hygiene, so silently collapsing duplicates here is deliberate.
+    """
+    flat: dict[str, _FlatIndexEntry] = {}
+    for section in sections:
+        for entry in section.entries:
+            flat[entry.link] = _FlatIndexEntry(heading=section.heading, entry=entry)
+    return flat
+
+
+def diff_index(
+    generated: GeneratedIndex, committed: ParsedIndex
+) -> tuple[ValidationFinding, ...]:
+    """Compare a freshly regenerated index against a parsed committed index.md.
+
+    ``generated`` is re-parsed through :func:`parse_index` before comparison,
+    so both sides are decoded Markdown entries rather than raw text -- this is
+    what makes the comparison canonical-form (semantic) rather than byte-for-
+    byte: formatting-only differences (escaping, incidental whitespace) never
+    reach the comparison. Entries are matched by ``link`` alone, independent
+    of file position, so a manually reordered but content-identical index
+    reports no drift.
+
+    Every returned finding carries ``severity="warning"`` -- index drift is
+    advisory (a consumer may curate an index by hand) and never affects
+    ``okf validate``'s exit code. ``field`` carries the affected entry's
+    ``link`` (or the affected heading, for a malformed committed entry with no
+    parsed link) so callers can identify which entry a finding is about.
+
+    Reports, per entry keyed by ``link``:
+
+    - present only in the regeneration: the committed index.md is missing it.
+    - present only in the committed index.md: it no longer corresponds to any
+      current concept (removed file, or moved to a different directory).
+    - present on both sides with a different heading, title, or description:
+      reported as stale, naming what changed.
+
+    Also converts every ``committed.problems`` entry (malformed list items
+    ``parse_index`` already detects but that nothing previously consumed)
+    into an "unknown extra content" finding.
+    """
+    generated_flat = _flatten_sections(parse_index(generated.body).sections)
+    committed_flat = _flatten_sections(committed.sections)
+
+    findings: list[ValidationFinding] = []
+    for link in sorted(set(generated_flat) | set(committed_flat)):
+        findings.extend(
+            _diff_one_link(link, generated_flat.get(link), committed_flat.get(link))
+        )
+    findings.extend(_malformed_entry_findings(committed.problems))
+    return tuple(findings)
+
+
+def _diff_one_link(
+    link: str,
+    generated_entry: _FlatIndexEntry | None,
+    committed_entry: _FlatIndexEntry | None,
+) -> tuple[ValidationFinding, ...]:
+    """Report drift for one ``link`` present on at least one side of the diff."""
+    if committed_entry is None:
+        assert generated_entry is not None
+        return (
+            ValidationFinding(
+                severity="warning",
+                message=(
+                    f"index.md is missing an entry for {link!r} "
+                    f"({generated_entry.entry.title!r}); a fresh regeneration "
+                    "would include it"
+                ),
+                field=link,
+            ),
+        )
+    if generated_entry is None:
+        return (
+            ValidationFinding(
+                severity="warning",
+                message=(
+                    f"index.md entry {link!r} ({committed_entry.entry.title!r}) "
+                    "does not correspond to any current concept; a fresh "
+                    "regeneration would drop it"
+                ),
+                field=link,
+            ),
+        )
+    return _stale_entry_findings(link, generated_entry, committed_entry)
+
+
+def _stale_entry_findings(
+    link: str,
+    generated_entry: _FlatIndexEntry,
+    committed_entry: _FlatIndexEntry,
+) -> tuple[ValidationFinding, ...]:
+    """Report a "stale" finding when ``link``'s heading/title/description drifted."""
+    changes: list[str] = []
+    if generated_entry.heading != committed_entry.heading:
+        changes.append(
+            f"section changed from {committed_entry.heading!r} to "
+            f"{generated_entry.heading!r}"
+        )
+    if generated_entry.entry.title != committed_entry.entry.title:
+        changes.append(
+            f"title changed from {committed_entry.entry.title!r} to "
+            f"{generated_entry.entry.title!r}"
+        )
+    if generated_entry.entry.description != committed_entry.entry.description:
+        changes.append(
+            f"description changed from {committed_entry.entry.description!r} "
+            f"to {generated_entry.entry.description!r}"
+        )
+    if not changes:
+        return ()
+    return (
+        ValidationFinding(
+            severity="warning",
+            message=f"index.md entry {link!r} is stale: " + "; ".join(changes),
+            field=link,
+        ),
+    )
+
+
+def _malformed_entry_findings(
+    problems: Sequence[IndexParseProblem],
+) -> tuple[ValidationFinding, ...]:
+    """Convert committed index.md parse problems into drift findings.
+
+    ``parse_index`` already detects malformed list items (missing link,
+    nested links, stray trailing text) and reports them as
+    ``IndexParseProblem``; nothing previously consumed that channel, so a
+    malformed committed entry was silently invisible to ``okf validate``.
+    """
+    return tuple(
+        ValidationFinding(
+            severity="warning",
+            message=(
+                f"index.md contains unrecognized content under "
+                f"{problem.heading!r}: {problem.message}"
+                if problem.heading is not None
+                else f"index.md contains unrecognized content: {problem.message}"
+            ),
+            field=problem.heading,
+            line=problem.line,
+        )
+        for problem in problems
+    )
 
 
 def generate_index(
