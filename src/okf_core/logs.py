@@ -10,10 +10,13 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from markdown_it import MarkdownIt
-
-from okf_core._markdown_inline import render_linked_span, token_line
 from okf_core.config import BundleConfig
+from okf_core.markdown_engine import MARKDOWN as _MARKDOWN
+from okf_core.markdown_engine import link_children as _link_children
+from okf_core.markdown_engine import parse_inline_children as _parse_inline_children
+from okf_core.markdown_engine import render_inline_children as _render_inline_children
+from okf_core.markdown_engine import render_span as _render_prose
+from okf_core.markdown_engine import token_line as _token_line
 from okf_core.patching import (
     DocumentChangePlan,
     DocumentChangePlanningError,
@@ -22,8 +25,6 @@ from okf_core.patching import (
     plan_document_change_from_reader,
 )
 from okf_core.paths import concept_id_to_path, path_to_concept_id
-
-_MARKDOWN = MarkdownIt("commonmark")
 
 _DATE_FORM = re.compile(r"\d{4}-\d{2}-\d{2}")
 
@@ -869,28 +870,10 @@ def _entry_from_list_item(
     return LogEntry(text=text, label=label), None
 
 
-_render_prose = render_linked_span
-"""Render a run of inline child tokens back to Markdown source.
-
-Links are reconstituted with their semantic content preserved -- as
-``[text](href)``, or, when the link carries a title, ``[text](href
-"title")`` with the title canonicalized to double-quoted form -- not
-necessarily byte-for-byte identical to the source; every other token passes
-through ``inline_token_source``. Unlike index.py's entry-title renderer, log
-entry prose has no positional restriction on links -- any number may appear
-anywhere in the entry. Shared with index.py's suffix-span renderer via
-``_markdown_inline.render_linked_span`` -- see that module for the
-implementation.
-"""
-
-
 def _render_log_entry(entry: LogEntry) -> str:
     if entry.label:
         return f"* **{entry.label}**: {entry.text}"
     return f"* {entry.text}"
-
-
-_token_line = token_line
 
 
 # --- Concept move logging (#136) -------------------------------------------
@@ -902,100 +885,6 @@ _token_line = token_line
 
 _MOVE_ENTRY_LABEL = "Moved"
 _MOVE_ENTRY_TITLE = "moved to"
-
-
-_CONCEPT_ID_LINK_TEXT_UNSAFE_CHARS = ("[", "]")
-
-
-def _require_representable_concept_id(old_concept_id: str, log_path: Path) -> None:
-    """Reject an ``old`` concept ID that can't be embedded as Markdown link text.
-
-    ``paths.py``'s concept ID validation (``_concept_id_to_relative_markdown_path``)
-    only rejects empty/dot path parts, backslashes, ``:``, and file
-    extensions -- a concept ID containing ``[`` or ``]`` passes it cleanly,
-    but ``_build_move_entry`` interpolates the ID directly into a Markdown
-    link's anchor text (``[old_concept_id](...)``), where an unescaped
-    bracket breaks the link's own delimiter matching.
-
-    Escaping the bracket instead of rejecting the ID was considered, since
-    ``index.py``'s ``_md_escape`` already does exactly this for its own
-    link text/href. It doesn't transfer here safely: this module's parser
-    reconstructs entry text from parsed tokens on every read
-    (``_entry_from_list_item`` via ``render_linked_span``), and that
-    reconstruction does not re-escape brackets appearing in already-parsed
-    link text. An escaped-on-write entry would therefore parse back with the
-    escape consumed, so its re-rendered ``.text`` would no longer equal the
-    freshly-built entry's escaped ``.text`` -- breaking
-    ``_move_already_logged``'s equality-based dedup for exactly the concept
-    IDs this would apply to. Rejecting the ID up front avoids that, and
-    matches this module's own established response to "can this be
-    represented in the flat LogEntry model" (see the stray-block handling in
-    ``parse_log``): report and refuse, rather than silently corrupt.
-    """
-    if any(char in old_concept_id for char in _CONCEPT_ID_LINK_TEXT_UNSAFE_CHARS):
-        raise DocumentChangePlanningError(
-            log_path,
-            "Concept ID cannot be recorded as a log.md move entry: '[' and "
-            f"']' break Markdown link syntax when used as link text: {old_concept_id!r}",
-        )
-
-
-def _has_balanced_parens(value: str) -> bool:
-    """Return whether every ``(``/``)`` in ``value`` is balanced and properly nested.
-
-    Mirrors the depth-tracking markdown-it's (and CommonMark's) unencoded
-    link-destination grammar actually uses: ``(`` increases nesting depth,
-    ``)`` decreases it, and the destination is only well-formed if depth
-    never goes negative and returns to zero by the end. This is what makes
-    ``topics/foo(bar)baz.md`` safe to use as a link destination (parens
-    balance, so the whole path is consumed as one href) while
-    ``topics/foo)bar.md`` and ``topics/foo(bar.md`` are not (unbalanced, so
-    the parser either truncates the destination early or fails to recognize
-    a link at all -- see ``_require_representable_move_target``).
-    """
-    depth = 0
-    for char in value:
-        if char == "(":
-            depth += 1
-        elif char == ")":
-            depth -= 1
-            if depth < 0:
-                return False
-    return depth == 0
-
-
-def _require_representable_move_target(new_relative_path: str, log_path: Path) -> None:
-    """Reject a ``new`` relative path that can't be embedded as a Markdown link destination.
-
-    ``_resolve_move_target``'s validation (via ``path_to_concept_id``) rejects
-    empty/dot path parts, backslashes, ``:``, and non-``.md`` extensions, but
-    a relative path containing an unbalanced ``(`` or ``)`` passes it
-    cleanly. ``_build_move_entry`` interpolates the path directly into a
-    Markdown link's ``(href "title")`` destination, where markdown-it's link
-    rule tracks paren nesting depth to find the end of the href: an unmatched
-    ``)`` truncates the destination at that character (leaving the rest as
-    stray literal text after the link), and an unmatched ``(`` makes the
-    parser fail to recognize the construct as a link at all, degrading the
-    whole entry to plain unlinked text. Both are silent corruption --
-    ``parse_log`` reports no problem either way, since the result is
-    syntactically valid Markdown, just not the link this module intended to
-    write. Balanced parens (e.g. ``topics/foo(bar)baz.md``) round-trip
-    correctly and are not rejected here -- see ``_has_balanced_parens``.
-
-    A sibling check to ``_require_representable_concept_id`` rather than a
-    generalization of it: that function rejects ``[``/``]`` by mere
-    presence, since any occurrence breaks link *text* delimiter matching,
-    while a link *destination* only breaks on parens that are structurally
-    unbalanced, not on their presence -- the two aren't the same predicate
-    parameterized by character set.
-    """
-    if not _has_balanced_parens(new_relative_path):
-        raise DocumentChangePlanningError(
-            log_path,
-            "Move target path cannot be recorded as a log.md move entry: "
-            "unbalanced '(' or ')' break Markdown link destination syntax: "
-            f"{new_relative_path!r}",
-        )
 
 
 def _build_move_entry(old_concept_id: str, new_relative_path: str) -> LogEntry:
@@ -1013,15 +902,28 @@ def _build_move_entry(old_concept_id: str, new_relative_path: str) -> LogEntry:
     normalization so a freshly built entry's text is already in the same
     canonical form ``parse_log`` would reconstruct after a round trip through
     disk -- required for ``_move_already_logged``'s comparison below to
-    still match a previously written entry. Callers must have already
-    checked ``old_concept_id`` via ``_require_representable_concept_id`` (a
-    ``[``/``]`` here would break the link's own delimiter matching) and
-    ``new_relative_path`` via ``_require_representable_move_target`` (an
-    unbalanced ``(``/``)`` here would break the link destination's own
-    delimiter matching).
+    still match a previously written entry.
+
+    ``old_concept_id`` and ``new_relative_path`` are embedded via the shared
+    engine's ``link_children``/``render_inline_children`` (#199) rather than
+    hand-formatted into a string: any ``[``/``]`` in the concept ID is
+    escaped as link text, and an unbalanced ``(``/``)`` in the path is
+    represented via CommonMark's ``<...>`` angle-bracket destination form --
+    both decided by the renderer, not by this function. Before #199, this
+    function instead required callers to pre-reject such input
+    (``_require_representable_concept_id``/``_require_representable_move_target``,
+    since removed), because the old per-module reconstitution
+    (``_markdown_inline.render_linked_span``) never re-escaped already-parsed
+    link text on read, so a hand-escaped write would silently un-escape on
+    the next parse and break ``_move_already_logged``'s equality-based dedup.
+    The shared engine's parse and render are symmetric (escape on write,
+    unescape on read, via the same rules both directions), so no
+    representability pre-check is needed here any more.
     """
     href = _MARKDOWN.normalizeLink(new_relative_path)
-    text = f'[{old_concept_id}]({href} "{_MOVE_ENTRY_TITLE}")'
+    text = _render_inline_children(
+        _link_children(href, old_concept_id, title=_MOVE_ENTRY_TITLE)
+    )
     return LogEntry(text=text, label=_MOVE_ENTRY_LABEL)
 
 
@@ -1134,20 +1036,18 @@ def plan_log_concept_move(
     Both are validated via ``paths.py``'s existing concept ID/path resolution
     (bundle-root containment, ``.md`` shape, reserved-filename rejection,
     concept path strategy); a validation failure raises ``ConceptPathError``.
-    ``DocumentChangePlanningError`` is raised instead for several other
+    ``DocumentChangePlanningError`` is raised instead for two other
     conditions: a missing ``new`` target (mirroring how a missing move
-    destination is reported elsewhere in this module); an existing ``log.md``
-    that fails to decode as UTF-8; an ``old`` concept ID containing ``[`` or
-    ``]``, which cannot be represented as the move entry's Markdown link text
-    (see ``_require_representable_concept_id``); a ``new`` relative path
-    containing an unbalanced ``(`` or ``)``, which cannot be represented as
-    the move entry's Markdown link destination (see
-    ``_require_representable_move_target``); and an existing ``log.md`` that
-    ``parse_log`` reports any ``LogParseProblem`` against, since
-    ``render_log`` cannot reconstruct content it couldn't parse and
+    destination is reported elsewhere in this module); and an existing
+    ``log.md`` that ``parse_log`` reports any ``LogParseProblem`` against,
+    since ``render_log`` cannot reconstruct content it couldn't parse and
     re-rendering the log in that state would silently drop it -- ``log.md``
     must be fixed (by hand, or via whatever produced the unparseable content)
-    before another move can be safely recorded in it.
+    before another move can be safely recorded in it. An ``old`` concept ID
+    containing ``[``/``]``, or a ``new`` relative path containing an
+    unbalanced ``(``/``)``, is no longer rejected (#199): ``_build_move_entry``
+    embeds both via the shared engine's escaping, which represents them
+    correctly instead of requiring a pre-check.
 
     If ``old`` and ``new`` resolve to the same path, this is a no-op
     (mirroring ``FileMovePlan.noop``) and the returned plan changes nothing
@@ -1177,9 +1077,7 @@ def plan_log_concept_move(
             bundle, log_path, lambda _, original: original, allow_missing=True
         )
 
-    _require_representable_concept_id(old, log_path)
     new_relative_path = new_path.relative_to(bundle_root).as_posix()
-    _require_representable_move_target(new_relative_path, log_path)
 
     def build_proposed_content(resolved_path: Path, original_content: str) -> str:
         parsed = parse_log(original_content)
@@ -1286,11 +1184,11 @@ def _canonicalize_log_entry_prose(text: str) -> str:
     to on its own -- e.g. a link title's quote style, or a soft line break
     collapsing to a single space -- rather than against ``text`` verbatim,
     since that canonicalization is expected and allowed, not a
-    representability failure.
+    representability failure. Parse-then-reconstitute via the shared
+    engine's ``parse_inline_children``/``_render_prose`` (#199), the same
+    pair every other reconstitution in this module uses.
     """
-    inline_tokens = _MARKDOWN.parseInline(text)
-    children = inline_tokens[0].children if inline_tokens else None
-    return _render_prose(children or []).strip()
+    return _render_prose(_parse_inline_children(text)).strip()
 
 
 def _require_representable_log_entry(

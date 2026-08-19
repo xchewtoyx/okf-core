@@ -13,13 +13,11 @@ from markdown_it import MarkdownIt
 from markdown_it.token import Token
 
 from okf_core import BundleConfig, ConceptPathError
-from okf_core._markdown_inline import inline_token_source
 from okf_core.logs import (
     _MARKDOWN,
     _MOVE_ENTRY_TITLE,
     ParsedLog,
     _build_move_entry,
-    _has_balanced_parens,
     load_log,
     log_concept_move,
     parse_log,
@@ -56,6 +54,15 @@ def _write(path: Path, content: str) -> None:
 
 def _moved_entry_text(old: str, new: str) -> str:
     return f'[{old}]({new} "moved to")'
+
+
+def _recovered_link(entry_text: str) -> tuple[Token, str]:
+    """Parse a `_build_move_entry` `.text` value and return (link_open, text)."""
+    children = _MD.parseInline(entry_text)[0].children
+    assert children is not None and children[0].type == "link_open"
+    assert children[-1].type == "link_close"
+    text = "".join(child.content for child in children[1:-1] if child.type == "text")
+    return children[0], text
 
 
 # ---------------------------------------------------------------------------
@@ -394,25 +401,38 @@ def test_plan_does_not_raise_for_missing_log(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Concept IDs that can't be represented as Markdown link text
+# #199: concept IDs containing `[`/`]`, and `new` paths containing unbalanced
+# `(`/`)`, are no longer rejected -- the shared engine's escaping (bracket
+# backslash-escaping for link text; `<...>` angle-bracket destination form
+# for a path that can't be expressed unencoded) represents them correctly
+# instead of requiring a pre-check. These tests replace
+# test_plan_rejects_old_concept_id_with_brackets/
+# test_plan_rejects_new_with_unbalanced_parens (drift oracles pinning the
+# retired `_require_representable_concept_id`/`_require_representable_move_target`
+# guards) with acceptance + round-trip assertions.
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize("old", ["topics/old]", "topics/[old", "top[ic]s/old"])
-def test_plan_rejects_old_concept_id_with_brackets(tmp_path: Path, old: str) -> None:
+def test_plan_accepts_old_concept_id_with_brackets(tmp_path: Path, old: str) -> None:
     _write(tmp_path / "topics" / "new.md", "# New\n")
     bundle = _bundle(tmp_path)
 
-    with pytest.raises(DocumentChangePlanningError, match=r"\[.*\]"):
-        plan_log_concept_move(bundle, old, "topics/new.md", today=_TODAY)
+    plan = plan_log_concept_move(bundle, old, "topics/new.md", today=_TODAY)
+
+    assert plan.changed is True
+    parsed = parse_log(plan.proposed_content)
+    entry = parsed.sections[0].entries[0]
+    assert entry.label == "Moved"
+    link, text = _recovered_link(entry.text)
+    assert text == old
+    assert link.attrGet("href") == "topics/new.md"
 
 
-def test_plan_bracket_rejection_does_not_apply_to_noop_move(tmp_path: Path) -> None:
+def test_plan_bracket_move_does_not_apply_to_noop_move(tmp_path: Path) -> None:
     """A concept ID with brackets that resolves to the same path as `new` is
     still a no-op: no entry is ever built from `old` and the log is never
-    re-rendered, so there's nothing for the bracket to corrupt -- the
-    rejection in _require_representable_concept_id is only reachable once an
-    entry is actually about to be built.
+    re-rendered.
     """
     _write(tmp_path / "topics" / "new].md", "# New\n")
     bundle = _bundle(tmp_path)
@@ -422,27 +442,26 @@ def test_plan_bracket_rejection_does_not_apply_to_noop_move(tmp_path: Path) -> N
     assert plan.changed is False
 
 
-# ---------------------------------------------------------------------------
-# `new` relative paths that can't be represented as a Markdown link
-# destination (unbalanced parens)
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     "new_filename",
     ["foo)bar.md", "foo(bar.md", "(foo.md", "foo).md"],
     ids=["unmatched-close", "unmatched-open", "leading-open", "trailing-close"],
 )
-def test_plan_rejects_new_with_unbalanced_parens(
+def test_plan_accepts_new_with_unbalanced_parens(
     tmp_path: Path, new_filename: str
 ) -> None:
     _write(tmp_path / "topics" / new_filename, "# New\n")
     bundle = _bundle(tmp_path)
 
-    with pytest.raises(DocumentChangePlanningError, match=r"[()]"):
-        plan_log_concept_move(
-            bundle, "topics/old", f"topics/{new_filename}", today=_TODAY
-        )
+    plan = plan_log_concept_move(
+        bundle, "topics/old", f"topics/{new_filename}", today=_TODAY
+    )
+
+    assert plan.changed is True
+    parsed = parse_log(plan.proposed_content)
+    entry = parsed.sections[0].entries[0]
+    link, _text = _recovered_link(entry.text)
+    assert link.attrGet("href") == f"topics/{new_filename}"
 
 
 @pytest.mark.parametrize(
@@ -453,11 +472,12 @@ def test_plan_rejects_new_with_unbalanced_parens(
 def test_plan_accepts_new_with_balanced_parens(
     tmp_path: Path, new_filename: str
 ) -> None:
-    """Balanced parens in `new` are not rejected: markdown-it's link
-    destination parser tracks paren nesting depth and consumes a balanced
-    run as one href (confirmed directly against markdown-it-py), so
-    `topics/foo(bar)baz.md` round-trips as a correct link and rejecting it
-    would be over-rejecting a path CommonMark actually handles correctly.
+    """Balanced parens in `new` round-trip to the same href either way -- the
+    shared engine may choose the `<...>` angle-bracket destination form even
+    for a *balanced* paren-containing path (its own representability
+    decision, not necessarily the unencoded `(href)` form a hand-rolled
+    escaper might have used), so this checks the recovered href rather than
+    one specific rendered byte sequence.
     """
     _write(tmp_path / "topics" / new_filename, "# New\n")
     bundle = _bundle(tmp_path)
@@ -469,11 +489,12 @@ def test_plan_accepts_new_with_balanced_parens(
     assert plan.changed is True
     parsed = parse_log(plan.proposed_content)
     entry = parsed.sections[0].entries[0]
-    assert entry.text == _moved_entry_text("topics/old", f"topics/{new_filename}")
+    link, _text = _recovered_link(entry.text)
+    assert link.attrGet("href") == f"topics/{new_filename}"
 
 
-def test_plan_paren_rejection_does_not_apply_to_noop_move(tmp_path: Path) -> None:
-    """Mirrors test_plan_bracket_rejection_does_not_apply_to_noop_move: a `new`
+def test_plan_paren_move_does_not_apply_to_noop_move(tmp_path: Path) -> None:
+    """Mirrors test_plan_bracket_move_does_not_apply_to_noop_move: a `new`
     with unbalanced parens that resolves to the same path as `old` is still a
     no-op, since no entry is ever built and the log is never re-rendered.
     """
@@ -492,35 +513,22 @@ def test_plan_paren_rejection_does_not_apply_to_noop_move(tmp_path: Path) -> Non
 # back to the same (old_concept_id, href, title) it was built from.
 # ---------------------------------------------------------------------------
 
-# Ordinary text plus markdown-significant punctuation that a concept ID or
-# relative path can legitimately contain: quotes and parens have no special
-# meaning as raw link text/destination content. `[`, `]`, `\`, and `:` are
-# excluded because upstream validation already rejects them before an ID or
-# path ever reaches `_build_move_entry` -- `[`/`]` via
-# `_require_representable_concept_id`, and `\`/`:` via
-# `_concept_id_to_relative_markdown_path` (see that function's docstring on
-# `_require_representable_concept_id`) -- so a fuzzed string containing them
-# would be testing an input class `_build_move_entry` never actually sees.
-_PATH_LIKE_ALPHABET = 'ab01 .-_/"()'
-
-
-def _recovered_link(entry_text: str) -> tuple[Token, str]:
-    """Parse a `_build_move_entry` `.text` value and return (link_open, text).
-
-    Reuses `inline_token_source` -- the same primitive `render_linked_span`
-    itself is built from -- to reconstitute the inner text, so a token like an
-    emphasis delimiter (e.g. a lone `_`) is counted correctly instead of
-    silently dropped by only looking at `text`-typed tokens.
-    """
-    children = _MD.parseInline(entry_text)[0].children
-    assert children is not None and children[0].type == "link_open"
-    assert children[-1].type == "link_close"
-    parts = [
-        content
-        for child in children[1:-1]
-        if (content := inline_token_source(child)) is not None
-    ]
-    return children[0], "".join(parts)
+# Ordinary text plus the full set of markdown-significant characters a
+# concept ID or relative path can legitimately contain (#199 AC1): quotes,
+# parens, brackets, and backslash. Before #199, `[`/`]` were excluded because
+# upstream validation rejected them outright (`_require_representable_concept_id`,
+# since removed) and an unbalanced paren in `new_relative_path` was filtered
+# via `assume(_has_balanced_parens(...))` for the same reason
+# (`_require_representable_move_target`, also removed) -- `_build_move_entry`
+# now embeds both via the shared engine's escaping (backslash-escaping for
+# link text; `<...>` angle-bracket destination form for a path that can't be
+# expressed unencoded, including an unbalanced paren or an empty href), so
+# every character in this alphabet round-trips and no `assume` filter is
+# needed for either. `:` remains excluded only to keep the fuzzed input
+# realistic (a concept ID reaching this function via `plan_log_concept_move`
+# has already passed `_concept_id_to_relative_markdown_path`, which rejects
+# `:`), not because `_build_move_entry` itself would mishandle it.
+_PATH_LIKE_ALPHABET = 'ab01 .-_/"()[]\\'
 
 
 @given(
@@ -532,20 +540,16 @@ def test_build_move_entry_round_trips(
 ) -> None:
     """`_build_move_entry`'s entry text parses back to the same ID/path/title.
 
-    `new_relative_path` is filtered to balanced parens via the real
-    `_has_balanced_parens` guard (not a reimplementation of it) so this stays
-    in sync with `_require_representable_move_target`, the precondition
-    `_build_move_entry`'s own docstring says callers must already have
-    checked. It's further filtered to a non-empty normalized href: an empty
-    destination has no way to carry the fixed title too (CommonMark's
-    unencoded destination grammar can't express "empty destination, then a
-    title" -- `( "title")` parses as a literal href, not an empty one) --
-    the same gap `render_linked_span`'s own round-trip test works around,
-    here on the write side instead of the read side.
+    A run of two or more consecutive spaces in `old_concept_id` is excluded:
+    the shared engine's canonical renderer collapses internal whitespace runs
+    in literal text content to a single space (the same "canonical, not
+    byte-identical" convergence ADR-0002 documents elsewhere, e.g. a soft
+    line break collapsing to one space) -- a deliberate normalization, not a
+    data-loss bug, but not the identity function this test otherwise checks
+    for every other character in the alphabet.
     """
-    assume(_has_balanced_parens(new_relative_path))
+    assume("  " not in old_concept_id)
     href = _MARKDOWN.normalizeLink(new_relative_path)
-    assume(href != "")
 
     entry = _build_move_entry(old_concept_id, new_relative_path)
     link, text = _recovered_link(entry.text)

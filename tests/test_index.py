@@ -300,18 +300,38 @@ def test_generate_empty_string_title_falls_back_to_stem(tmp_path: Path) -> None:
 
 
 def test_generate_title_with_closing_bracket_is_escaped(tmp_path: Path) -> None:
-    # Both [ and ] are escaped so the generated markdown is valid CommonMark
-    e = _entry(tmp_path / "a.md", tmp_path, title="Foo [Bar]", description=None)
+    # #199: an *unbalanced* closing bracket in a title genuinely needs
+    # escaping to avoid being misread on reparse (unlike a balanced `[...]`
+    # pair, which CommonMark's own link-text bracket matching already
+    # handles safely without escaping -- see test_round_trip_metacharacters
+    # below for that case). The shared engine (not a hand-rolled
+    # `_md_escape`) decides the exact escaped form, so this asserts the
+    # semantic round-trip (AC1) rather than one specific escaped byte
+    # sequence -- the drift oracle a prior version of this test pinned
+    # against the retired hand-rolled `_md_escape`.
+    e = _entry(tmp_path / "a.md", tmp_path, title="Foo Bar]", description=None)
     result = generate_index(tmp_path, [e])
     assert result.problems == ()
-    assert "* [Foo \\[Bar\\]](a.md)" in result.body
+    assert "\\]" in result.body
+    parsed = parse_index(result.body)
+    assert parsed.sections[0].entries[0].title == "Foo Bar]"
 
 
 def test_generate_link_with_closing_paren_is_escaped(tmp_path: Path) -> None:
-    # ) terminates the markdown link target; must be escaped
+    # #199: an href containing an *unbalanced* closing paren genuinely needs
+    # escaping to avoid truncating the link destination on reparse (a
+    # balanced pair like `foo(bar)baz.md` round-trips correctly even
+    # unescaped, since markdown-it's link-destination parser tracks paren
+    # nesting depth -- see test_plan_accepts_new_with_balanced_parens in
+    # test_log_writing.py for that case). The shared engine represents an
+    # unbalanced paren via CommonMark's `<...>` angle-bracket destination
+    # form (its own choice) rather than a hand-rolled `\)` escape -- this
+    # asserts the semantic round-trip (AC1) rather than the literal escaped
+    # form, the drift oracle a prior version of this test pinned against the
+    # retired hand-rolled `_md_escape`.
     e = ConceptManifestEntry(
-        concept_id="foo(bar)",
-        path=tmp_path / "foo(bar).md",
+        concept_id="foo)bar",
+        path=tmp_path / "foo)bar.md",
         bundle_root=tmp_path,
         mtime_ns=0,
         size=0,
@@ -320,8 +340,8 @@ def test_generate_link_with_closing_paren_is_escaped(tmp_path: Path) -> None:
     )
     result = generate_index(tmp_path, [e])
     assert result.problems == ()
-    # ( does not need escaping (only ) terminates the link group)
-    assert "* [Foo Bar](foo(bar\\).md)" in result.body
+    parsed = parse_index(result.body)
+    assert parsed.sections[0].entries[0].link == "foo)bar.md"
 
 
 def test_round_trip_metacharacters(tmp_path: Path) -> None:
