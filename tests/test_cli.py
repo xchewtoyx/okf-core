@@ -44,7 +44,7 @@ def _write_concept(path: Path, *, title: str, type_: str = "concept") -> None:
 
 def _write_future_root_index(root: Path) -> None:
     (root / "index.md").write_text(
-        "---\nokf_version: '0.2'\n---\n# Future Bundle\n",
+        "---\nokf_version: '0.3'\n---\n# Future Bundle\n",
         encoding="utf-8",
     )
 
@@ -251,6 +251,28 @@ def test_scan_consumes_future_version_bundle_best_effort(tmp_path: Path) -> None
 # ---------------------------------------------------------------------------
 # okf validate
 # ---------------------------------------------------------------------------
+
+
+def test_scan_and_validate_accept_declared_v02_bundle(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\nokf_version = "0.2"\n',
+        encoding="utf-8",
+    )
+    _write_concept(tmp_path / "example.md", title="Example")
+
+    index_result = _runner().invoke(cli, ["index", "--config", str(config_path)])
+    assert index_result.exit_code == 0
+    root_index = (tmp_path / "index.md").read_text(encoding="utf-8")
+    assert root_index.startswith("---\nokf_version: '0.2'\n---\n")
+
+    scan_result = _runner().invoke(cli, ["scan", "--config", str(config_path)])
+    assert scan_result.exit_code == 0
+    assert json.loads(scan_result.stdout)["problems"] == []
+
+    validate_result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+    assert validate_result.exit_code == 0
+    assert json.loads(validate_result.stdout)["findings"] == {}
 
 
 def test_validate_no_findings_exits_zero(tmp_path: Path) -> None:
@@ -1496,10 +1518,13 @@ def test_index_reports_clean_error_when_symlink_swapped_before_planning(
     assert "Wrote index.md" not in result.stderr
 
 
-def test_index_writes_root_okf_version_when_configured(tmp_path: Path) -> None:
+@pytest.mark.parametrize("version", ["0.1", "0.2"])
+def test_index_writes_root_okf_version_when_configured(
+    tmp_path: Path, version: str
+) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
-        f'[defaults]\nbundle_root = "{tmp_path}"\nokf_version = "0.1"\n',
+        f'[defaults]\nbundle_root = "{tmp_path}"\nokf_version = "{version}"\n',
         encoding="utf-8",
     )
     _write_concept(tmp_path / "example.md", title="Example")
@@ -1508,12 +1533,13 @@ def test_index_writes_root_okf_version_when_configured(tmp_path: Path) -> None:
 
     assert result.exit_code == 0
     content = (tmp_path / "index.md").read_text(encoding="utf-8")
-    assert content.startswith("---\nokf_version: '0.1'\n---\n")
+    assert content.startswith(f"---\nokf_version: '{version}'\n---\n")
     assert "Example" in content
 
 
+@pytest.mark.parametrize("version", ["0.1", "0.2"])
 def test_index_preserves_existing_root_okf_version_when_config_unset(
-    tmp_path: Path,
+    tmp_path: Path, version: str
 ) -> None:
     config_path = tmp_path / "okf-core.toml"
     config_path.write_text(
@@ -1521,7 +1547,7 @@ def test_index_preserves_existing_root_okf_version_when_config_unset(
         encoding="utf-8",
     )
     (tmp_path / "index.md").write_text(
-        "---\nokf_version: '0.1'\n---\n# Old\n", encoding="utf-8"
+        f"---\nokf_version: '{version}'\n---\n# Old\n", encoding="utf-8"
     )
     _write_concept(tmp_path / "example.md", title="Example")
 
@@ -1529,7 +1555,7 @@ def test_index_preserves_existing_root_okf_version_when_config_unset(
 
     assert result.exit_code == 0
     content = (tmp_path / "index.md").read_text(encoding="utf-8")
-    assert content.startswith("---\nokf_version: '0.1'\n---\n")
+    assert content.startswith(f"---\nokf_version: '{version}'\n---\n")
     assert "Example" in content
 
 
@@ -1562,7 +1588,7 @@ def test_index_force_does_not_bypass_unsupported_root_version(
         f'[defaults]\nbundle_root = "{tmp_path}"\n',
         encoding="utf-8",
     )
-    original = "---\nokf_version: '0.2'\n---\n# Future\n"
+    original = "---\nokf_version: '0.3'\n---\n# Future\n"
     (tmp_path / "index.md").write_text(original, encoding="utf-8")
     _write_concept(tmp_path / "example.md", title="Example")
 
@@ -1601,7 +1627,7 @@ def test_index_leaves_newer_version_bundle_root_alone(tmp_path: Path) -> None:
         f'[defaults]\nbundle_root = "{tmp_path}"\n',
         encoding="utf-8",
     )
-    original = "---\nokf_version: '0.2'\n---\n# Future\n"
+    original = "---\nokf_version: '0.3'\n---\n# Future\n"
     (tmp_path / "index.md").write_text(original, encoding="utf-8")
     _write_concept(tmp_path / "example.md", title="Example")
 
@@ -1672,7 +1698,7 @@ def test_index_rejects_subdirectory_write_when_root_version_is_newer(
         encoding="utf-8",
     )
     (tmp_path / "index.md").write_text(
-        "---\nokf_version: '0.2'\n---\n# Future\n",
+        "---\nokf_version: '0.3'\n---\n# Future\n",
         encoding="utf-8",
     )
     subdir = tmp_path / "topics"
@@ -2088,7 +2114,7 @@ def test_index_quiet(tmp_path: Path) -> None:
 
     # Failure case: write safety problem (index.md has newer unsupported version)
     (tmp_path / "index.md").write_text(
-        "---\nokf_version: '0.2'\n---\n# Index\n", encoding="utf-8", newline="\n"
+        "---\nokf_version: '0.3'\n---\n# Index\n", encoding="utf-8", newline="\n"
     )
     result = _runner().invoke(cli, ["index", "--config", str(config_path), "-q"])
     assert result.exit_code == 1
@@ -2236,7 +2262,7 @@ def test_cli_stable_id_write_safety_refused(tmp_path: Path) -> None:
     )
     _write_concept(tmp_path / "a.md", title="Alpha")
     (tmp_path / "index.md").write_text(
-        "---\nokf_version: '0.2'\n---\n# Index\n", encoding="utf-8", newline="\n"
+        "---\nokf_version: '0.3'\n---\n# Index\n", encoding="utf-8", newline="\n"
     )
 
     result = _runner().invoke(
@@ -2511,7 +2537,7 @@ def test_cli_move_write_safety_refused(tmp_path: Path) -> None:
     )
     _write_concept(tmp_path / "old.md", title="Old")
     (tmp_path / "index.md").write_text(
-        "---\nokf_version: '0.2'\n---\n# Index\n", encoding="utf-8", newline="\n"
+        "---\nokf_version: '0.3'\n---\n# Index\n", encoding="utf-8", newline="\n"
     )
 
     result = _runner().invoke(

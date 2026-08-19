@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-SUPPORTED_OKF_VERSION = (0, 1)
+SUPPORTED_OKF_VERSION = (0, 2)
 
 _VERSION_RE = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 

@@ -30,7 +30,7 @@ consume `okf-core`.
 
 ## Design Constraints
 
-- Keep `okf-core` aligned with the public OKF v0.1 specification:
+- Keep `okf-core` aligned with the public OKF v0.2 specification:
   https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md
 - For spec-sensitive work, cache the spec content to `.agent-cache/SPEC.md`
   if it is not already present, then consult that local copy while working.
@@ -38,11 +38,12 @@ consume `okf-core`.
 - Use the upstream reference path implementation as context for concept ID and
   path behavior:
   https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/src/enrichment_agent/bundle/paths.py
-- Treat these OKF v0.1 sections as authoritative for current MVP behavior:
-  Section 2 Terminology, Section 3 Bundle Structure, Section 3.1 Reserved
-  filenames, Section 4 Concept Documents, Section 4.1 Frontmatter, Section 6
-  Index Files, Section 7 Log Files, Section 9 Conformance, and Section 11
-  Versioning.
+- Treat these OKF v0.2 sections as authoritative for current MVP behavior:
+  Section 2 Terminology, Section 3 Bundle structure, Section 3.1 Reserved
+  filenames, Section 4 Concept documents, Section 4.1 Frontmatter, Section 5
+  Provenance/trust/lifecycle, Section 6 Cross-linking and paths, Section 7
+  Actor convention, Section 8 Index files, Section 9 Log files, Section 11
+  Conformance, and Section 12 Versioning.
 - Behavior must always be capable of reduction to the base OKF specification.
   No extension introduced by this repository should be mandatory, or
   fundamentally change base OKF concepts such as bundle, concept ID, reserved

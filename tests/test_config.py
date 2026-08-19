@@ -411,10 +411,30 @@ def test_unsupported_configured_okf_version_raises_config_error(
     tmp_path: Path,
 ) -> None:
     config_path = tmp_path / "okf-core.toml"
-    config_path.write_text('[defaults]\nokf_version = "0.2"\n', encoding="utf-8")
+    config_path.write_text('[defaults]\nokf_version = "0.3"\n', encoding="utf-8")
 
     with pytest.raises(ConfigError, match="newer than supported"):
         load_config(config_path=config_path)
+
+
+@pytest.mark.parametrize("version", ["0.0", "0.1", "0.2"])
+def test_supported_configured_okf_version_accepted(
+    tmp_path: Path, version: str
+) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(f'[defaults]\nokf_version = "{version}"\n', encoding="utf-8")
+
+    config = load_config(config_path=config_path)
+
+    assert config.defaults.okf_version == version
+
+
+@pytest.mark.parametrize(
+    ("version", "supported"),
+    [("0.1", True), ("0.2", True), ("0.3", False), ("1.0", False)],
+)
+def test_is_supported_okf_version_boundary(version: str, supported: bool) -> None:
+    assert is_supported_okf_version(version) is supported
 
 
 def test_is_supported_okf_version_returns_false_for_invalid_input() -> None:
