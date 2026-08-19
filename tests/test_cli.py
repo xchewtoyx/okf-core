@@ -942,6 +942,29 @@ def test_unlinked_mentions_apply_custom_heading(tmp_path: Path) -> None:
     assert "## See also" not in written
 
 
+def test_unlinked_mentions_apply_rejects_invalid_heading_level(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_unlinked_mention_pair(tmp_path)
+
+    result = _runner().invoke(
+        cli,
+        [
+            "unlinked-mentions",
+            "--config",
+            str(config_path),
+            "--apply",
+            "--heading-level",
+            "7",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "level" in result.stderr
+    assert (tmp_path / "source.md").read_text(encoding="utf-8") == (
+        "---\ntype: concept\ntitle: Source\n---\nSee Alpha for details.\n"
+    )
+
+
 def test_unlinked_mentions_help_documents_apply_options() -> None:
     result = _runner().invoke(cli, ["unlinked-mentions", "--help"])
 
