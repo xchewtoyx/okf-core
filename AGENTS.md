@@ -115,7 +115,7 @@ matter of implementor discretion; a `PROPOSED` (not yet `ACCEPTED`) ADR
 section is documented direction, not yet binding.
 
 **One sanctioned Markdown engine (#199):** `src/okf_core/markdown_engine.py`
-is the one place Markdown-significant-character escaping/unescaping and
+is the one place where Markdown-significant-character escaping/unescaping and
 Markdown-it token parsing/rendering happen. `patching.py`, `logs.py`, and
 `index.py` all read/write Markdown-side content through it (its shared
 `MARKDOWN` parser instance, `render_markdown_tokens`/`render_inline_children`/
@@ -123,8 +123,8 @@ Markdown-it token parsing/rendering happen. `patching.py`, `logs.py`, and
 each carrying its own escaping rule set or hand-rolled inline-token
 reconstitution — the four independent implementations this replaced
 (`index.py`'s `_md_escape`, the retired `_markdown_inline.py`'s
-`_escape_title`, and a pair of `logs.py` guards that rejected unsafe input
-instead of escaping it) are the concrete "N places to re-fix one design
+`_escape_title`, and `logs.py`'s pair of input-rejecting guards) are the
+concrete "N places to re-fix one design
 decision" problem this rule exists to prevent. This does not mean a single
 shared block-walk across formats: `logs.py`'s date-sectioned entry state
 machine and `index.py`'s heading-sectioned entry walk remain separate,
