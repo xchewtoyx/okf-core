@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 from okf_core.attribution import check_attribution_consistency
 from okf_core.documents import (
     ConceptDocument,
+    DocumentParseError,
     ValidationFinding,
     parse_concept_document,
     validate_concept_document,
@@ -135,7 +136,7 @@ def _directory_index_drift(
 
     try:
         committed_content = index_path.read_text(encoding="utf-8")
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         return (
             ValidationFinding(
                 severity="warning",
@@ -147,6 +148,14 @@ def _directory_index_drift(
     # adds it only when writing the bundle root's index.md); strip any
     # committed frontmatter the same way before parsing so both sides compare
     # like for like.
-    committed_body = parse_concept_document(committed_content).body
+    try:
+        committed_body = parse_concept_document(committed_content).body
+    except DocumentParseError as exc:
+        return (
+            ValidationFinding(
+                severity="warning",
+                message=f"could not parse index.md for drift check: {exc}",
+            ),
+        )
     committed = parse_index(committed_body)
     return diff_index(generated, committed)

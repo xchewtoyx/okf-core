@@ -383,6 +383,84 @@ bundle_root = "product"
     assert "Permission denied" in finding.message
 
 
+def test_validate_bundle_reports_malformed_index_md_frontmatter_as_finding(
+    tmp_path: Path,
+) -> None:
+    """A committed index.md with unterminated (or otherwise invalid) YAML
+    frontmatter must not crash `okf validate` via an uncaught
+    DocumentParseError -- it's surfaced as a warning finding, same as any
+    other drift-check failure."""
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "docs"
+
+[bundles.product]
+bundle_root = "product"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    product_root = tmp_path / "product"
+    product_root.mkdir()
+    _write_concept(
+        product_root / "alpha.md", "---\ntype: concept\ntitle: Alpha\n---\nBody\n"
+    )
+    index_path = product_root / "index.md"
+    # Opening "---" with no closing delimiter -- DocumentParseError.
+    _write_concept(index_path, "---\ntype: concept\n# Concept\n\n* [Alpha](alpha.md)\n")
+
+    config = load_config(config_path=config_path)
+    bundle = config.bundles["product"]
+    findings = validate_bundle(bundle, config)
+
+    assert index_path in findings
+    assert len(findings[index_path]) == 1
+    finding = findings[index_path][0]
+    assert finding.severity == "warning"
+    assert "could not parse index.md for drift check" in finding.message
+
+
+def test_validate_bundle_reports_non_utf8_index_md_as_finding(
+    tmp_path: Path,
+) -> None:
+    """A committed index.md containing bytes that aren't valid UTF-8 raises
+    UnicodeDecodeError from `read_text` -- a ValueError subclass, not an
+    OSError -- so it must be caught alongside the existing read-error
+    handling rather than crashing `okf validate`."""
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "docs"
+
+[bundles.product]
+bundle_root = "product"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    product_root = tmp_path / "product"
+    product_root.mkdir()
+    _write_concept(
+        product_root / "alpha.md", "---\ntype: concept\ntitle: Alpha\n---\nBody\n"
+    )
+    index_path = product_root / "index.md"
+    # Invalid UTF-8 byte sequence (a lone 0xFF byte).
+    index_path.write_bytes(b"# Concept\n\n* [Alpha](alpha.md)\n\xff")
+
+    config = load_config(config_path=config_path)
+    bundle = config.bundles["product"]
+    findings = validate_bundle(bundle, config)
+
+    assert index_path in findings
+    assert len(findings[index_path]) == 1
+    finding = findings[index_path][0]
+    assert finding.severity == "warning"
+    assert "could not read index.md for drift check" in finding.message
+
+
 def test_validate_bundle_strips_root_okf_version_frontmatter_before_diffing(
     tmp_path: Path,
 ) -> None:
