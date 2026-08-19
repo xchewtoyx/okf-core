@@ -12,6 +12,8 @@ from typing import Any, Literal, cast
 import click
 
 from okf_core import (
+    DEFAULT_LINK_SUGGESTION_HEADING,
+    DEFAULT_LINK_SUGGESTION_HEADING_LEVEL,
     BundleConfig,
     ConceptManifestEntry,
     ConceptPathError,
@@ -23,6 +25,7 @@ from okf_core import (
     TaxonomyConfig,
     __version__,
     apply_document_change,
+    apply_link_suggestions,
     backlinks_to,
     build_bundle_graph,
     build_context_pack,
@@ -30,6 +33,7 @@ from okf_core import (
     concept_id_to_path,
     find_unlinked_mentions,
     generate_index,
+    link_suggestion_href,
     links_from,
     list_concepts,
     load_config,
@@ -41,6 +45,7 @@ from okf_core import (
     render_index_document,
     scan_bundle,
     search_concepts,
+    select_link_suggestions,
     serialize_concept_document,
     validate_bundle,
 )
@@ -498,6 +503,25 @@ def search_cmd(
     )
 
 
+def _parse_select_pairs(raw_pairs: tuple[str, ...]) -> list[tuple[str, str]]:
+    """Parse repeatable ``--select SOURCE_ID:TARGET_ID`` values.
+
+    Exits ``2`` (usage error) on a value with no ``:`` separator, or an
+    empty source/target half, rather than silently matching nothing.
+    """
+    pairs: list[tuple[str, str]] = []
+    for raw in raw_pairs:
+        source_id, sep, target_id = raw.partition(":")
+        if not sep or not source_id or not target_id:
+            click.echo(
+                f"Invalid --select value {raw!r}: expected SOURCE_ID:TARGET_ID",
+                err=True,
+            )
+            sys.exit(2)
+        pairs.append((source_id, target_id))
+    return pairs
+
+
 @cli.command("unlinked-mentions")
 @click.option(
     "--config",
@@ -519,12 +543,62 @@ def search_cmd(
     is_flag=True,
     help="Use the current FTS index without scanning and refreshing first.",
 )
+@click.option(
+    "--apply",
+    "apply_selected",
+    is_flag=True,
+    help=(
+        "Write selected suggestions into their source concept's body as "
+        "inline Markdown links, instead of only listing them."
+    ),
+)
+@click.option(
+    "--select",
+    "select_pairs",
+    multiple=True,
+    metavar="SOURCE_ID:TARGET_ID",
+    help=(
+        "With --apply, restrict which discovered suggestion to write, by "
+        "its source and target concept ID; repeatable. Omit to apply "
+        "every discovered suggestion."
+    ),
+)
+@click.option(
+    "--heading",
+    default=DEFAULT_LINK_SUGGESTION_HEADING,
+    show_default=True,
+    metavar="TEXT",
+    help="With --apply, the section heading applied suggestions are appended under.",
+)
+@click.option(
+    "--heading-level",
+    type=int,
+    default=DEFAULT_LINK_SUGGESTION_HEADING_LEVEL,
+    show_default=True,
+    metavar="N",
+    help="With --apply, the heading level (1-6) for --heading.",
+)
 def unlinked_mentions_cmd(
     config_path: str | None,
     bundle_name: str,
     no_refresh: bool,
+    apply_selected: bool,
+    select_pairs: tuple[str, ...],
+    heading: str,
+    heading_level: int,
 ) -> None:
-    """Find visible concept-title mentions without Markdown links."""
+    """Find visible concept-title mentions without Markdown links.
+
+    By default this only lists discovered suggestions (read-only, unchanged
+    from before --apply existed). Pass --apply to write selected
+    suggestions into their source concept's body as inline Markdown links,
+    appended (as a bulleted list) under --heading at --heading-level
+    (default `## See also`) -- one or more --select SOURCE_ID:TARGET_ID
+    restricts which discovered suggestions are written; omitting --select
+    applies every discovered suggestion. Re-applying an already-written
+    suggestion is a no-op: a link to the same target already present in the
+    section is never duplicated.
+    """
     _, bundle = _load(config_path, bundle_name)
     try:
         mentions = find_unlinked_mentions(bundle, refresh=not no_refresh)
@@ -532,17 +606,52 @@ def unlinked_mentions_cmd(
         click.echo(f"Unlinked mention configuration error: {exc}", err=True)
         sys.exit(2)
 
-    result = {
+    if not apply_selected:
+        result = {
+            "bundle": bundle.name,
+            "suggestions": [
+                _link_suggestion_dict(suggestion) for suggestion in mentions.suggestions
+            ],
+            "problems": [_graph_problem_dict(problem) for problem in mentions.problems],
+        }
+        click.echo(json.dumps(result, cls=_Encoder, indent=2))
+        click.echo(
+            f"Found {len(mentions.suggestions)} unlinked mention suggestion(s) "
+            f"in bundle {bundle.name!r}, {len(mentions.problems)} problems",
+            err=True,
+        )
+        return
+
+    pairs = _parse_select_pairs(select_pairs) if select_pairs else None
+    selection = select_link_suggestions(mentions.suggestions, pairs)
+    if selection.unmatched_pairs:
+        unmatched = ", ".join(f"{s}:{t}" for s, t in selection.unmatched_pairs)
+        click.echo(
+            f"--select pair(s) not found among discovered suggestions: {unmatched}",
+            err=True,
+        )
+        sys.exit(2)
+
+    try:
+        applied = apply_link_suggestions(
+            bundle, selection.selected, heading=heading, level=heading_level
+        )
+    except DocumentChangeError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(1)
+
+    output = {
         "bundle": bundle.name,
-        "suggestions": [
-            _link_suggestion_dict(suggestion) for suggestion in mentions.suggestions
+        "applied_suggestions": [
+            _link_suggestion_dict(s) for s in applied.applied_suggestions
         ],
+        "updated_files": [str(path) for path in applied.updated_files],
         "problems": [_graph_problem_dict(problem) for problem in mentions.problems],
     }
-    click.echo(json.dumps(result, cls=_Encoder, indent=2))
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
     click.echo(
-        f"Found {len(mentions.suggestions)} unlinked mention suggestion(s) "
-        f"in bundle {bundle.name!r}, {len(mentions.problems)} problems",
+        f"Applied {len(applied.applied_suggestions)} link suggestion(s) in bundle "
+        f"{bundle.name!r}: {len(applied.updated_files)} file(s) updated",
         err=True,
     )
 
@@ -1798,6 +1907,8 @@ def _link_suggestion_dict(suggestion: Any) -> dict[str, Any]:
         "source_path": str(suggestion.source_path),
         "target_concept_id": suggestion.target_concept_id,
         "target_path": str(suggestion.target_path),
+        "target_title": suggestion.target_title,
+        "target_href": link_suggestion_href(suggestion),
         "matched_text": suggestion.matched_text,
     }
 

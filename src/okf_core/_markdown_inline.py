@@ -35,6 +35,19 @@ def _escape_title(title: str) -> str:
     return title.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _escape_link_text(text: str) -> str:
+    """Escape a string for embedding as literal Markdown link text (``[...]``).
+
+    Unlike a link title (double-quoted, so only backslash and ``"`` are
+    special), link text is delimited by ``[``/``]``: an unescaped bracket in
+    the text would prematurely close -- or be misread as opening a nested --
+    the link's own text span. Backslash is escaped first, same ordering
+    reason as ``_escape_title``, so a pre-existing ``\\[``/``\\]`` in the
+    source text isn't double-escaped by the subsequent bracket passes.
+    """
+    return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
 def _render_link_destination(child: Any) -> str:
     """Render a ``link_open`` token's ``(href "title")`` destination span.
 

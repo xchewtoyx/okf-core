@@ -736,6 +736,8 @@ def test_unlinked_mentions_emits_structured_suggestions(tmp_path: Path) -> None:
             "source_path": str(tmp_path / "source.md"),
             "target_concept_id": "alpha",
             "target_path": str(tmp_path / "alpha.md"),
+            "target_title": "Alpha",
+            "target_href": "alpha.md",
             "matched_text": "See [Alpha] for details.\n",
         }
     ]
@@ -803,6 +805,150 @@ def test_unlinked_mentions_empty_result_succeeds(tmp_path: Path) -> None:
     data = json.loads(result.stdout)
     assert data["suggestions"] == []
     assert data["problems"] == []
+
+
+def test_unlinked_mentions_apply_writes_suggestion_as_link(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_unlinked_mention_pair(tmp_path)
+
+    result = _runner().invoke(
+        cli, ["unlinked-mentions", "--config", str(config_path), "--apply"]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["bundle"] == "default"
+    assert data["updated_files"] == [str(tmp_path / "source.md")]
+    assert len(data["applied_suggestions"]) == 1
+    assert data["applied_suggestions"][0]["target_concept_id"] == "alpha"
+    assert "1 link suggestion(s)" in result.stderr
+
+    written = (tmp_path / "source.md").read_text(encoding="utf-8")
+    assert "## See also" in written
+    assert "- [Alpha](alpha.md)" in written
+
+
+def test_unlinked_mentions_apply_with_select_writes_only_selected(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_concept(tmp_path / "alpha.md", title="Alpha")
+    _write_concept(tmp_path / "beta.md", title="Beta")
+    (tmp_path / "source.md").write_text(
+        "---\ntype: concept\ntitle: Source\n---\nSee Alpha and Beta for details.\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(
+        cli,
+        [
+            "unlinked-mentions",
+            "--config",
+            str(config_path),
+            "--apply",
+            "--select",
+            "source:alpha",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert [s["target_concept_id"] for s in data["applied_suggestions"]] == ["alpha"]
+    written = (tmp_path / "source.md").read_text(encoding="utf-8")
+    assert "[Alpha](alpha.md)" in written
+    assert "beta.md" not in written
+
+
+def test_unlinked_mentions_apply_rejects_malformed_select(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_unlinked_mention_pair(tmp_path)
+
+    result = _runner().invoke(
+        cli,
+        [
+            "unlinked-mentions",
+            "--config",
+            str(config_path),
+            "--apply",
+            "--select",
+            "no-colon-here",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Invalid --select value" in result.stderr
+
+
+def test_unlinked_mentions_apply_rejects_unmatched_select(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_unlinked_mention_pair(tmp_path)
+
+    result = _runner().invoke(
+        cli,
+        [
+            "unlinked-mentions",
+            "--config",
+            str(config_path),
+            "--apply",
+            "--select",
+            "source:nonexistent",
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "source:nonexistent" in result.stderr
+    assert (tmp_path / "source.md").read_text(encoding="utf-8") == (
+        "---\ntype: concept\ntitle: Source\n---\nSee Alpha for details.\n"
+    )
+
+
+def test_unlinked_mentions_apply_is_idempotent(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_unlinked_mention_pair(tmp_path)
+    args = ["unlinked-mentions", "--config", str(config_path), "--apply"]
+
+    first = _runner().invoke(cli, args)
+    second = _runner().invoke(cli, args)
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert json.loads(first.stdout)["updated_files"] == [str(tmp_path / "source.md")]
+    assert json.loads(second.stdout)["updated_files"] == []
+    written = (tmp_path / "source.md").read_text(encoding="utf-8")
+    assert written.count("[Alpha](alpha.md)") == 1
+
+
+def test_unlinked_mentions_apply_custom_heading(tmp_path: Path) -> None:
+    config_path = _write_unlinked_mentions_config(tmp_path)
+    _write_unlinked_mention_pair(tmp_path)
+
+    result = _runner().invoke(
+        cli,
+        [
+            "unlinked-mentions",
+            "--config",
+            str(config_path),
+            "--apply",
+            "--heading",
+            "Related",
+            "--heading-level",
+            "3",
+        ],
+    )
+
+    assert result.exit_code == 0
+    written = (tmp_path / "source.md").read_text(encoding="utf-8")
+    assert "### Related" in written
+    assert "## See also" not in written
+
+
+def test_unlinked_mentions_help_documents_apply_options() -> None:
+    result = _runner().invoke(cli, ["unlinked-mentions", "--help"])
+
+    assert result.exit_code == 0
+    assert "--apply" in result.stdout
+    assert "--select" in result.stdout
+    assert "--heading" in result.stdout
 
 
 # ---------------------------------------------------------------------------

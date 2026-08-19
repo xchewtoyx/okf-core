@@ -70,6 +70,7 @@ __all__ = [
     "plan_file_move",
     "plan_frontmatter_merge",
     "plan_markdown_link_rewrite",
+    "plan_markdown_section_append",
     "plan_markdown_section_patch",
     "plan_source_upsert",
     "plan_stamp_generated",
@@ -273,6 +274,74 @@ def plan_markdown_section_patch(
             level,
         ),
     )
+
+
+def _validate_append_lines(resolved_path: Path, lines: Any) -> None:
+    if not isinstance(lines, (list, tuple, Sequence)) or isinstance(
+        lines, (str, bytes)
+    ):
+        raise DocumentChangePlanningError(
+            resolved_path, "lines must be a sequence of strings"
+        )
+    for i, line in enumerate(lines):
+        if not isinstance(line, str):
+            raise DocumentChangePlanningError(
+                resolved_path,
+                f"Element at index {i} in lines is not a string: {line!r}",
+            )
+
+
+def plan_markdown_section_append(
+    bundle: BundleConfig,
+    path: Path | str,
+    heading: str,
+    lines: Sequence[str],
+    *,
+    level: int = 1,
+) -> DocumentChangePlan:
+    """Plan appending one or more Markdown lines to a section's *existing* body.
+
+    Unlike `plan_markdown_section_patch` (which replaces a section's whole
+    body with caller-supplied text), this reads the section's current body
+    and appends `lines` after it -- content already in the section, and the
+    rest of the document, is left completely untouched. An absent section is
+    created the same way `plan_markdown_section_patch` documents (appended
+    at the end, in ATX syntax); a `lines` element that itself parses to a
+    heading at or above `level` is rejected the same way a replacement body
+    containing one is (`DocumentChangePlanningError`), since it would be
+    indistinguishable from the section's own boundary on a later edit.
+
+    Each `lines` element carrying exactly one inline Markdown link is
+    deduplicated against links already present anywhere in the section: an
+    element whose link target (compared the same normalized way
+    `plan_markdown_link_rewrite` compares hrefs) already appears in the
+    section is silently skipped, so repeated calls with an overlapping
+    `lines` set stay idempotent instead of growing duplicate bullets. A
+    `lines` element with no inline link (or more than one) is never
+    deduplicated -- always appended.
+
+    When the section already ends in a bullet list, new list-shaped lines
+    are merged into that existing list (one combined list, consistent
+    marker style) rather than opened as a second, visually distinct list
+    immediately after it -- CommonMark/mdformat render two back-to-back
+    lists with alternating `-`/`*` markers to keep them distinguishable,
+    which is not what a caller appending related bullets wants.
+
+    Reads the document exactly once via `plan_document_change_from_reader`
+    (see `plan_source_upsert`'s docstring for the same reasoning): composing
+    the appended body from a separate, earlier read would let a concurrent
+    edit to the document go undetected between the two reads.
+    """
+    resolved_path = Path(path)
+    heading_tokens = _validate_section_request(resolved_path, heading, "", level)
+    _validate_append_lines(resolved_path, lines)
+
+    def build_appended_body(resolved_path: Path, original_content: str) -> str:
+        return _append_markdown_section_body(
+            resolved_path, original_content, heading, heading_tokens, lines, level
+        )
+
+    return plan_document_change_from_reader(bundle, resolved_path, build_appended_body)
 
 
 @dataclass(frozen=True)
@@ -1282,6 +1351,121 @@ def _reject_body_heading_at_or_above_level(
             "it would be indistinguishable from the section's own boundary "
             "on a later edit",
         )
+
+
+def _line_link_targets(tokens: Sequence[Token]) -> set[str]:
+    """Every real inline link href in `tokens`, normalized for comparison."""
+
+    return {
+        _normalize_target(href)
+        for token in _walk_link_open_tokens(tokens)
+        if isinstance((href := token.attrGet("href")), str)
+    }
+
+
+def _section_ends_with_bullet_list(
+    tokens: Sequence[Token], start: int, end: int
+) -> bool:
+    """Whether `tokens[start:end]` (one section's body) ends in a top-level
+    bullet list -- i.e. its very last token closes one, at nesting level 0.
+
+    Used to decide whether newly appended list-shaped lines can be merged
+    into that existing list (see `_append_markdown_section_body`) instead of
+    opening a new one immediately after it.
+    """
+
+    return (
+        end > start
+        and tokens[end - 1].type == "bullet_list_close"
+        and tokens[end - 1].level == 0
+    )
+
+
+def _dedupe_appended_lines(
+    path: Path,
+    lines: Sequence[str],
+    existing_targets: set[str],
+    level: int,
+) -> list[str]:
+    """Return the elements of `lines` not already linked in `existing_targets`.
+
+    Each candidate is parsed on its own (a throwaway `env`, since only the
+    resulting tokens -- not any reference-style link definitions -- matter
+    here) to reject an embedded heading and to extract its own link
+    target(s) for comparison; a line carrying no link, or more than one, is
+    never deduplicated. `seen` accumulates newly-kept targets across the
+    loop so two suggestions for the same target within one call also
+    collapse to a single bullet, not just a suggestion already present
+    before this call.
+    """
+
+    seen = set(existing_targets)
+    kept: list[str] = []
+    for line in lines:
+        line_tokens = _MARKDOWN.parse(line, {})
+        _reject_body_heading_at_or_above_level(path, line_tokens, level)
+        line_targets = _line_link_targets(line_tokens)
+        if len(line_targets) == 1 and line_targets <= seen:
+            continue
+        seen |= line_targets
+        kept.append(line)
+    return kept
+
+
+def _append_markdown_section_body(
+    path: Path,
+    content: str,
+    heading: str,
+    heading_tokens: Sequence[Token],
+    lines: Sequence[str],
+    level: int,
+) -> str:
+    try:
+        document = parse_concept_document(content)
+    except DocumentParseError as exc:
+        raise DocumentChangePlanningError(
+            path, f"Could not parse document frontmatter: {exc}"
+        ) from exc
+
+    document_body = document.body
+    body_offset = len(content) - len(document_body)
+    env: dict[str, Any] = {}
+    tokens = _MARKDOWN.parse(document_body, env)
+    heading_index = _locate_section_heading(path, tokens, heading, level)
+
+    if heading_index is None:
+        section_start = section_end = len(tokens)
+        existing_targets: set[str] = set()
+    else:
+        section_start = heading_index + 3
+        section_end = _section_body_end(tokens, section_start, level)
+        existing_targets = _line_link_targets(tokens[section_start:section_end])
+
+    kept_lines = _dedupe_appended_lines(path, lines, existing_targets, level)
+    if not kept_lines:
+        return content
+
+    new_tokens = _MARKDOWN.parse("".join(kept_lines), env)
+
+    if heading_index is None:
+        combined = [*tokens, *heading_tokens, *new_tokens]
+        return content[:body_offset] + _render_markdown_tokens(combined, env)
+
+    if new_tokens[0].type == "bullet_list_open" and _section_ends_with_bullet_list(
+        tokens, section_start, section_end
+    ):
+        # Merge the new items into the section's existing trailing list
+        # (splice before its closing token) instead of appending a second,
+        # visually distinct list immediately after it.
+        combined = [
+            *tokens[: section_end - 1],
+            *new_tokens[1:-1],
+            *tokens[section_end - 1 :],
+        ]
+    else:
+        combined = [*tokens[:section_end], *new_tokens, *tokens[section_end:]]
+
+    return content[:body_offset] + _render_markdown_tokens(combined, env)
 
 
 def _validate_section_request(
