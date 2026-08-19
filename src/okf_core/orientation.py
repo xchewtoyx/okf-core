@@ -43,7 +43,7 @@ To interact with or integrate a bundle, start with these essential commands:
   ```sh
   okf list-concepts
   ```
-- **Validate**: Check the bundle for spec conformance and profile rules.
+- **Validate**: Check the bundle for spec conformance and profile rules, and every directory's committed `index.md` for drift against its own content.
   ```sh
   okf validate
   ```
