@@ -1463,8 +1463,22 @@ def _append_markdown_section_body(
         # tokens. Distinct from the `not kept_lines` no-op above: those
         # lines were never *filtered out* by dedup -- a whitespace-only
         # line never carries a link target, so it is always "kept" -- they
-        # simply have nothing to append. Surface this explicitly rather
-        # than indexing into an empty `new_tokens` below.
+        # simply have nothing to append. Without this guard, the outcome
+        # differs depending on whether the target heading already exists.
+        # When `heading_index is None`, `combined = [*tokens, *heading_
+        # tokens, *new_tokens]` splices in zero tokens without ever
+        # indexing them, so the failure there is *silent*: an empty
+        # "## See also" section gets created with nothing under it, not a
+        # crash. When the heading already exists -- the realistic case,
+        # since `apply_link_suggestions`'s idempotent re-run always targets
+        # an already-created heading -- control instead reaches
+        # `_is_single_top_level_bullet_list(new_tokens)` below, which
+        # itself checks `not tokens` before indexing `tokens[0]`; the code
+        # this replaced (#217 round 1 finding 1b) indexed `new_tokens[0]
+        # .type` directly with no such check and raised an uncaught
+        # `IndexError` on exactly this empty-`new_tokens` case. This guard
+        # raises explicitly for both cases instead of leaving either as a
+        # silent no-op or an unguarded direct index.
         raise DocumentChangePlanningError(
             path,
             "Appended lines produced no content after parsing "

@@ -638,13 +638,41 @@ def test_section_append_rejects_blank_or_whitespace_only_line(
     # Copilot review (PR #217 round 1, Finding 1a): `_validate_append_lines`
     # only checks each `lines` element is a string, not that it carries real
     # content -- a whitespace-only element is never filtered by dedup either
-    # (it has no link target, so it's always "kept"). Left unguarded, the
-    # combined kept content parses to zero block tokens and
-    # `_append_markdown_section_body` raised an uncaught `IndexError`
-    # indexing `new_tokens[0]`, instead of surfacing a clear error per
-    # AGENTS.md's "Surface problems explicitly; never fail silently".
+    # (it has no link target, so it's always "kept"). This covers the
+    # heading-*absent* path (`heading_index is None`): left unguarded, that
+    # branch would have silently created an empty "## See also" section
+    # (`combined = [*tokens, *heading_tokens, *new_tokens]` splices a
+    # zero-token `new_tokens` in without ever indexing it) instead of
+    # surfacing a clear error per AGENTS.md's "Surface problems explicitly;
+    # never fail silently". See
+    # test_section_append_rejects_blank_or_whitespace_only_line_with_existing_heading
+    # below for the heading-*present* path, which is the one that actually
+    # raised an uncaught `IndexError` on `new_tokens[0]` pre-fix.
     path = tmp_path / "topic.md"
     path.write_text("Intro.\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="blank"):
+        plan_markdown_section_append(
+            _bundle(tmp_path), path, "See also", ["   \n"], level=2
+        )
+
+
+def test_section_append_rejects_blank_or_whitespace_only_line_with_existing_heading(
+    tmp_path: Path,
+) -> None:
+    # Copilot review (PR #217 round 2 finding): the sibling test above uses a
+    # fixture with no existing "See also" heading, so control takes the
+    # `heading_index is None` early-return branch, which never indexes
+    # `new_tokens[0]` -- reverting the finding-1a guard on that fixture alone
+    # produces silent empty-section creation, not the claimed `IndexError`.
+    # This test targets the heading-*present* path instead (also the
+    # realistic case: `apply_link_suggestions`'s idempotent re-run always
+    # hits an already-created heading), where `_append_markdown_section_body`
+    # goes on to evaluate `_is_single_top_level_bullet_list(new_tokens)` /
+    # (pre-1b) `new_tokens[0].type == "bullet_list_open"` -- the actual
+    # `IndexError` site pre-fix.
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
 
     with pytest.raises(DocumentChangePlanningError, match="blank"):
         plan_markdown_section_append(
