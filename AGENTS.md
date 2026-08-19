@@ -114,13 +114,26 @@ contradicts an accepted ADR is a review finding
 matter of implementor discretion; a `PROPOSED` (not yet `ACCEPTED`) ADR
 section is documented direction, not yet binding.
 
-**Pending, not yet binding:** a future "one sanctioned parse/serialize path"
-rule — the idea that document content is only ever touched through one
-documented path per format, rather than through format-specific ad hoc
-logic scattered across modules — is anticipated by
-`[replan-analysis] §4` but is **staged as
-pending issue #199**, not adopted here. Do not treat it as binding until
-#199 lands its own ADR or AGENTS.md update.
+**One sanctioned Markdown engine (#199):** `src/okf_core/markdown_engine.py`
+is the one place where Markdown-significant-character escaping/unescaping and
+Markdown-it token parsing/rendering happen. `patching.py`, `logs.py`, and
+`index.py` all read/write Markdown-side content through it (its shared
+`MARKDOWN` parser instance, `render_markdown_tokens`/`render_inline_children`/
+`render_span`, and the `link_children`/`text_children` builders) rather than
+each carrying its own escaping rule set or hand-rolled inline-token
+reconstitution — the four independent implementations this replaced
+(`index.py`'s `_md_escape`, the retired `_markdown_inline.py`'s
+`_escape_title`, and `logs.py`'s pair of input-rejecting guards) are the
+concrete "N places to re-fix one design
+decision" problem this rule exists to prevent. This does not mean a single
+shared block-walk across formats: `logs.py`'s date-sectioned entry state
+machine and `index.py`'s heading-sectioned entry walk remain separate,
+format-specific structural parsers (their shapes genuinely differ) —
+`markdown_engine.py`'s scope is the parse/render/escape primitives beneath
+that structural layer, not the structural layer itself. A new hand-rolled
+escaping or ad-hoc Markdown-source-reconstitution helper anywhere else in
+the codebase is an architecture finding in review, not a matter of
+implementor discretion.
 
 ## Code Structure
 

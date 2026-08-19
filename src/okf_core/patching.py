@@ -5,7 +5,7 @@ from __future__ import annotations
 import io
 import os
 import re
-from collections.abc import Mapping, MutableMapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from math import isfinite
@@ -14,9 +14,6 @@ from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 
 import yaml
-from markdown_it import MarkdownIt
-from mdformat.plugins import PARSER_EXTENSIONS
-from mdformat.renderer import MDRenderer
 from ruamel.yaml import YAML
 from ruamel.yaml import YAMLError as RuamelYAMLError
 from ruamel.yaml.comments import CommentedMap, CommentedSeq
@@ -46,6 +43,8 @@ from okf_core.documents import (
     _split_frontmatter,
     parse_concept_document,
 )
+from okf_core.markdown_engine import MARKDOWN as _MARKDOWN
+from okf_core.markdown_engine import render_markdown_tokens as _render_markdown_tokens
 
 if TYPE_CHECKING:
     from markdown_it.token import Token
@@ -84,43 +83,12 @@ __all__ = [
 ]
 
 
-# Markdown-side canonical serialization engine (ADR-0002 "Markdown side",
-# amended by issue #198). `_MARKDOWN` is CommonMark plus GFM tables (AC1)
-# -- `.enable("table")` turns on markdown-it-py's own built-in (but
-# commonmark-preset-disabled) table rule; no plugin package is needed for
-# *parsing*. `_MARKDOWN_RENDERER` is `mdformat`'s own `MDRenderer`, together
-# with `mdformat.plugins.PARSER_EXTENSIONS["tables"]` (published by the
-# `mdformat-gfm` dependency) supplying the table renderer functions
-# `MDRenderer` has no built-in support for. Both the enable() call and the
-# plugin registry are public, documented markdown-it-py/mdformat API --
-# unlike the deleted inline/core parser-rule instrumentation this engine
-# replaces, nothing here reaches into an internals module.
-_MARKDOWN = MarkdownIt("commonmark")
-_MARKDOWN.enable("table")
-_MARKDOWN_RENDERER = MDRenderer()
-_MARKDOWN_RENDER_OPTIONS: Mapping[str, Any] = {
-    "parser_extension": [PARSER_EXTENSIONS["tables"]],
-    "mdformat": {"wrap": "keep"},
-}
-
-
-def _render_markdown_tokens(
-    tokens: Sequence[Token], env: MutableMapping[str, Any]
-) -> str:
-    """Render a (sub)tree of markdown-it-py tokens to canonical Markdown.
-
-    `tokens` need not be the whole document -- any balanced open/close
-    token sequence (a full document, or one section's body) renders
-    standalone, which is what makes the no-op/idempotency comparisons in
-    `_patch_markdown_section` possible. `env` should be the `dict` an
-    earlier `_MARKDOWN.parse(...)` call on the same document populated
-    (carrying its `references`, for any reference-style link definitions
-    elsewhere in the document to survive an edit untouched); a fresh `{}`
-    is fine for a document/fragment with no reference-style links.
-    """
-
-    return _MARKDOWN_RENDERER.render(tokens, _MARKDOWN_RENDER_OPTIONS, env)
-
+# `_MARKDOWN`/`_render_markdown_tokens` are re-exported aliases of the
+# shared engine's `MARKDOWN`/`render_markdown_tokens` (ADR-0002 "Markdown
+# side", amended by #198 and generalized into `markdown_engine.py` by #199
+# so `logs.py` and `index.py` share the same parser/renderer and escaping
+# rules instead of each carrying their own) -- kept under their original
+# names here since this module's many call sites already use them.
 
 # `freezegun.freeze_time` finds every module-level attribute anywhere in
 # `sys.modules` that is (by identity) the real `datetime.datetime` class and
