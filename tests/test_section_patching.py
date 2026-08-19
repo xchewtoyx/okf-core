@@ -10,6 +10,7 @@ from okf_core import (
     DocumentChangeConflictError,
     DocumentChangePlanningError,
     apply_document_change,
+    plan_markdown_section_append,
     plan_markdown_section_patch,
 )
 
@@ -447,4 +448,394 @@ def test_plan_section_patch_leaves_untargeted_gfm_table_intact(
         "## Target\n"
         "\n"
         "New body.\n"
+    )
+
+
+# ---------------------------------------------------------------------------
+# plan_markdown_section_append (#61): compose+append primitive built on the
+# same engine, for callers that need to add to a section's *existing* body
+# rather than replace it wholesale.
+# ---------------------------------------------------------------------------
+
+
+def test_section_append_creates_missing_section(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("# Existing\nIntro.\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path), path, "See also", ["- [Alpha](alpha.md)\n"], level=2
+    )
+
+    assert plan.changed is True
+    assert plan.proposed_content == (
+        "# Existing\n\nIntro.\n\n## See also\n\n- [Alpha](alpha.md)\n"
+    )
+
+
+def test_section_append_merges_into_existing_trailing_list(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path), path, "See also", ["- [Beta](beta.md)\n"], level=2
+    )
+
+    assert plan.proposed_content == (
+        "## See also\n\n- [Alpha](alpha.md)\n- [Beta](beta.md)\n"
+    )
+
+
+def test_section_append_preserves_existing_content_and_other_sections(
+    tmp_path: Path,
+) -> None:
+    original = (
+        "---\n"
+        "type: concept\n"
+        "---\n"
+        "Human-written intro.\n"
+        "\n"
+        "## See also\n"
+        "\n"
+        "- [Alpha](alpha.md)\n"
+        "\n"
+        "## Unrelated\n"
+        "\n"
+        "Untouched paragraph.\n"
+    )
+    path = tmp_path / "topic.md"
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path), path, "See also", ["- [Beta](beta.md)\n"], level=2
+    )
+
+    assert "Human-written intro." in plan.proposed_content
+    assert "## Unrelated" in plan.proposed_content
+    assert "Untouched paragraph." in plan.proposed_content
+    assert "- [Alpha](alpha.md)" in plan.proposed_content
+    assert "- [Beta](beta.md)" in plan.proposed_content
+
+
+def test_section_append_skips_line_whose_target_already_linked(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path),
+        path,
+        "See also",
+        ["- [Alpha (renamed)](alpha.md)\n"],
+        level=2,
+    )
+
+    # Same href, different link text -- still deduplicated by target.
+    assert plan.changed is False
+    assert plan.proposed_content == plan.original_content
+
+
+def test_section_append_is_idempotent_on_repeated_call(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path)
+    path = tmp_path / "topic.md"
+    path.write_text("Intro.\n", encoding="utf-8")
+
+    lines = ["- [Alpha](alpha.md)\n", "- [Beta](beta.md)\n"]
+    first = plan_markdown_section_append(bundle, path, "See also", lines, level=2)
+    apply_document_change(bundle, first)
+
+    second = plan_markdown_section_append(bundle, path, "See also", lines, level=2)
+
+    assert second.changed is False
+    assert second.proposed_content == first.proposed_content
+
+
+def test_section_append_dedupes_within_one_call(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Intro.\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path),
+        path,
+        "See also",
+        ["- [Alpha](alpha.md)\n", "- [Alpha again](alpha.md)\n"],
+        level=2,
+    )
+
+    assert plan.proposed_content.count("alpha.md") == 1
+
+
+def test_section_append_starts_new_list_when_section_does_not_end_in_one(
+    tmp_path: Path,
+) -> None:
+    # The existing section's last block is a paragraph, not a list -- merging
+    # into "the trailing list" isn't possible, so appending opens a new list
+    # after it rather than guessing where to splice.
+    path = tmp_path / "topic.md"
+    path.write_text(
+        "## See also\n\n- [Alpha](alpha.md)\n\nA closing remark.\n",
+        encoding="utf-8",
+    )
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path), path, "See also", ["- [Beta](beta.md)\n"], level=2
+    )
+
+    assert "A closing remark." in plan.proposed_content
+    assert "- [Beta](beta.md)" in plan.proposed_content
+
+
+def test_section_append_no_op_when_every_line_deduplicated(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    original = "## See also\n\n- [Alpha](alpha.md)\n"
+    path.write_text(original, encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path), path, "See also", ["- [Alpha](alpha.md)\n"], level=2
+    )
+
+    assert plan.changed is False
+    assert plan.proposed_content == original
+
+
+@pytest.mark.parametrize("level", [0, 7, True])
+def test_section_append_rejects_invalid_level(tmp_path: Path, level: Any) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("# Existing\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="level"):
+        plan_markdown_section_append(
+            _bundle(tmp_path), path, "See also", ["- [Alpha](alpha.md)\n"], level=level
+        )
+
+
+@pytest.mark.parametrize("heading", [None, "", " See also", "See also "])
+def test_section_append_rejects_invalid_heading(tmp_path: Path, heading: Any) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("# Existing\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="heading"):
+        plan_markdown_section_append(
+            _bundle(tmp_path), path, heading, ["- [Alpha](alpha.md)\n"], level=2
+        )
+
+
+def test_section_append_rejects_line_containing_heading_at_or_above_level(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Intro.\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="cannot contain a heading"):
+        plan_markdown_section_append(
+            _bundle(tmp_path), path, "See also", ["## Sneaky\n"], level=2
+        )
+
+
+def test_section_append_rejects_blank_or_whitespace_only_line(
+    tmp_path: Path,
+) -> None:
+    # Copilot review (PR #217 round 1, Finding 1a): `_validate_append_lines`
+    # only checks each `lines` element is a string, not that it carries real
+    # content -- a whitespace-only element is never filtered by dedup either
+    # (it has no link target, so it's always "kept"). This covers the
+    # heading-*absent* path (`heading_index is None`): left unguarded, that
+    # branch would have silently created an empty "## See also" section
+    # (`combined = [*tokens, *heading_tokens, *new_tokens]` splices a
+    # zero-token `new_tokens` in without ever indexing it) instead of
+    # surfacing a clear error per AGENTS.md's "Surface problems explicitly;
+    # never fail silently". See
+    # test_section_append_rejects_blank_or_whitespace_only_line_with_existing_heading
+    # below for the heading-*present* path, which is the one that actually
+    # raised an uncaught `IndexError` on `new_tokens[0]` pre-fix.
+    path = tmp_path / "topic.md"
+    path.write_text("Intro.\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="blank"):
+        plan_markdown_section_append(
+            _bundle(tmp_path), path, "See also", ["   \n"], level=2
+        )
+
+
+def test_section_append_rejects_blank_or_whitespace_only_line_with_existing_heading(
+    tmp_path: Path,
+) -> None:
+    # Copilot review (PR #217 round 2 finding): the sibling test above uses a
+    # fixture with no existing "See also" heading, so control takes the
+    # `heading_index is None` early-return branch, which never indexes
+    # `new_tokens[0]` -- reverting the finding-1a guard on that fixture alone
+    # produces silent empty-section creation, not the claimed `IndexError`.
+    # This test targets the heading-*present* path instead (also the
+    # realistic case: `apply_link_suggestions`'s idempotent re-run always
+    # hits an already-created heading), where `_append_markdown_section_body`
+    # goes on to evaluate `_is_single_top_level_bullet_list(new_tokens)` /
+    # (pre-1b) `new_tokens[0].type == "bullet_list_open"` -- the actual
+    # `IndexError` site pre-fix.
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="blank"):
+        plan_markdown_section_append(
+            _bundle(tmp_path), path, "See also", ["   \n"], level=2
+        )
+
+
+def test_section_append_falls_back_to_new_blocks_when_new_content_is_not_one_list(
+    tmp_path: Path,
+) -> None:
+    # Copilot review (PR #217 round 1, Finding 1b): CommonMark starts a new
+    # list whenever the bullet marker changes, so `lines` elements using
+    # different markers ("- " then "* ") parse to *two* separate top-level
+    # `bullet_list_open`/`bullet_list_close` pairs, not one. The
+    # merge-into-existing-trailing-list branch assumed `new_tokens[-1]` is
+    # always the `bullet_list_close` matching `new_tokens[0]`'s
+    # `bullet_list_open` -- false here -- and spliced `new_tokens[1:-1]`
+    # regardless, injecting a stray close/open list-boundary pair into what
+    # was meant to be one flat run of list items instead of erroring or
+    # falling back safely. `_is_single_top_level_bullet_list` now gates the
+    # merge branch so this case takes the same append-as-new-block(s) path
+    # already used when the section doesn't end in a list at all.
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path),
+        path,
+        "See also",
+        ["- [Beta](beta.md)\n", "* [Gamma](gamma.md)\n"],
+        level=2,
+    )
+
+    assert plan.proposed_content == (
+        "## See also\n\n"
+        "- [Alpha](alpha.md)\n\n"
+        "* [Beta](beta.md)\n\n"
+        "- [Gamma](gamma.md)\n"
+    )
+
+
+def test_section_append_falls_back_to_new_block_for_non_list_content(
+    tmp_path: Path,
+) -> None:
+    # `_is_single_top_level_bullet_list`'s leading guard: new content that
+    # isn't list-shaped at all (a plain sentence, no link) must never be
+    # routed into the merge-with-existing-list branch, even though the
+    # section already ends in one.
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path), path, "See also", ["Just a sentence.\n"], level=2
+    )
+
+    assert plan.proposed_content == (
+        "## See also\n\n- [Alpha](alpha.md)\n\nJust a sentence.\n"
+    )
+
+
+def test_section_append_falls_back_to_new_block_when_list_has_trailing_content(
+    tmp_path: Path,
+) -> None:
+    # `_is_single_top_level_bullet_list`'s stray-boundary check: new content
+    # that opens a bullet list but doesn't *end* in that list's own close
+    # token (a list item followed by a trailing paragraph, all within one
+    # `lines` element) must also fall back to appending as a new block
+    # rather than merging -- the list's own close token shows up as a
+    # "stray" level-0 boundary inside `tokens[1:-1]` in this case.
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+
+    plan = plan_markdown_section_append(
+        _bundle(tmp_path),
+        path,
+        "See also",
+        ["- [Beta](beta.md)\n\nTrailing prose.\n"],
+        level=2,
+    )
+
+    assert plan.proposed_content == (
+        "## See also\n\n"
+        "- [Alpha](alpha.md)\n\n"
+        "* [Beta](beta.md)\n\n"
+        "Trailing prose.\n"
+    )
+
+
+def test_section_append_rejects_non_sequence_lines(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Intro.\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="lines"):
+        plan_markdown_section_append(
+            _bundle(tmp_path),
+            path,
+            "See also",
+            "- [Alpha](alpha.md)\n",  # a str, not a sequence of lines
+            level=2,
+        )
+
+
+def test_section_append_rejects_non_string_line_element(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Intro.\n", encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="lines"):
+        plan_markdown_section_append(
+            _bundle(tmp_path),
+            path,
+            "See also",
+            [b"- [Alpha](alpha.md)\n"],  # type: ignore[list-item]
+            level=2,
+        )
+
+
+def test_section_append_reports_malformed_frontmatter(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    original = "---\ntype: [unterminated\n---\n# Target\nOld.\n"
+    path.write_text(original, encoding="utf-8")
+
+    with pytest.raises(DocumentChangePlanningError, match="frontmatter"):
+        plan_markdown_section_append(
+            _bundle(tmp_path), path, "See also", ["- [Alpha](alpha.md)\n"], level=1
+        )
+
+    assert path.read_text(encoding="utf-8") == original
+
+
+def test_section_append_reads_target_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("## See also\n\n- [Alpha](alpha.md)\n", encoding="utf-8")
+    original_read_bytes = Path.read_bytes
+    reads = 0
+
+    def count_reads(self: Path) -> bytes:
+        nonlocal reads
+        if self == path:
+            reads += 1
+        return original_read_bytes(self)
+
+    monkeypatch.setattr(Path, "read_bytes", count_reads)
+
+    plan_markdown_section_append(
+        _bundle(tmp_path), path, "See also", ["- [Beta](beta.md)\n"], level=2
+    )
+
+    assert reads == 1
+
+
+def test_section_append_applies_with_existing_safe_write_api(tmp_path: Path) -> None:
+    path = tmp_path / "topic.md"
+    path.write_text("Intro.\n", encoding="utf-8")
+    bundle = _bundle(tmp_path)
+    plan = plan_markdown_section_append(
+        bundle, path, "See also", ["- [Alpha](alpha.md)\n"], level=2
+    )
+
+    result = apply_document_change(bundle, plan)
+
+    assert result.changed is True
+    assert path.read_text(encoding="utf-8") == (
+        "Intro.\n\n## See also\n\n- [Alpha](alpha.md)\n"
     )

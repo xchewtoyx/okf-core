@@ -3,19 +3,26 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 import sqlite3
 from collections import deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, cast
-from urllib.parse import unquote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from markdown_it import MarkdownIt
 
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError, parse_concept_document
 from okf_core.manifest import BundleManifest, ConceptManifestEntry, scan_bundle
+from okf_core.markdown_engine import link_children, render_inline_children
+from okf_core.patching import (
+    DocumentChangePlan,
+    apply_document_change,
+    plan_markdown_section_append,
+)
 from okf_core.paths import (
     ConceptPathError,
     is_reserved_concept_path,
@@ -124,6 +131,7 @@ class LinkSuggestion:
     target_concept_id: str
     target_path: Path
     matched_text: str
+    target_title: str
 
 
 @dataclass(frozen=True)
@@ -452,6 +460,7 @@ def find_unlinked_mentions(
                         target_concept_id=target_id,
                         target_path=target_path,
                         matched_text=snippet or title,
+                        target_title=title,
                     )
                 )
 
@@ -657,3 +666,197 @@ def _is_ignored_reserved_path(path: Path, bundle: BundleConfig) -> bool:
     except ValueError:
         return False
     return True
+
+
+# ---------------------------------------------------------------------------
+# Applying link suggestions (issue #61): writing selected `find_unlinked_
+# mentions` results back into the source concept's Markdown body as inline
+# links under a conventional heading.
+# ---------------------------------------------------------------------------
+
+#: Default heading `find_unlinked_mentions` suggestions are appended under,
+#: an H2 per the issue's own illustrative example.
+DEFAULT_LINK_SUGGESTION_HEADING = "See also"
+DEFAULT_LINK_SUGGESTION_HEADING_LEVEL = 2
+
+
+def link_suggestion_href(suggestion: LinkSuggestion) -> str:
+    """Compute the Markdown link href for `suggestion`, relative to its source.
+
+    Analogous to the relative-target branch of
+    `patching.link_target_for_new_location`: a POSIX-separator path from
+    `suggestion.source_path`'s own directory to `suggestion.target_path`,
+    percent-encoded (leaving '/' as a literal separator) so a target
+    containing a space or other special character comes out in the same
+    normalized form markdown-it itself emits for such hrefs. Unlike
+    `link_target_for_new_location`, there is no existing link destination
+    whose absolute-vs-relative style must be preserved -- a link suggestion
+    is always written relative to its source concept's directory.
+    """
+
+    relative = os.path.relpath(suggestion.target_path, suggestion.source_path.parent)
+    posix_path = PurePosixPath(relative.replace("\\", "/")).as_posix()
+    return quote(posix_path, safe="/")
+
+
+def _link_suggestion_line(suggestion: LinkSuggestion) -> str:
+    """Render `suggestion` as one Markdown bullet: `- [title](href)`.
+
+    `suggestion.target_title` is arbitrary, human-authored text embedded as
+    literal Markdown link *text* -- built via the shared `markdown_engine`
+    engine's own `link_children`/`render_inline_children` primitives (#199),
+    the canonical, sole-sanctioned place for Markdown escaping, rather than
+    a bespoke escaping helper: `link_children` wraps `target_title` as a
+    literal text child of a fresh `[text](href)` link, and
+    `render_inline_children` renders it back through `mdformat`'s renderer,
+    which escapes `[`, `]`, and backslash exactly when needed for the
+    result to round-trip on reparse.
+    """
+
+    href = link_suggestion_href(suggestion)
+    link = render_inline_children(link_children(href, suggestion.target_title))
+    return f"- {link}\n"
+
+
+@dataclass(frozen=True)
+class SuggestionSelection:
+    """The result of matching caller-requested `(source, target)` concept ID
+    pairs against a set of discovered `LinkSuggestion`s."""
+
+    selected: tuple[LinkSuggestion, ...]
+    unmatched_pairs: tuple[tuple[str, str], ...]
+
+
+def select_link_suggestions(
+    suggestions: Sequence[LinkSuggestion],
+    pairs: Sequence[tuple[str, str]] | None,
+) -> SuggestionSelection:
+    """Filter `suggestions` down to caller-selected `(source, target)` pairs.
+
+    `pairs` is a sequence of `(source_concept_id, target_concept_id)` tuples
+    identifying which discovered suggestions to keep; a pair with no
+    matching suggestion is reported in `unmatched_pairs` rather than silently
+    dropped (AGENTS.md "surface problems explicitly"), so a caller can
+    reject a typo'd or already-applied selector instead of quietly applying
+    fewer suggestions than requested. A duplicate pair in `pairs` is matched
+    once. `pairs=None` means "no selection requested" -- every suggestion is
+    selected, matching `find_unlinked_mentions`' own discovery order.
+    """
+
+    if pairs is None:
+        return SuggestionSelection(selected=tuple(suggestions), unmatched_pairs=())
+
+    by_pair: dict[tuple[str, str], LinkSuggestion] = {
+        (s.source_concept_id, s.target_concept_id): s for s in suggestions
+    }
+    selected: list[LinkSuggestion] = []
+    unmatched: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for pair in pairs:
+        if pair in seen:
+            continue
+        seen.add(pair)
+        match = by_pair.get(pair)
+        if match is None:
+            unmatched.append(pair)
+        else:
+            selected.append(match)
+
+    return SuggestionSelection(
+        selected=tuple(selected), unmatched_pairs=tuple(unmatched)
+    )
+
+
+@dataclass(frozen=True)
+class LinkSuggestionApplyPreparation:
+    """Read-only outputs of planning a link-suggestion apply; never writes.
+
+    `section_plans` groups suggestions by source file: every selected
+    suggestion targeting the same source concept is folded into a single
+    `DocumentChangePlan` for that file's heading section (one new section
+    body per file, not one write per suggestion).
+    """
+
+    section_plans: Mapping[Path, DocumentChangePlan]
+    applied_suggestions: tuple[LinkSuggestion, ...]
+
+
+@dataclass(frozen=True)
+class LinkSuggestionApplyResult:
+    """The result of applying selected link suggestions."""
+
+    updated_files: tuple[Path, ...]
+    applied_suggestions: tuple[LinkSuggestion, ...]
+
+
+def _suggestion_sort_key(suggestion: LinkSuggestion) -> tuple[str, str]:
+    return (suggestion.source_concept_id, suggestion.target_concept_id)
+
+
+def plan_link_suggestions_apply(
+    bundle: BundleConfig,
+    suggestions: Sequence[LinkSuggestion],
+    *,
+    heading: str = DEFAULT_LINK_SUGGESTION_HEADING,
+    level: int = DEFAULT_LINK_SUGGESTION_HEADING_LEVEL,
+) -> LinkSuggestionApplyPreparation:
+    """Read-only planning for writing `suggestions` into their source files.
+
+    Suggestions are grouped by `source_path`; each source file gets one
+    `plan_markdown_section_append` call appending every one of its selected
+    suggestions, in `(source_concept_id, target_concept_id)` order, under
+    `heading` at `level` (default `## See also`). `plan_markdown_section_
+    append` itself skips a suggestion whose target already has a link
+    somewhere in the section, so re-planning (or re-applying) an
+    already-written suggestion is a no-op rather than a duplicate bullet.
+    Never writes anything -- safe to call repeatedly, e.g. for a dry-run
+    preview.
+    """
+
+    by_file: dict[Path, list[LinkSuggestion]] = {}
+    for suggestion in suggestions:
+        by_file.setdefault(suggestion.source_path, []).append(suggestion)
+
+    section_plans: dict[Path, DocumentChangePlan] = {}
+    for path, file_suggestions in sorted(by_file.items(), key=lambda kv: str(kv[0])):
+        lines = [
+            _link_suggestion_line(s)
+            for s in sorted(file_suggestions, key=_suggestion_sort_key)
+        ]
+        section_plans[path] = plan_markdown_section_append(
+            bundle, path, heading, lines, level=level
+        )
+
+    return LinkSuggestionApplyPreparation(
+        section_plans=section_plans,
+        applied_suggestions=tuple(sorted(suggestions, key=_suggestion_sort_key)),
+    )
+
+
+def apply_link_suggestions(
+    bundle: BundleConfig,
+    suggestions: Sequence[LinkSuggestion],
+    *,
+    heading: str = DEFAULT_LINK_SUGGESTION_HEADING,
+    level: int = DEFAULT_LINK_SUGGESTION_HEADING_LEVEL,
+) -> LinkSuggestionApplyResult:
+    """Apply selected link suggestions: plan, then write each file's plan.
+
+    Idempotent: re-running with the same (or an overlapping) suggestion set
+    only re-touches files whose plan is not already a no-op -- see
+    `plan_link_suggestions_apply`.
+    """
+
+    prep = plan_link_suggestions_apply(
+        bundle, suggestions, heading=heading, level=level
+    )
+    updated: list[Path] = []
+    for path, plan in prep.section_plans.items():
+        result = apply_document_change(bundle, plan)
+        if result.changed:
+            updated.append(path)
+
+    return LinkSuggestionApplyResult(
+        updated_files=tuple(sorted(updated)),
+        applied_suggestions=prep.applied_suggestions,
+    )

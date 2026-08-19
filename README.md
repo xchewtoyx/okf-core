@@ -211,15 +211,19 @@ Missing `okf_cache_dir`, config errors, unknown bundles, and invalid limits exit
 
 ### `okf unlinked-mentions`
 
-Finds visible concept-title mentions that are not already Markdown links:
+Finds visible concept-title mentions that are not already Markdown links, and optionally writes selected suggestions back into their source concept as inline Markdown links:
 
 ```sh
-okf unlinked-mentions [--config PATH] [--bundle NAME] [--no-refresh]
+okf unlinked-mentions [--config PATH] [--bundle NAME] [--no-refresh] [--apply] [--select SOURCE_ID:TARGET_ID ...] [--heading TEXT] [--heading-level N]
 ```
 
-The command requires bundle-level `okf_cache_dir`. By default it refreshes the persistent FTS index before finding suggestions; `--no-refresh` uses its current rows. Output contains `bundle`, `suggestions`, and non-fatal `problems`. Each suggestion includes `source_concept_id`, `source_path`, `target_concept_id`, `target_path`, and the annotated FTS excerpt `matched_text`.
+The command requires bundle-level `okf_cache_dir`. By default it refreshes the persistent FTS index before finding suggestions; `--no-refresh` uses its current rows.
 
-Missing `okf_cache_dir`, config errors, and unknown bundles exit `2`. Empty suggestions and non-fatal read or parse problems exit `0`.
+Without `--apply` (the default, unchanged read-only behavior), output contains `bundle`, `suggestions`, and non-fatal `problems`. Each suggestion includes `source_concept_id`, `source_path`, `target_concept_id`, `target_path`, `target_title`, `target_href` (the Markdown link destination that would be written, relative to the source concept), and the annotated FTS excerpt `matched_text`.
+
+With `--apply`, every discovered suggestion is written into its source concept's body as `- [target_title](target_href)`, appended under a `--heading` section (default `## See also`, `--heading-level` default `2`) -- pass one or more `--select SOURCE_ID:TARGET_ID` to restrict which discovered suggestions are written instead of applying all of them; a `--select` value with no matching discovered suggestion exits `2` without writing anything. Suggestions targeting the same source concept are grouped into a single write to that file. A suggestion whose target already has a link somewhere in the section is skipped, so re-running `--apply` (with an overlapping or identical selection) is idempotent rather than duplicating bullets. Output is `{"bundle": "...", "applied_suggestions": [...], "updated_files": [...], "problems": [...]}`.
+
+Missing `okf_cache_dir`, config errors, unknown bundles, a malformed `--select` value, and an unmatched `--select` pair exit `2`. Empty suggestions and non-fatal read or parse problems exit `0`. A write-planning failure (e.g. an invalid `--heading-level`, or an unrelated reference-style link definition in a target file) exits `1`.
 
 ### `okf context`
 
@@ -512,6 +516,31 @@ nothing — the same "no-op never writes" behavior `plan_frontmatter_merge`
 documents for frontmatter. Applying the plan uses `apply_document_change()`
 and retains its stale-content protection.
 
+`plan_markdown_section_append(bundle, path, heading, lines, *, level=1)` adds
+to a section's *existing* body instead of replacing it wholesale: it reads
+the section's current body and appends `lines` after it. Content already in
+the section, and the rest of the document, survives semantically, not
+necessarily byte-for-byte — the same convergence `plan_markdown_section_patch`
+documents above: output is always canonical Markdown, so surrounding block
+spacing/list-marker/table style outside the target section can also converge
+to `mdformat`'s canonical form. An absent section is created the same way
+`plan_markdown_section_patch` documents
+(appended at the end in ATX syntax); a `lines` element that itself parses to
+a heading at or above `level` is rejected for the same reason a replacement
+body containing one is. A `lines` element carrying exactly one inline
+Markdown link is deduplicated against links already present anywhere in the
+section — an element whose link target already appears in the section is
+silently skipped, keeping repeated calls with an overlapping `lines` set
+idempotent instead of growing duplicate bullets; an element with no inline
+link (or more than one) is never deduplicated. When the section already
+ends in a bullet list, new list-shaped lines are merged into that existing
+list (one combined list) rather than opened as a second, visually distinct
+list right after it. Like `plan_source_upsert`, this reads the document
+exactly once (`plan_document_change_from_reader`) so the appended body is
+always derived from the same content the plan's baseline hash covers. Used
+by `plan_link_suggestions_apply`/`apply_link_suggestions` (Graph Operations,
+below) to write selected `find_unlinked_mentions` suggestions.
+
 `plan_frontmatter_merge(bundle, path, updates)` builds a safe plan for a
 shallow merge of selected top-level YAML frontmatter fields. Frontmatter is
 parsed with a round-trip YAML engine (`ruamel.yaml`), mutated in place, and
@@ -775,10 +804,24 @@ External URLs, fragment-only links, `mailto:` links, non-Markdown assets, and co
 
 `links_from(graph, concept_id)`, `backlinks_to(graph, concept_id)`, and `neighborhood(graph, concept_id, depth=1)` provide deterministic traversal over resolved links. Neighborhood traversal treats links as bidirectional for discovery while preserving directed edges in the underlying graph. It raises `ValueError` for unknown concept IDs or negative depths.
 
-`find_unlinked_mentions(bundle, *, refresh=True)` scans visible concept-body prose for mentions of other concept titles that are not already Markdown links, returning an `UnlinkedMentionsResult` with `suggestions` (a tuple of `LinkSuggestion`) and `problems` (non-fatal read/parse failures). Fenced and indented code blocks, inline code, image destinations, and Markdown link destinations are excluded; displayed link text remains eligible prose. Each `LinkSuggestion` identifies the source and target concept and `matched_text`, an annotated prose excerpt from the FTS engine with `[`/`]` highlight markers around matched terms and `...` for truncation (not a literal string match). Requires `bundle.okf_cache_dir` to be configured (raises `SearchConfigError` otherwise); pass `refresh=False` to query the existing FTS cache without rebuilding it.
+`find_unlinked_mentions(bundle, *, refresh=True)` scans visible concept-body prose for mentions of other concept titles that are not already Markdown links, returning an `UnlinkedMentionsResult` with `suggestions` (a tuple of `LinkSuggestion`) and `problems` (non-fatal read/parse failures). Fenced and indented code blocks, inline code, image destinations, and Markdown link destinations are excluded; displayed link text remains eligible prose. Each `LinkSuggestion` identifies the source and target concept, the target's `target_title`, and `matched_text`, an annotated prose excerpt from the FTS engine with `[`/`]` highlight markers around matched terms and `...` for truncation (not a literal string match). Requires `bundle.okf_cache_dir` to be configured (raises `SearchConfigError` otherwise); pass `refresh=False` to query the existing FTS cache without rebuilding it.
+
+`link_suggestion_href(suggestion)` computes the Markdown link destination a suggestion would be written with: a `suggestion.source_path`-relative, POSIX-separator, percent-encoded path to `suggestion.target_path` -- the same relative-target convention `link_target_for_new_location` uses for a moved concept's rewritten link.
+
+`select_link_suggestions(suggestions, pairs)` filters a `find_unlinked_mentions` result down to caller-chosen `(source_concept_id, target_concept_id)` pairs, returning a `SuggestionSelection` with `selected` and any `unmatched_pairs` (a requested pair with no matching suggestion, surfaced rather than silently dropped). `pairs=None` selects every suggestion.
+
+`plan_link_suggestions_apply(bundle, suggestions, *, heading="See also", level=2)` and `apply_link_suggestions(bundle, suggestions, *, heading="See also", level=2)` are the read-only-plan / write pair (mirroring `plan_graph_repair`/`repair_graph`) that write selected suggestions into their source concept's body as inline Markdown links (`- [target_title](target_href)`), grouped one write per source file, appended under `heading` at `level` (default `## See also`). Built on `plan_markdown_section_append` (below): a suggestion whose target already has a link in the section is skipped, so re-applying an overlapping suggestion set is idempotent rather than duplicating bullets. `plan_link_suggestions_apply` returns a `LinkSuggestionApplyPreparation` (`section_plans`, a `DocumentChangePlan` per source file, and `applied_suggestions`); `apply_link_suggestions` applies each plan and returns a `LinkSuggestionApplyResult` with the files actually `updated_files`.
 
 ```python
-from okf_core import backlinks_to, build_bundle_graph, find_unlinked_mentions, links_from, load_config
+from okf_core import (
+    apply_link_suggestions,
+    backlinks_to,
+    build_bundle_graph,
+    find_unlinked_mentions,
+    links_from,
+    load_config,
+    select_link_suggestions,
+)
 
 config = load_config()
 bundle = config.bundles["default"]
@@ -789,6 +832,12 @@ inbound = backlinks_to(graph, "topics/example")
 result = find_unlinked_mentions(bundle)
 for suggestion in result.suggestions:
     print(f"{suggestion.source_concept_id} mentions '{suggestion.matched_text}' → {suggestion.target_concept_id}")
+
+# Write only the suggestions naming "topics/example" as their source.
+selection = select_link_suggestions(
+    result.suggestions, [("topics/example", s.target_concept_id) for s in result.suggestions]
+)
+applied = apply_link_suggestions(bundle, selection.selected)
 ```
 
 ## Development Expectations
