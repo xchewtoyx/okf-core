@@ -728,7 +728,19 @@ def _skip_stray_block(
 
 
 def _stray_block_descriptor(token: Any) -> str:
-    """Human-readable noun phrase for a stray block's ``LogParseProblem``."""
+    """Human-readable noun phrase for a stray block's ``LogParseProblem``.
+
+    ``table_open`` (#199): routing this module onto the shared
+    ``markdown_engine.MARKDOWN`` parser means it now inherits GFM table
+    parsing (``.enable("table")``, added for ``patching.py`` by #198) --
+    content shaped like a pipe table that previously parsed as one or more
+    bare paragraphs (falling into the ``paragraph_open`` case above) now
+    parses as a single ``table_open``/``table_close`` block instead. Either
+    way it was, and remains, an unrepresentable stray block reported and
+    skipped -- this case only changes the reported noun phrase from generic
+    paragraph wording to naming the table explicitly, not what gets
+    accepted.
+    """
     token_type = token.type
     if token_type == "paragraph_open":
         return "a bare paragraph"
@@ -744,6 +756,8 @@ def _stray_block_descriptor(token: Any) -> str:
         return "a blockquote"
     if token_type == "bullet_list_open":
         return "a nested bullet list"
+    if token_type == "table_open":
+        return "a table"
     return f"a {token_type!r} block"
 
 
