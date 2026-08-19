@@ -13,7 +13,6 @@ import click
 
 from okf_core import (
     BundleConfig,
-    BundleManifest,
     ConceptManifestEntry,
     ConceptPathError,
     ConfigError,
@@ -27,6 +26,7 @@ from okf_core import (
     backlinks_to,
     build_bundle_graph,
     build_context_pack,
+    concept_directories,
     concept_id_to_path,
     find_unlinked_mentions,
     generate_index,
@@ -101,36 +101,6 @@ def _reserved_files_in_directory(directory: Path, bundle: Any) -> list[dict[str,
         if child.is_file() and child.name.casefold() in reserved_filenames:
             excluded.append({"path": str(child), "filename": child.name})
     return excluded
-
-
-def _concept_directories(
-    manifest: BundleManifest, resolved_bundle_root: Path
-) -> tuple[set[Path], dict[Path, list[ConceptManifestEntry]]]:
-    """Return the set of concept-bearing directories and their direct entries.
-
-    ``concept_dirs`` is seeded with ``resolved_bundle_root`` and extended with
-    every ancestor directory (up to the bundle root) of each concept's parent
-    directory. ``concepts_by_parent`` maps each concept's resolved parent
-    directory to the concepts directly within it; concepts outside
-    ``resolved_bundle_root`` are excluded from ``concept_dirs`` but still recorded in ``concepts_by_parent``.
-    """
-    concept_dirs = {resolved_bundle_root}
-    concepts_by_parent: dict[Path, list[ConceptManifestEntry]] = {}
-
-    for c in manifest.concepts:
-        try:
-            resolved_path = c.path.resolve()
-            curr = resolved_path.parent
-            concepts_by_parent.setdefault(curr, []).append(c)
-
-            curr.relative_to(resolved_bundle_root)
-            while curr != resolved_bundle_root and curr.parts:
-                concept_dirs.add(curr)
-                curr = curr.parent
-        except ValueError:
-            pass
-
-    return concept_dirs, concepts_by_parent
 
 
 def _index_one_directory(
@@ -363,6 +333,9 @@ def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
 def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     """Validate a bundle.
 
+    Checks every concept document against the configured profile, and every
+    concept-bearing directory's committed index.md for drift against a fresh
+    regeneration (advisory warnings only; never affects the exit code).
     Emits findings as JSON unless quiet is True.
     """
     cfg, bundle = _load(config_path, bundle_name)
@@ -1735,7 +1708,7 @@ def index_cmd(
     manifest = scan_bundle(bundle)
 
     resolved_bundle_root = bundle.bundle_root.resolve()
-    concept_dirs, concepts_by_parent = _concept_directories(
+    concept_dirs, concepts_by_parent = concept_directories(
         manifest, resolved_bundle_root
     )
 
