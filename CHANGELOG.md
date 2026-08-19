@@ -6,7 +6,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
-## [0.5.0] - 2026-08-19
+### Changed
+
+- **Supported OKF version raised to 0.2** (`SUPPORTED_OKF_VERSION` in `versions.py`): a bundle configuring or declaring `okf_version: "0.2"` is now accepted everywhere the version gate applies — `okf-core.toml` config validation and root-index write safety — and `okf index` emits a configured `"0.2"` in bundle-root frontmatter with unchanged force/preserve semantics. v0.5.0 already shipped the v0.2 write primitives (§5 provenance/trust/lifecycle stamping, §7 actor strings) while still rejecting `"0.2"` declarations as newer-than-supported, so this completes the adoption that release already documented. `"0.3"` remains rejected with the existing structured error; v0.1 bundles behave unchanged. Shape validation of hand-authored v0.2 frontmatter in `okf validate` is tracked separately (#221). (#220)
 
 ### Added
 
