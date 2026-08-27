@@ -450,6 +450,25 @@ def test_portable_target_falls_back_to_raw_href_when_relpath_is_absolute(
     )
 
 
+def test_portable_target_falls_back_to_raw_href_when_relpath_raises(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+
+    def _raise_value_error(*_args: object, **_kwargs: object) -> str:
+        raise ValueError("path is on mount 'C:', start on mount 'D:'")
+
+    monkeypatch.setattr("okf_core.graph_model.os.path.relpath", _raise_value_error)
+
+    assert (
+        _portable_target_posix(
+            tmp_path / "outside.md", root.resolve(), raw_href="../outside.md"
+        )
+        == "../outside.md"
+    )
+
+
 def test_missing_type_graph_only_id_does_not_fail_and_excludes_its_links(
     tmp_path: Path,
 ) -> None:

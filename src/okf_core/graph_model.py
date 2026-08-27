@@ -500,16 +500,24 @@ def _relative_posix(path: Path, bundle_root: Path) -> str:
 
 
 def _portable_target_posix(path: Path, bundle_root: Path, *, raw_href: str) -> str:
-    """Bundle-relative POSIX for a broken or excluded target; may include ``..``."""
+    """Bundle-relative POSIX for a broken or excluded target; may include ``..``.
+
+    ``os.path.relpath`` can raise ``ValueError`` (cross-drive on Windows);
+    that case falls back to ``raw_href`` rather than escaping as a raw
+    exception.
+    """
 
     candidate = path if path.is_absolute() else bundle_root / path
     resolved = candidate.resolve(strict=False)
     try:
         return resolved.relative_to(bundle_root).as_posix()
     except ValueError:
-        portable = Path(
-            os.path.relpath(os.fspath(resolved), os.fspath(bundle_root))
-        ).as_posix()
+        try:
+            portable = Path(
+                os.path.relpath(os.fspath(resolved), os.fspath(bundle_root))
+            ).as_posix()
+        except ValueError:
+            return raw_href
         if Path(portable).is_absolute():
             return raw_href
         return portable
