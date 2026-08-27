@@ -447,7 +447,11 @@ def _union_problems(
 ) -> tuple[GraphModelProblem, ...]:
     seen: set[tuple[str, str, str, str]] = set()
     problems: list[GraphModelProblem] = []
-    for raw in (*graph.problems, *listing.problems):
+    raw_problems: tuple[GraphProblem | ListingProblem, ...] = (
+        *graph.problems,
+        *listing.problems,
+    )
+    for raw in raw_problems:
         problem = _model_problem(raw, bundle_root)
         key = (problem.concept_id, problem.path, problem.kind, problem.message)
         if key in seen:

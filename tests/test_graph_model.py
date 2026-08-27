@@ -234,23 +234,27 @@ def test_listing_count_mismatch_fails_closed(
 
 
 @pytest.mark.parametrize(
-    "field",
-    ["inbound_link_count", "outbound_link_count", "pagerank"],
+    ("inbound", "outbound", "pagerank"),
+    [
+        (None, 0, 1.0),
+        (0, None, 1.0),
+        (0, 0, None),
+    ],
 )
-def test_none_graph_count_field_fails_closed(tmp_path: Path, field: str) -> None:
+def test_none_graph_count_field_fails_closed(
+    tmp_path: Path,
+    inbound: int | None,
+    outbound: int | None,
+    pagerank: float | None,
+) -> None:
     root = tmp_path / "docs"
-    kwargs = {"outbound": 0, "inbound": 0, "pagerank": 1.0}
-    if field == "inbound_link_count":
-        kwargs["inbound"] = None
-    elif field == "outbound_link_count":
-        kwargs["outbound"] = None
-    else:
-        kwargs["pagerank"] = None
     graph = BundleGraph(bundle_name="docs", concepts=(_entry(root, "a"),))
     listing = BundleListing(
         bundle_name="docs",
-        concepts=(_listed(root, "a", **kwargs),),
-        orphans=("a",) if field != "inbound_link_count" else (),
+        concepts=(
+            _listed(root, "a", outbound=outbound, inbound=inbound, pagerank=pagerank),
+        ),
+        orphans=(),
     )
 
     with pytest.raises(GraphModelError, match="missing required graph counts"):
