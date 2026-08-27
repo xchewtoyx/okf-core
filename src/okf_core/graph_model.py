@@ -12,8 +12,12 @@ Policy (also on :class:`NormalizedBundleGraph`):
 - Self-links (``source_id == target_id``) go on ``self_links``, not
   ``edges``.
 - Paths on the model are bundle-relative POSIX
-  (``Path.relative_to(bundle_root).as_posix()``). A path that escapes the
-  root raises :class:`GraphModelError` rather than emitting an absolute path.
+  (``Path.relative_to(bundle_root).as_posix()``). A node, problem, or source
+  path that escapes the root raises :class:`GraphModelError` rather than
+  emitting an absolute path. A broken or excluded *target* that resolves
+  outside the bundle is kept, using a portable relative path (including
+  ``..`` via ``os.path.relpath``, or the raw href) — that is a normal OKF
+  broken link, not construction failure.
 - An edge is added only when it is a resolved ``graph.links`` instance whose
   both endpoints are in the listing node set. Resolved links with an unlisted
   endpoint go on ``excluded_links`` with reason ``unlisted-endpoint``.
@@ -28,6 +32,7 @@ Policy (also on :class:`NormalizedBundleGraph`):
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -127,8 +132,11 @@ class NormalizedBundleGraph:
     ``(source_id, target_id)``; ``instance_count`` and deterministic ``texts``
     are retained. Self-links go on ``self_links``, not ``edges``. Pure
     fragment targets are not recovered by re-parsing bodies. Paths are
-    bundle-relative POSIX; a path that escapes the root raises
-    :class:`GraphModelError` rather than becoming absolute. An edge is added
+    bundle-relative POSIX; a node, problem, or source path that escapes the
+    root raises :class:`GraphModelError` rather than becoming absolute. A
+    broken or excluded target that resolves outside the bundle is kept as a
+    portable relative path (including ``..``) rather than failing
+    construction. An edge is added
     only when it is a resolved ``graph.links`` instance with both endpoints
     in the listing node set. Listing omitting missing-``type`` concepts that
     still appear on ``graph.concepts`` is expected: those IDs stay in
@@ -165,9 +173,10 @@ def normalize_bundle_graph(
 ) -> NormalizedBundleGraph:
     """Normalize in-process graph + listing facts into one portable model.
 
-    Raises :class:`GraphModelError` on type errors, escaped paths, or
-    cross-payload disagreement. Non-fatal OKF problems are carried onto the
-    result and do not fail construction.
+    Raises :class:`GraphModelError` on type errors, escaped node/problem/source
+    paths, or cross-payload disagreement. A broken or excluded target that
+    resolves outside the bundle is kept. Non-fatal OKF problems are carried
+    onto the result and do not fail construction.
     """
 
     typed_graph, typed_listing = _require_bundle_graph_and_listing(graph, listing)
@@ -373,7 +382,9 @@ def _classify_resolved_link(
             text=link.text,
             reason=_UNLISTED_ENDPOINT,
             source_path=_relative_posix(link.source_path, bundle_root),
-            target_path=_relative_posix(link.target_path, bundle_root),
+            target_path=_portable_target_posix(
+                link.target_path, bundle_root, raw_href=link.target
+            ),
         )
         return None, None, excluded, None
     if source == target:
@@ -430,7 +441,9 @@ def _broken_links_from_graph(
             source_path=_relative_posix(link.source_path, bundle_root),
             text=link.text,
             target=link.target,
-            target_path=_relative_posix(link.target_path, bundle_root),
+            target_path=_portable_target_posix(
+                link.target_path, bundle_root, raw_href=link.target
+            ),
             target_concept_id=link.target_concept_id,
             title=link.title,
         )
@@ -477,11 +490,29 @@ def _model_problem(
 
 
 def _relative_posix(path: Path, bundle_root: Path) -> str:
+    """Fail-closed bundle-relative POSIX for node, problem, and source paths."""
+
     candidate = path if path.is_absolute() else bundle_root / path
     try:
         return candidate.resolve(strict=False).relative_to(bundle_root).as_posix()
     except ValueError as exc:
         raise GraphModelError(f"path {path} escapes bundle root {bundle_root}") from exc
+
+
+def _portable_target_posix(path: Path, bundle_root: Path, *, raw_href: str) -> str:
+    """Bundle-relative POSIX for a broken or excluded target; may include ``..``."""
+
+    candidate = path if path.is_absolute() else bundle_root / path
+    resolved = candidate.resolve(strict=False)
+    try:
+        return resolved.relative_to(bundle_root).as_posix()
+    except ValueError:
+        portable = Path(
+            os.path.relpath(os.fspath(resolved), os.fspath(bundle_root))
+        ).as_posix()
+        if Path(portable).is_absolute():
+            return raw_href
+        return portable
 
 
 def _require_int(value: int | None) -> int:

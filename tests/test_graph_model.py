@@ -19,10 +19,12 @@ from okf_core import (
     ListingProblem,
     NormalizedBundleGraph,
     acquire_normalized_graph,
+    build_bundle_graph,
+    list_concepts,
     normalize_bundle_graph,
     scan_bundle,
 )
-from okf_core.graph_model import GraphModelExcludedLink
+from okf_core.graph_model import GraphModelExcludedLink, _portable_target_posix
 
 
 def test_healthy_connected_graph_matches_verbatim_listing_and_graph(
@@ -339,6 +341,113 @@ def test_escaped_root_path_fails_closed(tmp_path: Path) -> None:
 
     with pytest.raises(GraphModelError, match="escapes bundle root"):
         normalize_bundle_graph(graph, listing, bundle_root=root)
+
+
+def test_broken_outside_target_is_kept_on_normalize_and_acquire(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", body="See [out](../outside.md).\n")
+    bundle = _bundle(root)
+    graph = build_bundle_graph(bundle)
+    listing = list_concepts(bundle, graph=graph)
+
+    normalized = normalize_bundle_graph(graph, listing, bundle_root=root)
+    acquired = acquire_normalized_graph(bundle)
+
+    assert len(graph.broken_links) == 1
+    raw = graph.broken_links[0]
+    assert raw.target == "../outside.md"
+    assert raw.target_concept_id is None
+    assert acquired == normalized
+    assert len(normalized.broken_links) == 1
+    broken = normalized.broken_links[0]
+    assert broken.source_id == raw.source_concept_id
+    assert broken.text == raw.text
+    assert broken.target == raw.target
+    assert broken.target_concept_id == raw.target_concept_id
+    assert broken.title == raw.title
+    assert broken.target_path == "../outside.md"
+    assert not Path(broken.source_path).is_absolute()
+    assert not Path(broken.target_path).is_absolute()
+    assert not any(
+        value.startswith("/") for value in _walk_strings(normalized.to_portable_dict())
+    )
+
+
+def test_escaped_broken_source_path_still_fails_closed(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    graph = BundleGraph(
+        bundle_name="docs",
+        concepts=(_entry(root, "a"),),
+        broken_links=(
+            ConceptLink(
+                source_concept_id="a",
+                source_path=tmp_path / "outside-source.md",
+                text="out",
+                target="../outside.md",
+                target_path=tmp_path / "outside.md",
+                target_concept_id=None,
+            ),
+        ),
+    )
+    listing = BundleListing(
+        bundle_name="docs",
+        concepts=(_listed(root, "a", outbound=0, inbound=0, pagerank=1.0),),
+        orphans=("a",),
+    )
+
+    with pytest.raises(GraphModelError, match="escapes bundle root"):
+        normalize_bundle_graph(graph, listing, bundle_root=root)
+
+
+def test_excluded_outside_target_is_kept(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    graph = BundleGraph(
+        bundle_name="docs",
+        concepts=(_entry(root, "a"),),
+        links=(
+            ConceptLink(
+                source_concept_id="a",
+                source_path=root / "a.md",
+                text="out",
+                target="../outside.md",
+                target_path=tmp_path / "outside.md",
+                target_concept_id=None,
+            ),
+        ),
+    )
+    listing = BundleListing(
+        bundle_name="docs",
+        concepts=(_listed(root, "a", outbound=1, inbound=0, pagerank=1.0),),
+    )
+
+    model = normalize_bundle_graph(graph, listing, bundle_root=root)
+
+    assert model.edges == ()
+    assert len(model.excluded_links) == 1
+    assert model.excluded_links[0].target_id is None
+    assert model.excluded_links[0].text == "out"
+    assert model.excluded_links[0].target_path == "../outside.md"
+    assert model.excluded_links[0].reason == "unlisted-endpoint"
+    assert not Path(model.excluded_links[0].target_path).is_absolute()
+
+
+def test_portable_target_falls_back_to_raw_href_when_relpath_is_absolute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "docs"
+    root.mkdir()
+    monkeypatch.setattr(
+        "okf_core.graph_model.os.path.relpath", lambda *_args, **_kwargs: "/abs/out.md"
+    )
+
+    assert (
+        _portable_target_posix(
+            tmp_path / "outside.md", root.resolve(), raw_href="../outside.md"
+        )
+        == "../outside.md"
+    )
 
 
 def test_missing_type_graph_only_id_does_not_fail_and_excludes_its_links(
