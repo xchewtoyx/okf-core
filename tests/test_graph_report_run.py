@@ -8,6 +8,8 @@ import pytest
 from freezegun import freeze_time
 
 from okf_core import (
+    GraphAnalysisError,
+    GraphModelError,
     GraphReportError,
     GraphReportProvenance,
     load_config,
@@ -211,3 +213,91 @@ def test_forbidden_roots_include_every_bundle_and_fleeting(tmp_path: Path) -> No
     assert config.bundles["docs"].bundle_root in roots
     assert config.bundles["notes"].bundle_root in roots
     assert tmp_path / "fleeting" in roots
+
+
+@pytest.mark.parametrize(
+    "forbidden_roots",
+    ["docs", None, ("docs", Path("/tmp"))],
+    ids=["string", "none", "mixed"],
+)
+def test_validate_forbidden_roots_must_be_paths(forbidden_roots: object) -> None:
+    with pytest.raises(GraphReportError, match="forbidden_roots"):
+        validate_graph_report_output_dir(Path("/tmp/out"), forbidden_roots)  # type: ignore[arg-type]
+
+
+def test_clean_stale_rejects_non_path_output_dir() -> None:
+    with pytest.raises(GraphReportError, match="output_dir"):
+        clean_stale_graph_report_artifacts("out")  # type: ignore[arg-type]
+
+
+def test_run_graph_report_rejects_non_config(tmp_path: Path) -> None:
+    with pytest.raises(GraphReportError, match="OkfConfig"):
+        run_graph_report(object(), output_dir=tmp_path / "out")  # type: ignore[arg-type]
+
+
+def test_run_graph_report_rejects_non_provenance(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    with pytest.raises(GraphReportError, match="GraphReportProvenance"):
+        run_graph_report(
+            config,
+            output_dir=tmp_path / "out",
+            provenance=object(),  # type: ignore[arg-type]
+        )
+
+
+def test_run_graph_report_rejects_string_bundle_names(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    with pytest.raises(GraphReportError, match="bundle_names"):
+        run_graph_report(
+            config,
+            bundle_names="docs",  # type: ignore[arg-type]
+            output_dir=tmp_path / "out",
+            provenance=_FROZEN_PROVENANCE,
+        )
+
+
+@pytest.mark.parametrize(
+    ("target", "exc", "kind"),
+    [
+        (
+            "okf_core.graph_report_run.acquire_normalized_graph",
+            GraphModelError("normalized graph failed"),
+            "model-error",
+        ),
+        (
+            "okf_core.graph_report_run.analyze_normalized_graph",
+            GraphAnalysisError("analysis failed"),
+            "analysis-error",
+        ),
+        (
+            "okf_core.graph_report_run.render_graph_report",
+            GraphReportError("render failed"),
+            "render-error",
+        ),
+    ],
+    ids=["model", "analysis", "render"],
+)
+def test_per_bundle_failure_is_a_problem(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    target: str,
+    exc: Exception,
+    kind: str,
+) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+
+    def _boom(*_args: object, **_kwargs: object) -> None:
+        raise exc
+
+    monkeypatch.setattr(target, _boom)
+    result = run_graph_report(
+        config,
+        bundle_names=("docs",),
+        output_dir=tmp_path / "out",
+        provenance=_FROZEN_PROVENANCE,
+    )
+
+    assert result.rows == ()
+    assert len(result.problems) == 1
+    assert result.problems[0].kind == kind
+    assert str(exc) in result.problems[0].message

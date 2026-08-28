@@ -1485,6 +1485,46 @@ def test_graph_report_unknown_bundle_exits_2(tmp_path: Path) -> None:
     assert "Unknown bundle" in result.stderr
 
 
+def test_graph_report_json_emits_run_result_not_graph_envelope(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_two_bundle_graph_report_project(tmp_path)
+    output = tmp_path / "out"
+
+    result = _runner().invoke(
+        cli,
+        [
+            "graph-report",
+            "--config",
+            str(config_path),
+            "--bundle",
+            "docs",
+            "--output",
+            str(output),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["is_subset"] is True
+    assert data["selected_bundle_names"] == ["docs"]
+    assert data["rows"][0]["bundle"] == "docs"
+    assert "written_paths" in data
+    assert "normalized_graph" not in data
+    assert "schema_version" not in data
+
+
+def test_graph_report_invalid_config_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text("this is not toml {", encoding="utf-8")
+
+    result = _runner().invoke(cli, ["graph-report", "--config", str(config_path)])
+
+    assert result.exit_code == 2
+    assert "Configuration error" in result.stderr
+
+
 def test_graph_report_output_at_bundle_dir_exits_2(tmp_path: Path) -> None:
     config_path = _write_two_bundle_graph_report_project(tmp_path)
 

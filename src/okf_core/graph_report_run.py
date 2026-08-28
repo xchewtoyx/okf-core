@@ -216,10 +216,12 @@ def _selected_bundle_names(
 
 
 def _resolve_run_output_dir(config: OkfConfig, output_dir: Path | None) -> Path:
-    using_default = output_dir is None
-    target = (
-        config.project_root / _DEFAULT_OUTPUT_DIRNAME if using_default else output_dir
-    )
+    if output_dir is None:
+        target = config.project_root / _DEFAULT_OUTPUT_DIRNAME
+        using_default = True
+    else:
+        target = output_dir
+        using_default = False
     forbidden = forbidden_graph_report_roots(config)
     try:
         return validate_graph_report_output_dir(target, forbidden)

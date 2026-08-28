@@ -784,10 +784,19 @@ def test_summary_cell_escapes_pipe_and_does_not_emit_markdown_links() -> None:
     [
         (None, ("docs",), "rows"),
         ("docs", ("docs",), "rows"),
+        ((object(),), ("docs",), "rows"),
         ((_summary_row("docs"),), None, "configured_bundle_names"),
         ((_summary_row("docs"),), "docs", "configured_bundle_names"),
+        ((_summary_row("docs"),), (1,), "configured_bundle_names"),
     ],
-    ids=["rows-none", "rows-str", "configured-none", "configured-str"],
+    ids=[
+        "rows-none",
+        "rows-str",
+        "rows-item",
+        "configured-none",
+        "configured-str",
+        "configured-item",
+    ],
 )
 def test_render_graph_summary_rejects_wrong_input_types(
     rows: object, configured: object, match: str
