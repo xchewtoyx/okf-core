@@ -1,0 +1,213 @@
+"""Tests for the graph-report orchestrator and output-tree safety."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+from freezegun import freeze_time
+
+from okf_core import (
+    GraphReportError,
+    GraphReportProvenance,
+    load_config,
+    run_graph_report,
+)
+from okf_core.graph_report_run import (
+    clean_stale_graph_report_artifacts,
+    forbidden_graph_report_roots,
+    validate_graph_report_output_dir,
+)
+
+_FROZEN_PROVENANCE = GraphReportProvenance(
+    generated_at="2026-01-15T12:00:00Z",
+    okf_version="0.2",
+    git_revision=None,
+)
+
+
+def _write_concept(path: Path, *, title: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\ntype: concept\ntitle: {title}\n---\nBody\n",
+        encoding="utf-8",
+        newline="\n",
+    )
+
+
+def _write_two_bundle_config(tmp_path: Path) -> Path:
+    docs = tmp_path / "docs"
+    notes = tmp_path / "notes"
+    _write_concept(docs / "alpha.md", title="Alpha")
+    _write_concept(notes / "beta.md", title="Beta")
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        '[bundles.docs]\nbundle_root = "docs"\n\n'
+        '[bundles.notes]\nbundle_root = "notes"\n',
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def _write_root_bundle_config(tmp_path: Path) -> Path:
+    _write_concept(tmp_path / "root-note.md", title="Root")
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        '[bundles.default]\nbundle_root = "."\n',
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def test_run_graph_report_defaults_to_all_configured_bundles(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    output = tmp_path / "out"
+
+    result = run_graph_report(config, output_dir=output, provenance=_FROZEN_PROVENANCE)
+
+    assert result.selected_bundle_names == ("docs", "notes")
+    assert result.is_subset is False
+    assert [row.bundle for row in result.rows] == ["docs", "notes"]
+    assert (output / "SUMMARY.md").is_file()
+    assert (output / "docs" / "GRAPH_REPORT.md").is_file()
+    assert (output / "notes" / "graph.json").is_file()
+
+
+def test_run_graph_report_selected_bundle_is_a_subset(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    output = tmp_path / "out"
+
+    result = run_graph_report(
+        config,
+        bundle_names=("notes",),
+        output_dir=output,
+        provenance=_FROZEN_PROVENANCE,
+    )
+
+    assert result.selected_bundle_names == ("notes",)
+    assert result.is_subset is True
+    assert [row.bundle for row in result.rows] == ["notes"]
+    summary = (output / "SUMMARY.md").read_text(encoding="utf-8")
+    assert "selected subset of configured bundles: notes" in summary
+    assert "Configured bundles: docs, notes" in summary
+    assert (output / "notes" / "GRAPH_REPORT.md").is_file()
+    assert not (output / "docs" / "GRAPH_REPORT.md").exists()
+
+
+def test_unknown_bundle_raises_graph_report_error(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+
+    with pytest.raises(GraphReportError, match="Unknown bundle"):
+        run_graph_report(
+            config,
+            bundle_names=("missing",),
+            output_dir=tmp_path / "out",
+            provenance=_FROZEN_PROVENANCE,
+        )
+
+
+def test_output_equal_to_a_bundle_root_is_rejected(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+
+    with pytest.raises(GraphReportError, match="forbidden"):
+        run_graph_report(
+            config,
+            output_dir=config.bundles["docs"].bundle_root,
+            provenance=_FROZEN_PROVENANCE,
+        )
+
+
+def test_output_inside_a_bundle_root_is_rejected(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    inside = config.bundles["docs"].bundle_root / "reports"
+
+    with pytest.raises(GraphReportError, match="forbidden"):
+        run_graph_report(config, output_dir=inside, provenance=_FROZEN_PROVENANCE)
+
+
+def test_output_inside_fleeting_is_rejected(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    fleeting = tmp_path / "fleeting" / "out"
+    fleeting.mkdir(parents=True)
+
+    with pytest.raises(GraphReportError, match="forbidden"):
+        run_graph_report(config, output_dir=fleeting, provenance=_FROZEN_PROVENANCE)
+
+
+def test_default_output_succeeds_when_bundles_are_subdirectories(
+    tmp_path: Path,
+) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+
+    result = run_graph_report(config, provenance=_FROZEN_PROVENANCE)
+
+    default = tmp_path / "wiki-graph-out"
+    assert default.joinpath("SUMMARY.md").is_file()
+    assert result.is_subset is False
+    assert [row.bundle for row in result.rows] == ["docs", "notes"]
+
+
+def test_default_output_refuses_when_bundle_root_is_project_root(
+    tmp_path: Path,
+) -> None:
+    config = load_config(config_path=_write_root_bundle_config(tmp_path))
+
+    with pytest.raises(GraphReportError, match="Pass --output"):
+        run_graph_report(config, provenance=_FROZEN_PROVENANCE)
+
+
+def test_clean_stale_graph_report_artifacts_is_filename_and_depth_limited(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "out"
+    child = output / "docs"
+    nested = output / "docs" / "nested"
+    sibling_file = output / "keep.md"
+    child.mkdir(parents=True)
+    nested.mkdir()
+    (output / "SUMMARY.md").write_text("old summary\n", encoding="utf-8")
+    (child / "GRAPH_REPORT.md").write_text("old report\n", encoding="utf-8")
+    (child / "graph.json").write_text("{}\n", encoding="utf-8")
+    (child / "notes.txt").write_text("keep\n", encoding="utf-8")
+    (nested / "GRAPH_REPORT.md").write_text("nested\n", encoding="utf-8")
+    sibling_file.write_text("keep sibling\n", encoding="utf-8")
+
+    clean_stale_graph_report_artifacts(output)
+
+    assert not (output / "SUMMARY.md").exists()
+    assert not (child / "GRAPH_REPORT.md").exists()
+    assert not (child / "graph.json").exists()
+    assert (child / "notes.txt").read_text(encoding="utf-8") == "keep\n"
+    assert (nested / "GRAPH_REPORT.md").read_text(encoding="utf-8") == "nested\n"
+    assert sibling_file.read_text(encoding="utf-8") == "keep sibling\n"
+    assert child.is_dir()
+    assert nested.is_dir()
+
+
+@freeze_time("2026-08-28T12:34:56Z")
+def test_default_generated_at_uses_frozen_utc_now(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    output = tmp_path / "out"
+
+    run_graph_report(config, bundle_names=("docs",), output_dir=output)
+
+    summary = (output / "SUMMARY.md").read_text(encoding="utf-8")
+    assert "2026-08-28T12:34:56Z" in summary
+
+
+@pytest.mark.parametrize(
+    "output_dir",
+    ["tmp", None, 1],
+    ids=["string", "none", "int"],
+)
+def test_validate_output_dir_rejects_non_path(output_dir: object) -> None:
+    with pytest.raises(GraphReportError, match="output_dir"):
+        validate_graph_report_output_dir(output_dir, ())  # type: ignore[arg-type]
+
+
+def test_forbidden_roots_include_every_bundle_and_fleeting(tmp_path: Path) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    roots = forbidden_graph_report_roots(config)
+    assert config.bundles["docs"].bundle_root in roots
+    assert config.bundles["notes"].bundle_root in roots
+    assert tmp_path / "fleeting" in roots

@@ -82,11 +82,14 @@ from okf_core.graph_report import (
     BundleGraphArtifactPaths,
     GraphReportError,
     GraphReportProvenance,
+    GraphSummaryRow,
     graph_report_payload,
     render_graph_json,
     render_graph_report,
+    render_graph_summary,
     write_bundle_graph_artifacts,
 )
+from okf_core.graph_report_run import GraphReportRunResult, run_graph_report
 from okf_core.index import (
     GeneratedIndex,
     IndexEntry,
@@ -242,6 +245,8 @@ __all__ = [
     "GraphProblem",
     "GraphReportError",
     "GraphReportProvenance",
+    "GraphReportRunResult",
+    "GraphSummaryRow",
     "IndexEntry",
     "IndexParseProblem",
     "IndexProblem",
@@ -334,7 +339,9 @@ __all__ = [
     "plan_stamp_verified",
     "render_graph_json",
     "render_graph_report",
+    "render_graph_summary",
     "render_index_document",
+    "run_graph_report",
     "render_log",
     "repair_graph",
     "scan_bundle",

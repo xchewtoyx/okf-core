@@ -35,3 +35,6 @@ ENV/
 
 # Local agent guidance (not committed)
 CLAUDE.md
+
+# Generated graph-report output
+wiki-graph-out/

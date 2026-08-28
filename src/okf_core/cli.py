@@ -19,6 +19,7 @@ from okf_core import (
     ConceptPathError,
     ConfigError,
     DocumentChangeError,
+    GraphReportError,
     ManifestProblem,
     ProfileConfig,
     SearchConfigError,
@@ -43,6 +44,7 @@ from okf_core import (
     plan_document_change,
     plan_document_change_from_reader,
     render_index_document,
+    run_graph_report,
     scan_bundle,
     search_concepts,
     select_link_suggestions,
@@ -830,6 +832,113 @@ def graph_cmd(
         f"{len(graph.links)} links, {len(graph.broken_links)} broken",
         err=True,
     )
+
+
+@cli.command("graph-report")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_names",
+    multiple=True,
+    metavar="NAME",
+    help="Named bundle from config (repeatable; default: all configured bundles).",
+)
+@click.option(
+    "--output",
+    "output_dir",
+    default=None,
+    metavar="DIR",
+    help=(
+        "Output directory (default: <project-root>/wiki-graph-out). "
+        "A relative path is resolved from the current working directory."
+    ),
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Print a compact run-result JSON object on stdout.",
+)
+def graph_report_cmd(
+    config_path: str | None,
+    bundle_names: tuple[str, ...],
+    output_dir: str | None,
+    as_json: bool,
+) -> None:
+    """Write per-bundle graph reports and a selected-only SUMMARY.md rollup.
+
+    Acquires, analyzes, and renders each selected bundle, then writes
+    GRAPH_REPORT.md and graph.json under <output>/<slug>/ plus SUMMARY.md
+    at the output root. The output directory must not be inside (or equal
+    to) a configured bundle root or fleeting/.
+    """
+    try:
+        cfg = load_config(config_path=config_path)
+    except ConfigError as exc:
+        click.echo(f"Configuration error: {exc}", err=True)
+        sys.exit(2)
+
+    try:
+        result = run_graph_report(
+            cfg,
+            bundle_names=bundle_names or None,
+            output_dir=Path(output_dir) if output_dir is not None else None,
+        )
+    except GraphReportError as exc:
+        click.echo(str(exc), err=True)
+        sys.exit(2)
+
+    if as_json:
+        click.echo(
+            json.dumps(_graph_report_run_dict(result), cls=_Encoder, sort_keys=True)
+        )
+    else:
+        click.echo(
+            f"Wrote graph report for {len(result.selected_bundle_names)} bundle(s) "
+            f"({len(result.rows)} ok, {len(result.problems)} failed)",
+            err=True,
+        )
+    if result.problems:
+        sys.exit(1)
+
+
+def _graph_report_run_dict(result: Any) -> dict[str, Any]:
+    return {
+        "selected_bundle_names": list(result.selected_bundle_names),
+        "is_subset": result.is_subset,
+        "rows": [_graph_summary_row_dict(row) for row in result.rows],
+        "written_paths": [str(path) for path in result.written_paths],
+        "problems": [
+            {
+                "bundle_name": problem.bundle_name,
+                "kind": problem.kind,
+                "message": problem.message,
+            }
+            for problem in result.problems
+        ],
+    }
+
+
+def _graph_summary_row_dict(row: Any) -> dict[str, Any]:
+    return {
+        "bundle": row.bundle,
+        "concepts": row.concepts,
+        "unique_links": row.unique_links,
+        "components": row.components,
+        "largest_component_coverage": row.largest_component_coverage,
+        "orphans": row.orphans,
+        "percent_zero_inbound": row.percent_zero_inbound,
+        "percent_zero_outbound": row.percent_zero_outbound,
+        "broken_links_and_problems": row.broken_links_and_problems,
+        "top_central_concept": row.top_central_concept,
+        "articulation_point_count": row.articulation_point_count,
+    }
 
 
 @cli.command("stable-id")

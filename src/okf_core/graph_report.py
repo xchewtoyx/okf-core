@@ -19,14 +19,18 @@ Policy (also on :func:`render_graph_report` and :func:`render_graph_json`):
 - ``graph.json`` is a portable envelope of model + analysis only: no
   provenance, timestamps, ``output_dir``, or ``bundle_root``.
 - :func:`write_bundle_graph_artifacts` only joins ``<output>/<slug>/`` and
-  writes the two filenames. It does not guard bundle directories, fleeting
-  paths, or gitignore (those are a later stage).
+  writes the two filenames after rejecting ``.`` / ``..`` and requiring the
+  resolved destination to be a strict descendant of ``output_dir``. It does
+  not guard bundle directories, fleeting paths, or gitignore (those live on
+  :mod:`okf_core.graph_report_run`).
+- :func:`render_graph_summary` is a pure Markdown renderer for the
+  cross-bundle ``SUMMARY.md`` rollup. It does not merge graphs.
 """
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, TypeGuard
@@ -46,6 +50,25 @@ from okf_core.markdown_engine import render_inline_children, text_children
 
 _REPORT_FILENAME = "GRAPH_REPORT.md"
 _GRAPH_JSON_FILENAME = "graph.json"
+_SUMMARY_TABLE_HEADERS = (
+    "Bundle",
+    "Concepts",
+    "Unique links",
+    "Components",
+    "Largest-component coverage",
+    "Orphans",
+    "%zero-inbound",
+    "%zero-outbound",
+    "Broken links/problems",
+    "Top central concept",
+    "Articulation-point count",
+)
+_ATTENTION_SIGNALS = (
+    ("components", "Most components"),
+    ("orphans", "Most orphans"),
+    ("broken_links_and_problems", "Most broken links and problems"),
+    ("articulation_point_count", "Most articulation points"),
+)
 _EDGE_POLICY = (
     "directed unique-edge; self-links + unlisted-endpoint off unique edges; "
     "fragments not recovered; WCC/AP on undirected unique-edge projection"
@@ -78,6 +101,30 @@ class BundleGraphArtifactPaths:
 
     report_path: Path
     graph_json_path: Path
+
+
+@dataclass(frozen=True)
+class GraphSummaryRow:
+    """One selected bundle's headline stats for ``SUMMARY.md``.
+
+    Coverage is ``largest_component_size / concept_count`` (``0.0`` when
+    empty). Percent columns are ``100 * count / concept_count`` (``0.0``
+    when empty). ``broken_links_and_problems`` is the sum of model
+    ``broken_links`` and ``problems``. ``top_central_concept`` is the first
+    PageRank ranking id, or ``""`` when the model is empty.
+    """
+
+    bundle: str
+    concepts: int
+    unique_links: int
+    components: int
+    largest_component_coverage: float
+    orphans: int
+    percent_zero_inbound: float
+    percent_zero_outbound: float
+    broken_links_and_problems: int
+    top_central_concept: str
+    articulation_point_count: int
 
 
 def render_graph_report(
@@ -183,10 +230,13 @@ def write_bundle_graph_artifacts(
 ) -> BundleGraphArtifactPaths:
     """Write ``GRAPH_REPORT.md`` and ``graph.json`` under ``<output>/<slug>/``.
 
-    Creates parent directories. Writes UTF-8. Rejects an empty slug or a
-    slug containing ``/`` or ``\\``. ``output_dir`` must be a
-    :class:`~pathlib.Path`. This function does not interpret the strings
-    and does not apply bundle-directory or gitignore guards.
+    Creates parent directories. Writes UTF-8. Rejects an empty slug, ``.``,
+    ``..``, or a slug containing ``/`` or ``\\``. After joining
+    ``output_dir / slug``, both paths are ``resolve()``'d and the
+    destination must be a strict descendant of ``output_dir``.
+    ``output_dir`` must be a :class:`~pathlib.Path`. This function does
+    not interpret the strings and does not apply bundle-directory or
+    gitignore guards.
     """
 
     root = _require_output_dir(output_dir)
@@ -194,6 +244,7 @@ def write_bundle_graph_artifacts(
     markdown = _require_artifact_text(report_markdown, "report_markdown")
     payload = _require_artifact_text(graph_json, "graph_json")
     dest = root / slug
+    _require_dest_is_strict_descendant(dest, root)
     dest.mkdir(parents=True, exist_ok=True)
     report_path = dest / _REPORT_FILENAME
     graph_json_path = dest / _GRAPH_JSON_FILENAME
@@ -202,6 +253,46 @@ def write_bundle_graph_artifacts(
     return BundleGraphArtifactPaths(
         report_path=report_path, graph_json_path=graph_json_path
     )
+
+
+def render_graph_summary(
+    rows: Sequence[GraphSummaryRow],
+    *,
+    provenance: GraphReportProvenance,
+    configured_bundle_names: Sequence[str],
+) -> str:
+    """Render the cross-bundle ``SUMMARY.md`` body.
+
+    ``rows`` are already slug-asc. The table covers those rows only; a
+    subset note is emitted when their bundle names differ from
+    ``configured_bundle_names`` (both compared slug-asc). The optional
+    Attention section ranks selected rows by each raw signal independently
+    (``(-value, slug)``) and omits a group when every selected value is
+    ``0``. There is no composite score. Cell text is literal inline Markdown
+    with ``|`` escaped as ``\\|``. The renderer emits no Markdown links and
+    performs no I/O.
+
+    Raises :class:`GraphReportError` if ``rows`` is not a sequence of
+    :class:`GraphSummaryRow`, ``provenance`` is not a
+    :class:`GraphReportProvenance`, or ``configured_bundle_names`` is not a
+    sequence of ``str``.
+    """
+
+    typed_rows = _require_summary_rows(rows)
+    typed_provenance = _require_provenance(provenance)
+    configured = _require_bundle_names(configured_bundle_names)
+    sections = [
+        "# Graph report summary",
+        _render_summary_provenance(typed_provenance),
+    ]
+    subset_note = _render_subset_note(typed_rows, configured)
+    if subset_note is not None:
+        sections.append(subset_note)
+    sections.append(_render_summary_table(typed_rows))
+    attention = _render_attention(typed_rows)
+    if attention is not None:
+        sections.append(attention)
+    return "\n\n".join(sections) + "\n"
 
 
 def _require_report_inputs(
@@ -253,9 +344,41 @@ def _require_output_dir(output_dir: object) -> Path:
 def _require_bundle_slug(bundle_slug: object) -> str:
     if not _is_str(bundle_slug) or not bundle_slug:
         raise GraphReportError("bundle_slug must be a non-empty string")
+    if bundle_slug in {".", ".."}:
+        raise GraphReportError("bundle_slug must not be '.' or '..'")
     if "/" in bundle_slug or "\\" in bundle_slug:
         raise GraphReportError("bundle_slug must not contain a path separator")
     return bundle_slug
+
+
+def _require_dest_is_strict_descendant(dest: Path, output_dir: Path) -> None:
+    resolved_dest = dest.resolve()
+    resolved_output = output_dir.resolve()
+    if resolved_dest == resolved_output or not resolved_dest.is_relative_to(
+        resolved_output
+    ):
+        raise GraphReportError(
+            f"bundle destination {resolved_dest} is not a strict descendant of "
+            f"output_dir {resolved_output}"
+        )
+
+
+def _require_summary_rows(rows: object) -> tuple[GraphSummaryRow, ...]:
+    if isinstance(rows, (str, bytes)) or not isinstance(rows, Sequence):
+        raise GraphReportError("rows must be a sequence of GraphSummaryRow")
+    typed = tuple(rows)
+    if not all(isinstance(row, GraphSummaryRow) for row in typed):
+        raise GraphReportError("rows must be a sequence of GraphSummaryRow")
+    return typed
+
+
+def _require_bundle_names(names: object) -> tuple[str, ...]:
+    if isinstance(names, (str, bytes)) or not isinstance(names, Sequence):
+        raise GraphReportError("configured_bundle_names must be a sequence of str")
+    typed = tuple(names)
+    if not all(_is_str(name) for name in typed):
+        raise GraphReportError("configured_bundle_names must be a sequence of str")
+    return typed
 
 
 def _require_artifact_text(value: object, name: str) -> str:
@@ -270,6 +393,10 @@ def _is_str(value: object) -> TypeGuard[str]:
 
 def _inline(text: str) -> str:
     return render_inline_children(text_children(text))
+
+
+def _table_cell(text: str) -> str:
+    return _inline(text).replace("|", r"\|")
 
 
 def _nodes_by_id(model: NormalizedBundleGraph) -> dict[str, GraphModelNode]:
@@ -648,3 +775,79 @@ def _format_inspection(heading: str, prose: str, command: str) -> str:
 
 def _render_communities_placeholder() -> str:
     return "## Communities\n\nCommunity analysis is deferred until CCP-260."
+
+
+def _render_summary_provenance(provenance: GraphReportProvenance) -> str:
+    lines = [
+        f"- Generated at: {_inline(provenance.generated_at)}",
+        f"- OKF version: {_inline(provenance.okf_version)}",
+    ]
+    if provenance.git_revision is not None:
+        lines.append(f"- Git revision: {_inline(provenance.git_revision)}")
+    return "\n".join(lines)
+
+
+def _render_subset_note(
+    rows: tuple[GraphSummaryRow, ...], configured: tuple[str, ...]
+) -> str | None:
+    selected = tuple(sorted(row.bundle for row in rows))
+    configured_sorted = tuple(sorted(configured))
+    if selected == configured_sorted:
+        return None
+    return (
+        "This summary covers a selected subset of configured bundles: "
+        f"{_inline(', '.join(selected))}. Configured bundles: "
+        f"{_inline(', '.join(configured_sorted))}."
+    )
+
+
+def _render_summary_table(rows: tuple[GraphSummaryRow, ...]) -> str:
+    header = (
+        "| " + " | ".join(_table_cell(name) for name in _SUMMARY_TABLE_HEADERS) + " |"
+    )
+    separator = "| " + " | ".join("---" for _ in _SUMMARY_TABLE_HEADERS) + " |"
+    body = [_summary_table_row(row) for row in rows]
+    return "\n".join([header, separator, *body])
+
+
+def _summary_table_row(row: GraphSummaryRow) -> str:
+    cells = (
+        row.bundle,
+        str(row.concepts),
+        str(row.unique_links),
+        str(row.components),
+        _float(row.largest_component_coverage),
+        str(row.orphans),
+        _float(row.percent_zero_inbound),
+        _float(row.percent_zero_outbound),
+        str(row.broken_links_and_problems),
+        row.top_central_concept,
+        str(row.articulation_point_count),
+    )
+    return "| " + " | ".join(_table_cell(cell) for cell in cells) + " |"
+
+
+def _render_attention(rows: tuple[GraphSummaryRow, ...]) -> str | None:
+    groups: list[str] = []
+    for field, heading in _ATTENTION_SIGNALS:
+        group, _problem = _attention_group(rows, field, heading)
+        if group is not None:
+            groups.append(group)
+    if not groups:
+        return None
+    return "## Attention\n\n" + "\n\n".join(groups)
+
+
+def _attention_group(
+    rows: tuple[GraphSummaryRow, ...], field: str, heading: str
+) -> tuple[str | None, None]:
+    ranked = sorted(
+        ((getattr(row, field), row.bundle) for row in rows),
+        key=lambda item: (-item[0], item[1]),
+    )
+    if not ranked or all(value == 0 for value, _slug in ranked):
+        return None, None
+    lines = [f"### {heading}", ""]
+    for index, (value, slug) in enumerate(ranked, start=1):
+        lines.append(f"{index}. {_inline(slug)} — {value}")
+    return "\n".join(lines), None
