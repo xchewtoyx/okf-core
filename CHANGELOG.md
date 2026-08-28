@@ -8,9 +8,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`okf graph-report` / `run_graph_report` / `render_graph_summary`**: first-class CLI and library orchestrator that writes per-bundle `GRAPH_REPORT.md` / `graph.json` plus a selected-only cross-bundle `SUMMARY.md` rollup under a guarded output tree (default `wiki-graph-out/`), so maintenance stats can be generated without writing into bundle roots or `fleeting/` (#231).
 - **`render_graph_report` / `render_graph_json` / `write_bundle_graph_artifacts`**: render a byte-stable per-bundle `GRAPH_REPORT.md` (volatile provenance injected by the caller) and a portable `graph.json` envelope from a `NormalizedBundleGraph` plus `BundleGraphAnalysis`, then write them under `<output>/<slug>/`, so later CLI/output-tree stages can emit Graphify-style artifacts without growing the analysis or model modules (#229).
 - **`analyze_normalized_graph`**: stdlib-only structural snapshot (`BundleGraphAnalysis`) over a `NormalizedBundleGraph` — unique-edge density and degree stats, weakly connected components, linear-time articulation points, OKF PageRank/inbound rankings, and orphan/zero-degree diagnostic lists — so later report stages can consume deterministic analysis without NetworkX or recomputing OKF PageRank (#227).
 - **`normalize_bundle_graph` / `acquire_normalized_graph`**: in-process composition of a `BundleGraph` and graph-annotated `BundleListing` into a portable unique-edge `NormalizedBundleGraph` (#225). Later report stages consume this library model instead of re-parsing concept bodies or shelling out to the `okf` CLI; disagreement between the two OKF fact sources, escaped-root node/problem/source paths, and wrong payload types raise `GraphModelError`. A broken or excluded target that resolves outside the bundle is kept as a portable relative path.
+
+### Fixed
+
+- **`apply_graph_report_output_file` / `run_graph_report` path-escape**: every graph-report write and stale unlink goes through one helper that `resolve()`s the final file path and refuses unless it is a strict descendant of `output_dir` and not equal to or inside a forbidden root, so a leftover `SUMMARY.md` or `<slug>/GRAPH_REPORT.md` symlink into a bundle cannot overwrite authoring files; the SUMMARY subset note is driven from the requested selection so a failed bundle is reported as omitted rather than as a user-requested subset (#231).
 
 ## [0.5.1] - 2026-08-19
 

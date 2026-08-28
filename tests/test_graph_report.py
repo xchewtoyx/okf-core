@@ -16,11 +16,14 @@ from okf_core import (
     GraphModelProblem,
     GraphReportError,
     GraphReportProvenance,
+    GraphSummaryRow,
     NormalizedBundleGraph,
     analyze_normalized_graph,
+    apply_graph_report_output_file,
     graph_report_payload,
     render_graph_json,
     render_graph_report,
+    render_graph_summary,
     write_bundle_graph_artifacts,
 )
 from okf_core.markdown_engine import MARKDOWN
@@ -367,6 +370,140 @@ def test_invalid_slug_raises_graph_report_error(tmp_path: Path, slug: str) -> No
         )
 
 
+@pytest.mark.parametrize("slug", [".", ".."], ids=["dot", "dotdot"])
+def test_dot_and_dotdot_slugs_are_rejected(tmp_path: Path, slug: str) -> None:
+    with pytest.raises(GraphReportError, match=r"'\.' or '\.\.'"):
+        write_bundle_graph_artifacts(
+            tmp_path, slug, report_markdown="#\n", graph_json="{}\n"
+        )
+
+
+def test_writer_rejects_dest_that_is_not_a_strict_descendant(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "escape").symlink_to(tmp_path)
+
+    with pytest.raises(GraphReportError, match="strict descendant"):
+        write_bundle_graph_artifacts(
+            output, "escape", report_markdown="#\n", graph_json="{}\n"
+        )
+
+
+def test_apply_refuses_leftover_summary_symlink_into_bundle(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    bundle_file = tmp_path / "docs" / "alpha.md"
+    bundle_file.parent.mkdir(parents=True)
+    bundle_file.write_text("keep bundle\n", encoding="utf-8")
+    output.mkdir()
+    (output / "SUMMARY.md").symlink_to(bundle_file)
+
+    with pytest.raises(GraphReportError, match="strict descendant|forbidden"):
+        apply_graph_report_output_file(
+            output / "SUMMARY.md",
+            output_dir=output,
+            forbidden_roots=(tmp_path / "docs",),
+            text="# new summary\n",
+        )
+
+    assert bundle_file.read_text(encoding="utf-8") == "keep bundle\n"
+    assert (output / "SUMMARY.md").is_symlink()
+
+
+def test_writer_refuses_leftover_report_symlink_into_bundle(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    bundle_file = tmp_path / "docs" / "alpha.md"
+    bundle_file.parent.mkdir(parents=True)
+    bundle_file.write_text("keep bundle\n", encoding="utf-8")
+    dest = output / "docs"
+    dest.mkdir(parents=True)
+    (dest / "GRAPH_REPORT.md").symlink_to(bundle_file)
+
+    with pytest.raises(GraphReportError, match="strict descendant|forbidden"):
+        write_bundle_graph_artifacts(
+            output,
+            "docs",
+            report_markdown="# Graph report\n",
+            graph_json="{}\n",
+            forbidden_roots=(tmp_path / "docs",),
+        )
+
+    assert bundle_file.read_text(encoding="utf-8") == "keep bundle\n"
+    assert (dest / "GRAPH_REPORT.md").is_symlink()
+    assert not (dest / "graph.json").exists()
+
+
+def test_writer_refuses_slug_that_resolves_inside_forbidden_root(
+    tmp_path: Path,
+) -> None:
+    forbidden = tmp_path / "docs"
+    forbidden.mkdir()
+
+    with pytest.raises(GraphReportError, match="forbidden"):
+        write_bundle_graph_artifacts(
+            tmp_path,
+            "docs",
+            report_markdown="#\n",
+            graph_json="{}\n",
+            forbidden_roots=(forbidden,),
+        )
+
+    assert not (forbidden / "GRAPH_REPORT.md").exists()
+    assert not (forbidden / "graph.json").exists()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"text": "#\n", "unlink": True},
+        {},
+    ],
+    ids=["both", "neither"],
+)
+def test_apply_output_file_requires_exactly_one_action(
+    tmp_path: Path, kwargs: dict[str, object]
+) -> None:
+    with pytest.raises(GraphReportError, match="write and unlink|requires text"):
+        apply_graph_report_output_file(
+            tmp_path / "SUMMARY.md",
+            output_dir=tmp_path,
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+
+def test_apply_output_file_rejects_non_path(tmp_path: Path) -> None:
+    with pytest.raises(GraphReportError, match="path must be"):
+        apply_graph_report_output_file(
+            "SUMMARY.md",  # type: ignore[arg-type]
+            output_dir=tmp_path,
+            text="#\n",
+        )
+
+
+@pytest.mark.parametrize(
+    "forbidden_roots",
+    ["docs", None, ("docs", Path("/tmp"))],
+    ids=["string", "none", "mixed"],
+)
+def test_apply_output_file_rejects_non_path_forbidden_roots(
+    tmp_path: Path, forbidden_roots: object
+) -> None:
+    with pytest.raises(GraphReportError, match="forbidden_roots"):
+        apply_graph_report_output_file(
+            tmp_path / "SUMMARY.md",
+            output_dir=tmp_path,
+            forbidden_roots=forbidden_roots,  # type: ignore[arg-type]
+            text="#\n",
+        )
+
+
+def test_apply_output_file_unlink_missing_is_a_noop(tmp_path: Path) -> None:
+    missing = tmp_path / "SUMMARY.md"
+
+    apply_graph_report_output_file(missing, output_dir=tmp_path, unlink=True)
+
+    assert not missing.exists()
+
+
 @pytest.mark.parametrize(
     "output_dir",
     ["tmp", None, 1],
@@ -631,3 +768,201 @@ def _inspection_model(kind: str, *, present: bool) -> NormalizedBundleGraph:
         _node("dst", inbound=1, unique_in=1),
         edges=(_edge("src", "dst"),),
     )
+
+
+def _summary_row(
+    bundle: str,
+    *,
+    concepts: int = 1,
+    unique_links: int = 0,
+    components: int = 0,
+    largest_component_coverage: float = 0.0,
+    orphans: int = 0,
+    percent_zero_inbound: float = 0.0,
+    percent_zero_outbound: float = 0.0,
+    broken_links_and_problems: int = 0,
+    top_central_concept: str = "",
+    articulation_point_count: int = 0,
+) -> GraphSummaryRow:
+    return GraphSummaryRow(
+        bundle=bundle,
+        concepts=concepts,
+        unique_links=unique_links,
+        components=components,
+        largest_component_coverage=largest_component_coverage,
+        orphans=orphans,
+        percent_zero_inbound=percent_zero_inbound,
+        percent_zero_outbound=percent_zero_outbound,
+        broken_links_and_problems=broken_links_and_problems,
+        top_central_concept=top_central_concept,
+        articulation_point_count=articulation_point_count,
+    )
+
+
+def _render_summary(
+    rows: tuple[GraphSummaryRow, ...],
+    *,
+    configured: tuple[str, ...] | None = None,
+    selected: tuple[str, ...] | None = None,
+) -> str:
+    row_names = tuple(row.bundle for row in rows)
+    configured_names = configured if configured is not None else row_names
+    selected_names = selected if selected is not None else row_names
+    return render_graph_summary(
+        rows,
+        provenance=_FROZEN_PROVENANCE,
+        configured_bundle_names=configured_names,
+        selected_bundle_names=selected_names,
+    )
+
+
+def test_summary_table_preserves_slug_asc_row_order() -> None:
+    rendered = _render_summary(
+        (_summary_row("alpha"), _summary_row("beta"), _summary_row("gamma"))
+    )
+    table = rendered[rendered.index("| Bundle") : rendered.find("\n\n## ", 1)]
+    positions = [table.index(f"| {name} ") for name in ("alpha", "beta", "gamma")]
+    assert positions == sorted(positions)
+
+
+def test_summary_emits_subset_note_when_selected_names_differ() -> None:
+    rendered = _render_summary(
+        (_summary_row("alpha"), _summary_row("gamma")),
+        configured=("alpha", "beta", "gamma"),
+        selected=("alpha", "gamma"),
+    )
+    assert "selected subset of configured bundles: alpha, gamma" in rendered
+    assert "Configured bundles: alpha, beta, gamma" in rendered
+    assert "produced no row" not in rendered
+
+
+def test_summary_omits_subset_note_when_selected_matches_configured() -> None:
+    rendered = _render_summary(
+        (_summary_row("alpha"), _summary_row("beta")),
+        configured=("beta", "alpha"),
+        selected=("alpha", "beta"),
+    )
+    assert "selected subset" not in rendered
+
+
+def test_summary_subset_note_uses_requested_selection_not_rows() -> None:
+    rendered = _render_summary(
+        (_summary_row("alpha"),),
+        configured=("alpha", "beta", "gamma"),
+        selected=("alpha", "gamma"),
+    )
+    assert "selected subset of configured bundles: alpha, gamma" in rendered
+    assert "produced no row: gamma" in rendered
+
+
+def test_summary_all_selected_with_missing_row_is_not_a_subset() -> None:
+    rendered = _render_summary(
+        (_summary_row("alpha"),),
+        configured=("alpha", "beta"),
+        selected=("alpha", "beta"),
+    )
+    assert "selected subset" not in rendered
+    assert "produced no row: beta" in rendered
+
+
+def test_summary_empty_rows_does_not_claim_an_empty_subset() -> None:
+    rendered = _render_summary(
+        (),
+        configured=("alpha", "beta"),
+        selected=("alpha", "beta"),
+    )
+    assert "selected subset of configured bundles:" not in rendered
+    assert "produced no row: alpha, beta" in rendered
+
+
+def test_attention_ranks_each_signal_by_neg_value_then_slug() -> None:
+    rendered = _render_summary(
+        (
+            _summary_row("alpha", components=2, orphans=1, broken_links_and_problems=0),
+            _summary_row("beta", components=5, orphans=1, broken_links_and_problems=3),
+            _summary_row("gamma", components=5, orphans=4, broken_links_and_problems=3),
+        )
+    )
+    attention = rendered[rendered.index("## Attention") :]
+    components = attention[
+        attention.index("### Most components") : attention.index("### Most orphans")
+    ]
+    assert (
+        components.index("beta") < components.index("gamma") < components.index("alpha")
+    )
+    orphans = attention[
+        attention.index("### Most orphans") : attention.index(
+            "### Most broken links and problems"
+        )
+    ]
+    assert orphans.index("gamma") < orphans.index("alpha") < orphans.index("beta")
+
+
+def test_attention_omits_group_when_every_selected_value_is_zero() -> None:
+    rendered = _render_summary(
+        (
+            _summary_row("alpha", components=2, orphans=0, articulation_point_count=0),
+            _summary_row("beta", components=1, orphans=0, articulation_point_count=0),
+        )
+    )
+    assert "### Most components" in rendered
+    assert "### Most orphans" not in rendered
+    assert "### Most broken links and problems" not in rendered
+    assert "### Most articulation points" not in rendered
+
+
+def test_attention_section_omitted_when_every_signal_is_zero() -> None:
+    rendered = _render_summary((_summary_row("alpha"), _summary_row("beta")))
+    assert "## Attention" not in rendered
+
+
+def test_summary_cell_escapes_pipe_and_does_not_emit_markdown_links() -> None:
+    rendered = _render_summary(
+        (
+            _summary_row(
+                "docs",
+                top_central_concept="see [x](y.md) | more",
+            ),
+        )
+    )
+    assert r"\|" in rendered
+    assert "see [x](y.md)" not in rendered
+    tokens = MARKDOWN.parse(rendered)
+    assert not any(token.type == "link_open" for token in tokens)
+
+
+@pytest.mark.parametrize(
+    ("rows", "configured", "selected", "match"),
+    [
+        (None, ("docs",), ("docs",), "rows"),
+        ("docs", ("docs",), ("docs",), "rows"),
+        ((object(),), ("docs",), ("docs",), "rows"),
+        ((_summary_row("docs"),), None, ("docs",), "configured_bundle_names"),
+        ((_summary_row("docs"),), "docs", ("docs",), "configured_bundle_names"),
+        ((_summary_row("docs"),), (1,), ("docs",), "configured_bundle_names"),
+        ((_summary_row("docs"),), ("docs",), None, "selected_bundle_names"),
+        ((_summary_row("docs"),), ("docs",), "docs", "selected_bundle_names"),
+        ((_summary_row("docs"),), ("docs",), (1,), "selected_bundle_names"),
+    ],
+    ids=[
+        "rows-none",
+        "rows-str",
+        "rows-item",
+        "configured-none",
+        "configured-str",
+        "configured-item",
+        "selected-none",
+        "selected-str",
+        "selected-item",
+    ],
+)
+def test_render_graph_summary_rejects_wrong_input_types(
+    rows: object, configured: object, selected: object, match: str
+) -> None:
+    with pytest.raises(GraphReportError, match=match):
+        render_graph_summary(
+            rows,  # type: ignore[arg-type]
+            provenance=_FROZEN_PROVENANCE,
+            configured_bundle_names=configured,  # type: ignore[arg-type]
+            selected_bundle_names=selected,  # type: ignore[arg-type]
+        )

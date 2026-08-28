@@ -68,6 +68,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "orient" in result.stdout
     assert "move" in result.stdout
     assert "graph-repair" in result.stdout
+    assert "graph-report" in result.stdout
     assert "log-append" in result.stdout
     assert "source-add" in result.stdout
     assert "stamp-generated" in result.stdout
@@ -98,6 +99,15 @@ def test_index_help_exits_zero() -> None:
 
 def test_graph_help_exits_zero() -> None:
     assert _runner().invoke(cli, ["graph", "--help"]).exit_code == 0
+
+
+def test_graph_report_help_lists_flags() -> None:
+    result = _runner().invoke(cli, ["graph-report", "--help"])
+    assert result.exit_code == 0
+    assert "--config" in result.stdout
+    assert "--bundle" in result.stdout
+    assert "--output" in result.stdout
+    assert "--json" in result.stdout
 
 
 def test_context_help_documents_core_options() -> None:
@@ -1408,6 +1418,148 @@ def test_graph_consumes_future_version_bundle_best_effort(tmp_path: Path) -> Non
     data = json.loads(result.stdout)
     assert data["concepts"] == ["a", "b"]
     assert data["links"][0]["target_concept_id"] == "b"
+
+
+# ---------------------------------------------------------------------------
+# okf graph-report
+# ---------------------------------------------------------------------------
+
+
+def _write_two_bundle_graph_report_project(tmp_path: Path) -> Path:
+    docs = tmp_path / "docs"
+    notes = tmp_path / "notes"
+    _write_concept(docs / "alpha.md", title="Alpha")
+    _write_concept(notes / "beta.md", title="Beta")
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        '[bundles.docs]\nbundle_root = "docs"\n\n'
+        '[bundles.notes]\nbundle_root = "notes"\n',
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def test_graph_report_bundle_flag_is_repeatable(tmp_path: Path) -> None:
+    config_path = _write_two_bundle_graph_report_project(tmp_path)
+    output = tmp_path / "out"
+
+    result = _runner().invoke(
+        cli,
+        [
+            "graph-report",
+            "--config",
+            str(config_path),
+            "--bundle",
+            "notes",
+            "--bundle",
+            "docs",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert (output / "docs" / "GRAPH_REPORT.md").is_file()
+    assert (output / "notes" / "GRAPH_REPORT.md").is_file()
+    assert (output / "SUMMARY.md").is_file()
+    assert "2 bundle(s)" in result.stderr
+
+
+def test_graph_report_unknown_bundle_exits_2(tmp_path: Path) -> None:
+    config_path = _write_two_bundle_graph_report_project(tmp_path)
+
+    result = _runner().invoke(
+        cli,
+        [
+            "graph-report",
+            "--config",
+            str(config_path),
+            "--bundle",
+            "missing",
+            "--output",
+            str(tmp_path / "out"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "Unknown bundle" in result.stderr
+
+
+def test_graph_report_json_emits_run_result_not_graph_envelope(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_two_bundle_graph_report_project(tmp_path)
+    output = tmp_path / "out"
+
+    result = _runner().invoke(
+        cli,
+        [
+            "graph-report",
+            "--config",
+            str(config_path),
+            "--bundle",
+            "docs",
+            "--output",
+            str(output),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["is_subset"] is True
+    assert data["selected_bundle_names"] == ["docs"]
+    assert data["rows"][0]["bundle"] == "docs"
+    assert "written_paths" in data
+    assert "normalized_graph" not in data
+    assert "schema_version" not in data
+
+
+def test_graph_report_invalid_config_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text("this is not toml {", encoding="utf-8")
+
+    result = _runner().invoke(cli, ["graph-report", "--config", str(config_path)])
+
+    assert result.exit_code == 2
+    assert "Configuration error" in result.stderr
+
+
+def test_graph_report_output_at_bundle_dir_exits_2(tmp_path: Path) -> None:
+    config_path = _write_two_bundle_graph_report_project(tmp_path)
+
+    result = _runner().invoke(
+        cli,
+        [
+            "graph-report",
+            "--config",
+            str(config_path),
+            "--output",
+            str(tmp_path / "docs"),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "forbidden" in result.stderr
+
+
+def test_graph_report_output_at_project_root_exits_2(tmp_path: Path) -> None:
+    config_path = _write_two_bundle_graph_report_project(tmp_path)
+
+    result = _runner().invoke(
+        cli,
+        [
+            "graph-report",
+            "--config",
+            str(config_path),
+            "--output",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "forbidden" in result.stderr
+    assert not (tmp_path / "docs" / "GRAPH_REPORT.md").exists()
 
 
 # ---------------------------------------------------------------------------
