@@ -1,0 +1,39 @@
+{
+  "analysis": {
+    "articulation_points": [],
+    "bundle_name": "empty",
+    "components": {
+      "count": 0,
+      "other_memberships": [],
+      "sizes": []
+    },
+    "diagnostics": {
+      "orphans": [],
+      "zero_inbound": [],
+      "zero_outbound": []
+    },
+    "overview": {
+      "concept_count": 0,
+      "density": 0.0,
+      "link_instance_count": 0,
+      "mean_in_degree": 0.0,
+      "mean_out_degree": 0.0,
+      "median_in_degree": 0.0,
+      "median_out_degree": 0.0,
+      "reciprocal_edge_ratio": 0.0,
+      "unique_directed_edge_count": 0
+    },
+    "top_by_inbound": [],
+    "top_by_pagerank": []
+  },
+  "normalized_graph": {
+    "broken_links": [],
+    "bundle_name": "empty",
+    "edges": [],
+    "excluded_links": [],
+    "nodes": [],
+    "problems": [],
+    "self_links": []
+  },
+  "schema_version": 1
+}

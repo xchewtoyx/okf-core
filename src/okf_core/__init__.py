@@ -78,6 +78,15 @@ from okf_core.graph_model import (
     acquire_normalized_graph,
     normalize_bundle_graph,
 )
+from okf_core.graph_report import (
+    BundleGraphArtifactPaths,
+    GraphReportError,
+    GraphReportProvenance,
+    graph_report_payload,
+    render_graph_json,
+    render_graph_report,
+    write_bundle_graph_artifacts,
+)
 from okf_core.index import (
     GeneratedIndex,
     IndexEntry,
@@ -192,6 +201,7 @@ __all__ = [
     "BundleConfig",
     "BundleGraph",
     "BundleGraphAnalysis",
+    "BundleGraphArtifactPaths",
     "BundleListing",
     "BundleManifest",
     "BundleSearchResults",
@@ -230,6 +240,8 @@ __all__ = [
     "GraphModelSelfLink",
     "GraphOverview",
     "GraphProblem",
+    "GraphReportError",
+    "GraphReportProvenance",
     "IndexEntry",
     "IndexParseProblem",
     "IndexProblem",
@@ -284,6 +296,7 @@ __all__ = [
     "extract_markdown_links",
     "find_unlinked_mentions",
     "generate_index",
+    "graph_report_payload",
     "is_reserved_concept_path",
     "is_supported_okf_version",
     "link_suggestion_href",
@@ -319,6 +332,8 @@ __all__ = [
     "plan_stamp_stale_after",
     "plan_stamp_status",
     "plan_stamp_verified",
+    "render_graph_json",
+    "render_graph_report",
     "render_index_document",
     "render_log",
     "repair_graph",
@@ -334,4 +349,5 @@ __all__ = [
     "validate_bundle",
     "validate_concept_document",
     "validate_concept_document_with_profile",
+    "write_bundle_graph_artifacts",
 ]
