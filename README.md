@@ -278,13 +278,29 @@ Broken links do not make the command fail. Unknown bundles, unknown concept IDs,
 
 ### `okf graph-report`
 
-Writes per-bundle `GRAPH_REPORT.md` / `graph.json` artifacts and a cross-bundle `SUMMARY.md` maintenance rollup (not a merged graph):
+Writes generated graph diagnostics for each selected bundle and a selected-only `SUMMARY.md` rollup (not a merged graph):
 
 ```sh
 okf graph-report [--config PATH] [--bundle NAME]... [--output DIR] [--json]
 ```
 
-`--bundle` is repeatable and defaults to every configured bundle; an unknown name exits `2`. `--output` defaults to `wiki-graph-out/` at the project root and is resolved from the current working directory when given. The resolved output directory must not be equal to or inside any configured bundle root or `fleeting/`. Every file write and stale-artifact unlink resolves the final path and refuses unless it is a strict descendant of that output directory and not equal to or inside a forbidden root — so `--output` at the project root cannot write `docs/GRAPH_REPORT.md` into `[bundles.docs]`, and a leftover `SUMMARY.md` or `<slug>/GRAPH_REPORT.md` symlink into a bundle is refused rather than followed. When the default would land inside a `bundle_root = "."` project, pass `--output` outside those authoring surfaces. `SUMMARY.md` covers the selected bundles only (with a note when that is a requested subset; a selected bundle that produced no row is reported as omitted, not as a subset). `--json` prints a compact run-result (rows, written paths, subset flag) on stdout; without it, a one-line summary goes to stderr. Config, unknown-bundle, and path-guard failures exit `2`; model, analysis, or render failures exit `1`.
+`--bundle` is repeatable and defaults to every configured bundle; an unknown name exits `2`. `--output` defaults to `<project-root>/wiki-graph-out/` and is resolved from the current working directory when given. `--json` prints a compact run-result (rows, written paths, subset flag) on stdout; without it, a one-line summary goes to stderr. Config, unknown-bundle, and path-guard failures exit `2`; model, analysis, or render failures exit `1`. See `okf graph-report --help` for the flag list, and Graph Operations for `run_graph_report` / `render_graph_summary`.
+
+Default artifact tree (generated, gitignored as `wiki-graph-out/`):
+
+```
+wiki-graph-out/
+  SUMMARY.md
+  <slug>/
+    GRAPH_REPORT.md
+    graph.json
+```
+
+Read the signals as diagnostics, not quotas: orphans, zero-inbound/outbound, density, and centrality are inspection hints, not targets to hit. The report never creates or modifies wiki notes, never adds hub or index pages, never recommends synthetic links to hit density targets, never merges bundles into a cross-domain graph, and is not part of onboarding or curation success criteria.
+
+The resolved output directory must not be equal to or inside any configured bundle root or `fleeting/`. Every file write and stale-artifact unlink resolves the final path and refuses unless it is a strict descendant of that output directory and not equal to or inside a forbidden root — so `--output` at the project root cannot write `docs/GRAPH_REPORT.md` into `[bundles.docs]`, and a leftover `SUMMARY.md` or `<slug>/GRAPH_REPORT.md` symlink into a bundle is refused rather than followed. When the default would land inside a `bundle_root = "."` project, pass `--output` outside those authoring surfaces. `SUMMARY.md` covers the selected bundles only (with a note when that is a requested subset; a selected bundle that produced no row is reported as omitted, not as a subset).
+
+Deferred follow-ups (not in this command): shared metrics (CCP-268 / #138), community detection (CCP-260), HTML/SVG visualization, baseline-diff/CI-artifact publication.
 
 ### `okf stable-id`
 
@@ -810,7 +826,7 @@ for entry in pack.entries:
 
 `render_graph_report(model, analysis, *, provenance)` turns that pair into a `GRAPH_REPORT.md` body. Volatile fields live only in the Provenance section via a caller-injected `GraphReportProvenance` (`generated_at`, `okf_version`, optional `git_revision`, exact `source_commands`); the library does not run `git` or `okf`. The remaining sections — overview, health, high-centrality, bridges, suggested inspections, and a CCP-260 communities placeholder — are byte-stable for the same model and analysis. Concept IDs and titles are literal inline (never Markdown links); suggested inspections are one fenced `okf graph` / `okf context` command per observed condition. `graph_report_payload(model, analysis)` / `render_graph_json(model, analysis)` emit a portable `{schema_version, normalized_graph, analysis}` envelope with no provenance, timestamps, or writer paths. `apply_graph_report_output_file(path, *, output_dir, forbidden_roots=(), text=None, unlink=False)` is the one helper that writes or unlinks a graph-report artifact: it resolves the final file path and refuses unless that location is a strict descendant of `output_dir` and not equal to or inside a forbidden root, so a leftover symlink into a bundle cannot be followed. `write_bundle_graph_artifacts(output_dir, bundle_slug, *, report_markdown, graph_json, forbidden_roots=())` joins `<output>/<slug>/` and writes `GRAPH_REPORT.md` and `graph.json` through that helper. Wrong types, a bundle-name mismatch, a non-`Path` `output_dir`, a slug that is empty, `.`, `..`, or contains `/` or `\`, or a resolved path that is not a strict descendant of `output_dir` (or that lands in a forbidden root) raise `GraphReportError`.
 
-`render_graph_summary(rows, *, provenance, configured_bundle_names, selected_bundle_names)` renders the cross-bundle `SUMMARY.md` rollup from already-built `GraphSummaryRow` values (Markdown only; no I/O). The subset note compares the requested selection to the configured names; a selected bundle missing from `rows` is reported as omitted, not as a user-requested subset. `run_graph_report(config, *, bundle_names=None, output_dir=None, provenance=None)` is the library orchestrator behind `okf graph-report`: it guards the output directory, then cleans stale artifacts and writes `SUMMARY.md` / per-bundle files through `apply_graph_report_output_file` so leftover symlinks into a bundle are refused, reports each selected bundle, and writes `SUMMARY.md` from selected rows only.
+`render_graph_summary(rows, *, provenance, configured_bundle_names, selected_bundle_names)` renders the cross-bundle `SUMMARY.md` rollup from already-built `GraphSummaryRow` values (Markdown only; no I/O). The subset note compares the requested selection to the configured names; a selected bundle missing from `rows` is reported as omitted, not as a user-requested subset. `run_graph_report(config, *, bundle_names=None, output_dir=None, provenance=None)` is the library orchestrator behind `okf graph-report`: it guards the output directory, then cleans stale artifacts and writes `SUMMARY.md` / per-bundle files through `apply_graph_report_output_file` so leftover symlinks into a bundle are refused, reports each selected bundle, and writes `SUMMARY.md` from selected rows only. Like the CLI, `run_graph_report` / `render_graph_summary` emit generated diagnostics only — they never write wiki notes and never merge bundles.
 
 Internal OKF concept links resolve according to OKF v0.2 rules:
 

@@ -59,7 +59,7 @@ To discover more advanced capabilities, commands, and options:
   okf <command> --help
   ```
 - **Detailed Reference**: Check the bundle's `README.md` for full command specifications and Python library APIs (e.g. `plan_markdown_link_rewrite`, `plan_markdown_section_patch`, `plan_markdown_section_append`, `move_concept`, `plan_graph_repair`, `apply_link_suggestions`, `normalize_bundle_graph`, `acquire_normalized_graph`, `analyze_normalized_graph`, `render_graph_report`, `render_graph_json`, `write_bundle_graph_artifacts`, `run_graph_report`, `render_graph_summary`, `log_concept_move`, `log_append`, `source_upsert`, `stamp_generated`, `stamp_verified`, `stamp_status`, `stamp_stale_after`).
-- **Graph reports**: Run `okf graph-report --help` to generate per-bundle `GRAPH_REPORT.md` / `graph.json` files and a selected-only `SUMMARY.md` rollup.
+- **Graph reports**: `okf graph-report [--bundle NAME]... [--output DIR] [--json]` writes generated diagnostics (not wiki notes) under `wiki-graph-out/` by default (`SUMMARY.md`, `<slug>/GRAPH_REPORT.md`, `graph.json`). See `okf graph-report --help` and the README `okf graph-report` section for flags and scope.
 - **Link Maintenance**: Run `okf unlinked-mentions --help` to discover options for finding concept-title mentions that are not yet linked, and for writing selected suggestions back as Markdown links with `--apply`.
 - **Orientation Guide**: Run `okf orient` to print this onboarding guide.
 """

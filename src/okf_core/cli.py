@@ -855,7 +855,8 @@ def graph_cmd(
     default=None,
     metavar="DIR",
     help=(
-        "Output directory (default: <project-root>/wiki-graph-out). "
+        "Output directory (default: <project-root>/wiki-graph-out, gitignored). "
+        "Writes SUMMARY.md plus <slug>/GRAPH_REPORT.md and graph.json. "
         "A relative path is resolved from the current working directory."
     ),
 )
@@ -871,15 +872,19 @@ def graph_report_cmd(
     output_dir: str | None,
     as_json: bool,
 ) -> None:
-    """Write per-bundle graph reports and a selected-only SUMMARY.md rollup.
+    """Write generated graph diagnostics and a selected-only SUMMARY.md rollup.
 
-    Acquires, analyzes, and renders each selected bundle, then writes
-    GRAPH_REPORT.md and graph.json under <output>/<slug>/ plus SUMMARY.md
-    at the output root. Every write and unlink resolves the final file
-    path and refuses unless it is a strict descendant of the output
-    directory and not equal to or inside a configured bundle root or
-    fleeting/. A leftover SUMMARY.md or <slug>/GRAPH_REPORT.md symlink
-    into a bundle is therefore refused rather than followed.
+    Default output is the gitignored <project-root>/wiki-graph-out/ tree:
+    SUMMARY.md plus <slug>/GRAPH_REPORT.md and graph.json. Signals are
+    diagnostics, not quotas. Never writes wiki notes and never merges
+    bundles; the README graph-report section lists the full guardrails
+    and deferred follow-ups.
+
+    Every write and unlink resolves the final file path and refuses unless
+    it is a strict descendant of the output directory and not equal to or
+    inside a configured bundle root or fleeting/. A leftover SUMMARY.md or
+    <slug>/GRAPH_REPORT.md symlink into a bundle is therefore refused
+    rather than followed.
     """
     try:
         cfg = load_config(config_path=config_path)

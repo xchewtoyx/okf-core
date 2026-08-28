@@ -108,6 +108,12 @@ def test_graph_report_help_lists_flags() -> None:
     assert "--bundle" in result.stdout
     assert "--output" in result.stdout
     assert "--json" in result.stdout
+    assert "wiki-graph-out" in result.stdout
+    assert "SUMMARY.md" in result.stdout
+    assert "GRAPH_REPORT.md" in result.stdout
+    assert "graph.json" in result.stdout
+    assert "diagnostics, not quotas" in result.stdout
+    assert "Never writes wiki notes and never merges bundles" in result.stdout
 
 
 def test_context_help_documents_core_options() -> None:
@@ -4188,3 +4194,13 @@ def test_cli_orient_prints_guidance() -> None:
     assert "okf list-concepts" in result.stdout
     assert "okf --help" in result.stdout
     assert "okf unlinked-mentions --help" in result.stdout
+    assert "--bundle" in result.stdout
+    assert "--output" in result.stdout
+    assert "--json" in result.stdout
+    assert "wiki-graph-out" in result.stdout
+    assert "SUMMARY.md" in result.stdout
+    assert "GRAPH_REPORT.md" in result.stdout
+    assert "graph.json" in result.stdout
+    assert "generated diagnostics" in result.stdout
+    assert "not wiki notes" in result.stdout
+    assert "okf graph-report --help" in result.stdout
