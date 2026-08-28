@@ -875,9 +875,11 @@ def graph_report_cmd(
 
     Acquires, analyzes, and renders each selected bundle, then writes
     GRAPH_REPORT.md and graph.json under <output>/<slug>/ plus SUMMARY.md
-    at the output root. The output directory, and each <output>/<slug>/
-    write destination, must not be equal to or inside a configured bundle
-    root or fleeting/.
+    at the output root. Every write and unlink resolves the final file
+    path and refuses unless it is a strict descendant of the output
+    directory and not equal to or inside a configured bundle root or
+    fleeting/. A leftover SUMMARY.md or <slug>/GRAPH_REPORT.md symlink
+    into a bundle is therefore refused rather than followed.
     """
     try:
         cfg = load_config(config_path=config_path)

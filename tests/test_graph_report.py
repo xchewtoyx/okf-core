@@ -19,6 +19,7 @@ from okf_core import (
     GraphSummaryRow,
     NormalizedBundleGraph,
     analyze_normalized_graph,
+    apply_graph_report_output_file,
     graph_report_payload,
     render_graph_json,
     render_graph_report,
@@ -386,6 +387,121 @@ def test_writer_rejects_dest_that_is_not_a_strict_descendant(tmp_path: Path) -> 
         write_bundle_graph_artifacts(
             output, "escape", report_markdown="#\n", graph_json="{}\n"
         )
+
+
+def test_apply_refuses_leftover_summary_symlink_into_bundle(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    bundle_file = tmp_path / "docs" / "alpha.md"
+    bundle_file.parent.mkdir(parents=True)
+    bundle_file.write_text("keep bundle\n", encoding="utf-8")
+    output.mkdir()
+    (output / "SUMMARY.md").symlink_to(bundle_file)
+
+    with pytest.raises(GraphReportError, match="strict descendant|forbidden"):
+        apply_graph_report_output_file(
+            output / "SUMMARY.md",
+            output_dir=output,
+            forbidden_roots=(tmp_path / "docs",),
+            text="# new summary\n",
+        )
+
+    assert bundle_file.read_text(encoding="utf-8") == "keep bundle\n"
+    assert (output / "SUMMARY.md").is_symlink()
+
+
+def test_writer_refuses_leftover_report_symlink_into_bundle(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    bundle_file = tmp_path / "docs" / "alpha.md"
+    bundle_file.parent.mkdir(parents=True)
+    bundle_file.write_text("keep bundle\n", encoding="utf-8")
+    dest = output / "docs"
+    dest.mkdir(parents=True)
+    (dest / "GRAPH_REPORT.md").symlink_to(bundle_file)
+
+    with pytest.raises(GraphReportError, match="strict descendant|forbidden"):
+        write_bundle_graph_artifacts(
+            output,
+            "docs",
+            report_markdown="# Graph report\n",
+            graph_json="{}\n",
+            forbidden_roots=(tmp_path / "docs",),
+        )
+
+    assert bundle_file.read_text(encoding="utf-8") == "keep bundle\n"
+    assert (dest / "GRAPH_REPORT.md").is_symlink()
+    assert not (dest / "graph.json").exists()
+
+
+def test_writer_refuses_slug_that_resolves_inside_forbidden_root(
+    tmp_path: Path,
+) -> None:
+    forbidden = tmp_path / "docs"
+    forbidden.mkdir()
+
+    with pytest.raises(GraphReportError, match="forbidden"):
+        write_bundle_graph_artifacts(
+            tmp_path,
+            "docs",
+            report_markdown="#\n",
+            graph_json="{}\n",
+            forbidden_roots=(forbidden,),
+        )
+
+    assert not (forbidden / "GRAPH_REPORT.md").exists()
+    assert not (forbidden / "graph.json").exists()
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"text": "#\n", "unlink": True},
+        {},
+    ],
+    ids=["both", "neither"],
+)
+def test_apply_output_file_requires_exactly_one_action(
+    tmp_path: Path, kwargs: dict[str, object]
+) -> None:
+    with pytest.raises(GraphReportError, match="write and unlink|requires text"):
+        apply_graph_report_output_file(
+            tmp_path / "SUMMARY.md",
+            output_dir=tmp_path,
+            **kwargs,  # type: ignore[arg-type]
+        )
+
+
+def test_apply_output_file_rejects_non_path(tmp_path: Path) -> None:
+    with pytest.raises(GraphReportError, match="path must be"):
+        apply_graph_report_output_file(
+            "SUMMARY.md",  # type: ignore[arg-type]
+            output_dir=tmp_path,
+            text="#\n",
+        )
+
+
+@pytest.mark.parametrize(
+    "forbidden_roots",
+    ["docs", None, ("docs", Path("/tmp"))],
+    ids=["string", "none", "mixed"],
+)
+def test_apply_output_file_rejects_non_path_forbidden_roots(
+    tmp_path: Path, forbidden_roots: object
+) -> None:
+    with pytest.raises(GraphReportError, match="forbidden_roots"):
+        apply_graph_report_output_file(
+            tmp_path / "SUMMARY.md",
+            output_dir=tmp_path,
+            forbidden_roots=forbidden_roots,  # type: ignore[arg-type]
+            text="#\n",
+        )
+
+
+def test_apply_output_file_unlink_missing_is_a_noop(tmp_path: Path) -> None:
+    missing = tmp_path / "SUMMARY.md"
+
+    apply_graph_report_output_file(missing, output_dir=tmp_path, unlink=True)
+
+    assert not missing.exists()
 
 
 @pytest.mark.parametrize(

@@ -1558,7 +1558,7 @@ def test_graph_report_output_at_project_root_exits_2(tmp_path: Path) -> None:
     )
 
     assert result.exit_code == 2
-    assert "write destination" in result.stderr
+    assert "forbidden" in result.stderr
     assert not (tmp_path / "docs" / "GRAPH_REPORT.md").exists()
 
 

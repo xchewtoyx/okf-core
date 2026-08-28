@@ -18,11 +18,13 @@ Policy (also on :func:`render_graph_report` and :func:`render_graph_json`):
 - Floats in the Markdown body always use ``format(x, ".6f")``.
 - ``graph.json`` is a portable envelope of model + analysis only: no
   provenance, timestamps, ``output_dir``, or ``bundle_root``.
-- :func:`write_bundle_graph_artifacts` only joins ``<output>/<slug>/`` and
-  writes the two filenames after rejecting ``.`` / ``..`` and requiring the
-  resolved destination to be a strict descendant of ``output_dir``. It does
-  not guard bundle directories, fleeting paths, or gitignore (those live on
-  :mod:`okf_core.graph_report_run`).
+- :func:`apply_graph_report_output_file` is the one helper that writes or
+  unlinks a graph-report artifact. It ``resolve()``s the final file path
+  and refuses unless that location is a strict descendant of
+  ``output_dir`` and not equal to or inside a forbidden root, so a leftover
+  symlink into a bundle cannot be followed.
+- :func:`write_bundle_graph_artifacts` joins ``<output>/<slug>/`` and writes
+  the two filenames through that helper after rejecting ``.`` / ``..``.
 - :func:`render_graph_summary` is a pure Markdown renderer for the
   cross-bundle ``SUMMARY.md`` rollup. It does not merge graphs.
 """
@@ -221,22 +223,58 @@ def render_graph_json(
     )
 
 
+def apply_graph_report_output_file(
+    path: Path,
+    *,
+    output_dir: Path,
+    forbidden_roots: Sequence[Path] = (),
+    text: str | None = None,
+    unlink: bool = False,
+) -> Path:
+    """Write or unlink one graph-report artifact after resolving it.
+
+    ``path.resolve()`` is the location that must be a strict descendant of
+    ``output_dir`` and must not be equal to or inside any forbidden root.
+    A leftover symlink whose target is a bundle file is therefore refused
+    before ``write_text`` or ``unlink`` can follow it.
+
+    Pass ``text`` to write UTF-8, or ``unlink=True`` to delete. Exactly one
+    of those is required. A missing unlink target is a no-op. Raises
+    :class:`GraphReportError` when the resolved location is not allowed.
+    """
+
+    if unlink and text is not None:
+        raise GraphReportError("cannot write and unlink the same path")
+    if not unlink and text is None:
+        raise GraphReportError("apply_graph_report_output_file requires text or unlink")
+    if not isinstance(path, Path):
+        raise GraphReportError("path must be a pathlib.Path")
+    if unlink and not path.is_symlink() and not path.exists():
+        return path
+    resolved = _require_safe_output_file_path(path, output_dir, forbidden_roots)
+    if unlink:
+        path.unlink()
+        return resolved
+    assert text is not None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
 def write_bundle_graph_artifacts(
     output_dir: Path,
     bundle_slug: str,
     *,
     report_markdown: str,
     graph_json: str,
+    forbidden_roots: Sequence[Path] = (),
 ) -> BundleGraphArtifactPaths:
     """Write ``GRAPH_REPORT.md`` and ``graph.json`` under ``<output>/<slug>/``.
 
-    Creates parent directories. Writes UTF-8. Rejects an empty slug, ``.``,
-    ``..``, or a slug containing ``/`` or ``\\``. After joining
-    ``output_dir / slug``, both paths are ``resolve()``'d and the
-    destination must be a strict descendant of ``output_dir``.
-    ``output_dir`` must be a :class:`~pathlib.Path`. This function does
-    not interpret the strings and does not apply bundle-directory or
-    gitignore guards.
+    Creates parent directories. Writes UTF-8 through
+    :func:`apply_graph_report_output_file`. Rejects an empty slug, ``.``,
+    ``..``, or a slug containing ``/`` or ``\\``. ``output_dir`` must be a
+    :class:`~pathlib.Path`.
     """
 
     root = _require_output_dir(output_dir)
@@ -244,12 +282,14 @@ def write_bundle_graph_artifacts(
     markdown = _require_artifact_text(report_markdown, "report_markdown")
     payload = _require_artifact_text(graph_json, "graph_json")
     dest = root / slug
-    _require_dest_is_strict_descendant(dest, root)
-    dest.mkdir(parents=True, exist_ok=True)
     report_path = dest / _REPORT_FILENAME
     graph_json_path = dest / _GRAPH_JSON_FILENAME
-    report_path.write_text(markdown, encoding="utf-8")
-    graph_json_path.write_text(payload, encoding="utf-8")
+    apply_graph_report_output_file(
+        report_path, output_dir=root, forbidden_roots=forbidden_roots, text=markdown
+    )
+    apply_graph_report_output_file(
+        graph_json_path, output_dir=root, forbidden_roots=forbidden_roots, text=payload
+    )
     return BundleGraphArtifactPaths(
         report_path=report_path, graph_json_path=graph_json_path
     )
@@ -362,16 +402,37 @@ def _require_bundle_slug(bundle_slug: object) -> str:
     return bundle_slug
 
 
-def _require_dest_is_strict_descendant(dest: Path, output_dir: Path) -> None:
-    resolved_dest = dest.resolve()
-    resolved_output = output_dir.resolve()
-    if resolved_dest == resolved_output or not resolved_dest.is_relative_to(
-        resolved_output
-    ):
+def _require_safe_output_file_path(
+    path: Path, output_dir: Path, forbidden_roots: object
+) -> Path:
+    if not isinstance(output_dir, Path):
+        raise GraphReportError("output_dir must be a pathlib.Path")
+    resolved_output = output_dir.expanduser().resolve()
+    resolved = path.expanduser().resolve()
+    if resolved == resolved_output or not resolved.is_relative_to(resolved_output):
         raise GraphReportError(
-            f"bundle destination {resolved_dest} is not a strict descendant of "
-            f"output_dir {resolved_output}"
+            f"path {resolved} is not a strict descendant of output_dir "
+            f"{resolved_output}"
         )
+    for root in resolved_graph_report_forbidden_roots(forbidden_roots):
+        if resolved == root or resolved.is_relative_to(root):
+            raise GraphReportError(
+                f"path {resolved} is equal to or inside forbidden path {root}"
+            )
+    return resolved
+
+
+def resolved_graph_report_forbidden_roots(forbidden_roots: object) -> tuple[Path, ...]:
+    if isinstance(forbidden_roots, (str, bytes)) or not isinstance(
+        forbidden_roots, Sequence
+    ):
+        raise GraphReportError("forbidden_roots must be a sequence of pathlib.Path")
+    resolved: list[Path] = []
+    for root in forbidden_roots:
+        if not isinstance(root, Path):
+            raise GraphReportError("forbidden_roots must be a sequence of pathlib.Path")
+        resolved.append(root.expanduser().resolve())
+    return tuple(resolved)
 
 
 def _require_summary_rows(rows: object) -> tuple[GraphSummaryRow, ...]:

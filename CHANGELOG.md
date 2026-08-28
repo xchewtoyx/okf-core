@@ -15,7 +15,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **`run_graph_report` / `render_graph_summary` path-escape and subset-note diagnostics**: refuse `<output>/<slug>/` destinations (and the files written there) that resolve into a bundle root or `fleeting/`; unlink stale artifacts only after resolving them as files strictly under the output directory; and drive the SUMMARY subset note from the requested selection so a failed bundle is reported as omitted rather than as a user-requested subset (#231).
+- **`apply_graph_report_output_file` / `run_graph_report` path-escape**: every graph-report write and stale unlink goes through one helper that `resolve()`s the final file path and refuses unless it is a strict descendant of `output_dir` and not equal to or inside a forbidden root, so a leftover `SUMMARY.md` or `<slug>/GRAPH_REPORT.md` symlink into a bundle cannot overwrite authoring files; the SUMMARY subset note is driven from the requested selection so a failed bundle is reported as omitted rather than as a user-requested subset (#231).
 
 ## [0.5.1] - 2026-08-19
 

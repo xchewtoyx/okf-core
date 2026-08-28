@@ -6,18 +6,18 @@ Policy (also on :func:`run_graph_report`):
   :mod:`okf_core.graph_model`. It acquires, analyzes, renders, and writes
   through the existing public helpers.
 - Output must not land in a configured bundle root or ``fleeting/``.
-  After resolving ``output_dir``, each ``output_dir / <slug>/`` write
-  destination (and the files written there) is also rejected when it is
-  equal to or inside a forbidden root — so ``--output <project_root>``
-  cannot write ``docs/GRAPH_REPORT.md`` into ``[bundles.docs]``.
-  Default output is ``<project_root>/wiki-graph-out``. When that default
-  sits inside a forbidden root (typical ``bundle_root = "."``), the run
-  refuses and asks for ``--output`` outside authoring surfaces.
+  Every write and unlink goes through
+  :func:`~okf_core.graph_report.apply_graph_report_output_file`, which
+  ``resolve()``s the final file path and refuses unless that location is
+  a strict descendant of ``output_dir`` and not equal to or inside a
+  forbidden root. Default output is ``<project_root>/wiki-graph-out``.
+  When that default sits inside a forbidden root (typical
+  ``bundle_root = "."``), the run refuses and asks for ``--output``
+  outside authoring surfaces.
 - Stale cleanup deletes only ``SUMMARY.md`` at the output root and
   ``GRAPH_REPORT.md`` / ``graph.json`` in immediate child directories,
-  and only after resolving each path and confirming it is a file
-  strictly under the resolved output directory. It does not recurse,
-  delete other filenames, or ``rmdir``.
+  through that same helper. It does not recurse, delete other filenames,
+  or ``rmdir``.
 - ``SUMMARY.md`` covers selected bundles only. Default provenance does
   not run ``git``.
 """
@@ -45,9 +45,11 @@ from okf_core.graph_report import (
     GraphReportError,
     GraphReportProvenance,
     GraphSummaryRow,
+    apply_graph_report_output_file,
     render_graph_json,
     render_graph_report,
     render_graph_summary,
+    resolved_graph_report_forbidden_roots,
     write_bundle_graph_artifacts,
 )
 
@@ -98,8 +100,8 @@ def validate_graph_report_output_dir(
     if not isinstance(output_dir, Path):
         raise GraphReportError("output_dir must be a pathlib.Path")
     resolved = output_dir.expanduser().resolve()
-    for forbidden in _resolved_forbidden_roots(forbidden_roots):
-        if _is_equal_to_or_inside(resolved, forbidden):
+    for forbidden in resolved_graph_report_forbidden_roots(forbidden_roots):
+        if resolved == forbidden or resolved.is_relative_to(forbidden):
             raise GraphReportError(
                 f"output_dir {resolved} is equal to or inside forbidden "
                 f"path {forbidden}"
@@ -107,52 +109,36 @@ def validate_graph_report_output_dir(
     return resolved
 
 
-def validate_graph_report_write_destinations(
-    output_dir: Path,
-    slugs: Sequence[str],
-    forbidden_roots: Sequence[Path],
+def clean_stale_graph_report_artifacts(
+    output_dir: Path, forbidden_roots: Sequence[Path] = ()
 ) -> None:
-    """Reject slug destinations that resolve into a forbidden root.
-
-    After ``output_dir`` is resolved, each ``output_dir / slug`` directory
-    and the ``GRAPH_REPORT.md`` / ``graph.json`` files written there must
-    not be equal to or inside a forbidden root.
-    """
-
-    if not isinstance(output_dir, Path):
-        raise GraphReportError("output_dir must be a pathlib.Path")
-    if isinstance(slugs, (str, bytes)) or not isinstance(slugs, Sequence):
-        raise GraphReportError("slugs must be a sequence of str")
-    resolved_output = output_dir.expanduser().resolve()
-    forbidden = _resolved_forbidden_roots(forbidden_roots)
-    for slug in slugs:
-        problem, _problem = _forbidden_slug_destination(
-            resolved_output, slug, forbidden
-        )
-        if problem is not None:
-            raise GraphReportError(problem)
-
-
-def clean_stale_graph_report_artifacts(output_dir: Path) -> None:
     """Delete known generated filenames from a previous run.
 
     Removes ``SUMMARY.md`` at ``output_dir`` and ``GRAPH_REPORT.md`` /
-    ``graph.json`` in each immediate child directory. Unlinks only after
-    resolving each path and confirming it is a file strictly under the
-    resolved ``output_dir``. Does not recurse, delete other names, or
-    remove directories.
+    ``graph.json`` in each immediate child directory, through
+    :func:`apply_graph_report_output_file`. Does not recurse, delete other
+    names, or remove directories.
     """
 
     if not isinstance(output_dir, Path):
         raise GraphReportError("output_dir must be a pathlib.Path")
-    resolved_output = output_dir.expanduser().resolve()
-    _unlink_if_strictly_under(output_dir / _SUMMARY_FILENAME, resolved_output)
+    apply_graph_report_output_file(
+        output_dir / _SUMMARY_FILENAME,
+        output_dir=output_dir,
+        forbidden_roots=forbidden_roots,
+        unlink=True,
+    )
     if not output_dir.is_dir():
         return
     for child in output_dir.iterdir():
         stale, _problem = _stale_child_artifacts(child)
         for path in stale:
-            _unlink_if_strictly_under(path, resolved_output)
+            apply_graph_report_output_file(
+                path,
+                output_dir=output_dir,
+                forbidden_roots=forbidden_roots,
+                unlink=True,
+            )
 
 
 def run_graph_report(
@@ -171,30 +157,30 @@ def run_graph_report(
     ``okf_core.__version__``, and ``git_revision=None`` — this function
     does not run ``git``.
 
-    Guard, then clean, then a collector loop. Each bundle is handled by
-    :func:`_report_one_bundle`. ``SUMMARY.md`` is written from selected
-    rows that succeeded.
+    Guard the output directory, then clean and write through
+    :func:`apply_graph_report_output_file` so a leftover symlink into a
+    bundle cannot be followed. Render failures stay per-bundle problems;
+    a path-safety failure aborts the run. ``SUMMARY.md`` is written from
+    selected rows that succeeded.
     """
 
     typed = _require_config(config)
     selected, is_subset = _selected_bundle_names(typed, bundle_names)
+    forbidden = forbidden_graph_report_roots(typed)
     resolved_output = _resolve_run_output_dir(typed, output_dir)
-    validate_graph_report_write_destinations(
-        resolved_output, selected, forbidden_graph_report_roots(typed)
-    )
     typed_provenance = provenance if provenance is not None else _default_provenance()
     if provenance is not None:
         _require_run_provenance(provenance)
-    clean_stale_graph_report_artifacts(resolved_output)
-    rows, written, problems = _collect_bundle_reports(
-        typed, selected, resolved_output, typed_provenance
-    )
+    clean_stale_graph_report_artifacts(resolved_output, forbidden)
+    pending, problems = _collect_bundle_renders(typed, selected, typed_provenance)
+    rows, written = _write_bundle_renders(resolved_output, pending, forbidden)
     summary_path = _write_summary(
         resolved_output,
         rows,
         typed_provenance,
         configured_bundle_names=tuple(typed.bundles),
         selected_bundle_names=selected,
+        forbidden_roots=forbidden,
     )
     return GraphReportRunResult(
         selected_bundle_names=selected,
@@ -268,46 +254,52 @@ def _resolve_run_output_dir(config: OkfConfig, output_dir: Path | None) -> Path:
         raise
 
 
-def _collect_bundle_reports(
+def _collect_bundle_renders(
     config: OkfConfig,
     selected: tuple[str, ...],
-    output_dir: Path,
     provenance: GraphReportProvenance,
-) -> tuple[list[GraphSummaryRow], list[Path], list[GraphReportProblem]]:
-    rows: list[GraphSummaryRow] = []
-    written: list[Path] = []
+) -> tuple[list[tuple[GraphSummaryRow, str, str]], list[GraphReportProblem]]:
+    pending: list[tuple[GraphSummaryRow, str, str]] = []
     problems: list[GraphReportProblem] = []
     for name in selected:
-        result, problem = _report_one_bundle(
-            config.bundles[name], output_dir, provenance
-        )
+        result, problem = _render_one_bundle(config.bundles[name], provenance)
         if result is not None:
-            row, paths = result
-            rows.append(row)
-            written.extend((paths.report_path, paths.graph_json_path))
+            pending.append(result)
         if problem is not None:
             problems.append(problem)
-    return rows, written, problems
+    return pending, problems
 
 
-def _report_one_bundle(
-    bundle: BundleConfig,
+def _write_bundle_renders(
     output_dir: Path,
+    pending: Sequence[tuple[GraphSummaryRow, str, str]],
+    forbidden_roots: Sequence[Path],
+) -> tuple[list[GraphSummaryRow], list[Path]]:
+    rows: list[GraphSummaryRow] = []
+    written: list[Path] = []
+    for row, markdown, payload in pending:
+        paths = write_bundle_graph_artifacts(
+            output_dir,
+            row.bundle,
+            report_markdown=markdown,
+            graph_json=payload,
+            forbidden_roots=forbidden_roots,
+        )
+        rows.append(row)
+        written.extend((paths.report_path, paths.graph_json_path))
+    return rows, written
+
+
+def _render_one_bundle(
+    bundle: BundleConfig,
     provenance: GraphReportProvenance,
-) -> tuple[
-    tuple[GraphSummaryRow, BundleGraphArtifactPaths] | None,
-    GraphReportProblem | None,
-]:
+) -> tuple[tuple[GraphSummaryRow, str, str] | None, GraphReportProblem | None]:
     try:
         model = acquire_normalized_graph(bundle)
         analysis = analyze_normalized_graph(model)
-        paths = write_bundle_graph_artifacts(
-            output_dir,
-            model.bundle_name,
-            report_markdown=render_graph_report(model, analysis, provenance=provenance),
-            graph_json=render_graph_json(model, analysis),
-        )
-        return (_summary_row(model, analysis), paths), None
+        markdown = render_graph_report(model, analysis, provenance=provenance)
+        payload = render_graph_json(model, analysis)
+        return (_summary_row(model, analysis), markdown, payload), None
     except GraphModelError as exc:
         return None, GraphReportProblem(bundle.name, "model-error", str(exc))
     except GraphAnalysisError as exc:
@@ -351,69 +343,29 @@ def _write_summary(
     *,
     configured_bundle_names: tuple[str, ...],
     selected_bundle_names: tuple[str, ...],
+    forbidden_roots: Sequence[Path],
 ) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
     summary_path = output_dir / _SUMMARY_FILENAME
-    summary_path.write_text(
-        render_graph_summary(
+    apply_graph_report_output_file(
+        summary_path,
+        output_dir=output_dir,
+        forbidden_roots=forbidden_roots,
+        text=render_graph_summary(
             rows,
             provenance=provenance,
             configured_bundle_names=configured_bundle_names,
             selected_bundle_names=selected_bundle_names,
         ),
-        encoding="utf-8",
     )
     return summary_path
-
-
-def _resolved_forbidden_roots(forbidden_roots: object) -> tuple[Path, ...]:
-    if isinstance(forbidden_roots, (str, bytes)) or not isinstance(
-        forbidden_roots, Sequence
-    ):
-        raise GraphReportError("forbidden_roots must be a sequence of pathlib.Path")
-    resolved: list[Path] = []
-    for root in forbidden_roots:
-        if not isinstance(root, Path):
-            raise GraphReportError("forbidden_roots must be a sequence of pathlib.Path")
-        resolved.append(root.expanduser().resolve())
-    return tuple(resolved)
-
-
-def _is_equal_to_or_inside(path: Path, root: Path) -> bool:
-    return path == root or path.is_relative_to(root)
-
-
-def _is_strict_descendant(path: Path, ancestor: Path) -> bool:
-    return path != ancestor and path.is_relative_to(ancestor)
-
-
-def _forbidden_slug_destination(
-    output_dir: Path, slug: object, forbidden: tuple[Path, ...]
-) -> tuple[str | None, None]:
-    if not isinstance(slug, str):
-        return "slugs must be a sequence of str", None
-    dest = (output_dir / slug).resolve()
-    for path in (dest, dest / "GRAPH_REPORT.md", dest / "graph.json"):
-        for root in forbidden:
-            if _is_equal_to_or_inside(path, root):
-                return (
-                    f"write destination {path} is equal to or inside "
-                    f"forbidden path {root}"
-                ), None
-    return None, None
-
-
-def _unlink_if_strictly_under(path: Path, resolved_output: Path) -> None:
-    resolved = path.resolve()
-    if not resolved.is_file() or not _is_strict_descendant(resolved, resolved_output):
-        return
-    path.unlink()
 
 
 def _stale_child_artifacts(child: Path) -> tuple[tuple[Path, ...], None]:
     if not child.is_dir():
         return (), None
     stale = tuple(
-        child / name for name in _STALE_CHILD_FILENAMES if (child / name).is_file()
+        child / name
+        for name in _STALE_CHILD_FILENAMES
+        if (child / name).is_file() or (child / name).is_symlink()
     )
     return stale, None

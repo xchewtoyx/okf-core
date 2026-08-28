@@ -20,7 +20,6 @@ from okf_core.graph_report_run import (
     clean_stale_graph_report_artifacts,
     forbidden_graph_report_roots,
     validate_graph_report_output_dir,
-    validate_graph_report_write_destinations,
 )
 
 _FROZEN_PROVENANCE = GraphReportProvenance(
@@ -138,7 +137,7 @@ def test_output_at_project_root_is_rejected_when_slug_lands_in_a_bundle(
     assert not docs_report.exists()
     assert not docs_json.exists()
 
-    with pytest.raises(GraphReportError, match="write destination"):
+    with pytest.raises(GraphReportError, match="forbidden"):
         run_graph_report(config, output_dir=tmp_path, provenance=_FROZEN_PROVENANCE)
 
     assert not docs_report.exists()
@@ -205,7 +204,7 @@ def test_clean_stale_graph_report_artifacts_is_filename_and_depth_limited(
     assert nested.is_dir()
 
 
-def test_clean_stale_does_not_follow_child_directory_symlink_outside_output(
+def test_clean_stale_refuses_escaping_child_directory_symlink(
     tmp_path: Path,
 ) -> None:
     output = tmp_path / "out"
@@ -215,14 +214,80 @@ def test_clean_stale_does_not_follow_child_directory_symlink_outside_output(
     (outside / "graph.json").write_text("keep json\n", encoding="utf-8")
     output.mkdir()
     (output / "docs").symlink_to(outside)
-    (output / "SUMMARY.md").symlink_to(outside / "GRAPH_REPORT.md")
 
-    clean_stale_graph_report_artifacts(output)
+    with pytest.raises(GraphReportError, match="strict descendant"):
+        clean_stale_graph_report_artifacts(output)
 
     assert (outside / "GRAPH_REPORT.md").read_text(encoding="utf-8") == "keep report\n"
     assert (outside / "graph.json").read_text(encoding="utf-8") == "keep json\n"
     assert (output / "docs").is_symlink()
+
+
+def test_clean_stale_refuses_escaping_summary_symlink(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    outside = tmp_path / "elsewhere" / "keep.md"
+    outside.parent.mkdir()
+    outside.write_text("keep summary target\n", encoding="utf-8")
+    output.mkdir()
+    (output / "SUMMARY.md").symlink_to(outside)
+
+    with pytest.raises(GraphReportError, match="strict descendant"):
+        clean_stale_graph_report_artifacts(output)
+
+    assert outside.read_text(encoding="utf-8") == "keep summary target\n"
     assert (output / "SUMMARY.md").is_symlink()
+
+
+def test_clean_stale_refuses_escaping_file_symlink(tmp_path: Path) -> None:
+    output = tmp_path / "out"
+    outside = tmp_path / "elsewhere" / "keep.md"
+    outside.parent.mkdir()
+    outside.write_text("keep outside\n", encoding="utf-8")
+    child = output / "docs"
+    child.mkdir(parents=True)
+    (child / "GRAPH_REPORT.md").symlink_to(outside)
+
+    with pytest.raises(GraphReportError, match="strict descendant"):
+        clean_stale_graph_report_artifacts(output)
+
+    assert outside.read_text(encoding="utf-8") == "keep outside\n"
+    assert (child / "GRAPH_REPORT.md").is_symlink()
+
+
+def test_run_graph_report_refuses_leftover_summary_symlink_into_bundle(
+    tmp_path: Path,
+) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    bundle_file = tmp_path / "docs" / "alpha.md"
+    original = bundle_file.read_text(encoding="utf-8")
+    output = tmp_path / "out"
+    output.mkdir()
+    (output / "SUMMARY.md").symlink_to(bundle_file)
+
+    with pytest.raises(GraphReportError, match="strict descendant|forbidden"):
+        run_graph_report(config, output_dir=output, provenance=_FROZEN_PROVENANCE)
+
+    assert bundle_file.read_text(encoding="utf-8") == original
+    assert (output / "SUMMARY.md").is_symlink()
+
+
+def test_run_graph_report_refuses_leftover_report_symlink_into_bundle(
+    tmp_path: Path,
+) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    bundle_file = tmp_path / "docs" / "alpha.md"
+    original = bundle_file.read_text(encoding="utf-8")
+    dest = tmp_path / "out" / "docs"
+    dest.mkdir(parents=True)
+    (dest / "GRAPH_REPORT.md").symlink_to(bundle_file)
+
+    with pytest.raises(GraphReportError, match="strict descendant|forbidden"):
+        run_graph_report(
+            config, output_dir=tmp_path / "out", provenance=_FROZEN_PROVENANCE
+        )
+
+    assert bundle_file.read_text(encoding="utf-8") == original
+    assert (dest / "GRAPH_REPORT.md").is_symlink()
 
 
 @freeze_time("2026-08-28T12:34:56Z")
@@ -366,14 +431,3 @@ def test_all_bundles_run_with_one_failure_does_not_claim_a_subset(
     summary = (tmp_path / "out" / "SUMMARY.md").read_text(encoding="utf-8")
     assert "selected subset" not in summary
     assert "produced no row: notes" in summary
-
-
-def test_write_destinations_reject_slug_dir_inside_forbidden_root(
-    tmp_path: Path,
-) -> None:
-    output = tmp_path
-    forbidden = tmp_path / "docs"
-    forbidden.mkdir()
-
-    with pytest.raises(GraphReportError, match="write destination"):
-        validate_graph_report_write_destinations(output, ("docs",), (forbidden,))
