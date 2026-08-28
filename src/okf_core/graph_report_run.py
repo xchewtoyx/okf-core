@@ -1,5 +1,12 @@
 """Library orchestrator for ``okf graph-report``.
 
+Implements ``okf graph-report [--config PATH] [--bundle NAME]...
+[--output DIR] [--json]``. Default output is the gitignored
+``<project-root>/wiki-graph-out/`` tree (``SUMMARY.md``,
+``<slug>/GRAPH_REPORT.md``, ``graph.json``). Output is generated
+diagnostics, not quotas. This module never writes wiki notes and
+never merges bundles.
+
 Policy (also on :func:`run_graph_report`):
 
 - This module does not grow :mod:`okf_core.graph_analysis` or
@@ -154,7 +161,8 @@ def run_graph_report(
     ``output_dir`` is ``<project_root>/wiki-graph-out``. Default
     provenance uses UTC now (``YYYY-MM-DDTHH:MM:SSZ``),
     ``okf_core.__version__``, and ``git_revision=None`` — this function
-    does not run ``git``.
+    does not run ``git``. Output is generated diagnostics, not quotas.
+    This function never writes wiki notes and never merges bundles.
 
     Guard the output directory, then clean and write through
     :func:`apply_graph_report_output_file` so a leftover symlink into a

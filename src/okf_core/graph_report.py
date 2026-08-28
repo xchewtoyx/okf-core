@@ -1,5 +1,12 @@
 """Pure-string renderers for per-bundle graph-report artifacts.
 
+These strings are the generated diagnostics written by ``okf graph-report
+[--config PATH] [--bundle NAME]... [--output DIR] [--json]`` under
+``<project-root>/wiki-graph-out/`` (``SUMMARY.md``,
+``<slug>/GRAPH_REPORT.md``, ``graph.json``). Signals are diagnostics,
+not quotas. This module never writes wiki notes and never merges
+bundles.
+
 Policy (also on :func:`render_graph_report` and :func:`render_graph_json`):
 
 - This module does not grow :mod:`okf_core.graph_analysis` or
@@ -158,6 +165,7 @@ def render_graph_report(
 
     Titles come from ``model.nodes``; a ``None`` title falls back to the
     concept id. IDs and titles are literal inline, never Markdown links.
+    This function never writes wiki notes and never merges bundles.
 
     Raises :class:`GraphReportError` if ``model`` is not a
     :class:`NormalizedBundleGraph`, ``analysis`` is not a
@@ -313,7 +321,9 @@ def render_graph_summary(
     rows by each raw signal independently (``(-value, slug)``) and omits a
     group when every selected value is ``0``. There is no composite score.
     Cell text is literal inline Markdown with ``|`` escaped as ``\\|``.
-    The renderer emits no Markdown links and performs no I/O.
+    The renderer emits no Markdown links and performs no I/O. Signals
+    are diagnostics, not quotas. This function never writes wiki notes
+    and never merges bundles.
 
     Raises :class:`GraphReportError` if ``rows`` is not a sequence of
     :class:`GraphSummaryRow`, ``provenance`` is not a

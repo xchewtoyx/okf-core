@@ -33,6 +33,11 @@ def _runner() -> CliRunner:
     return CliRunner()
 
 
+def _collapsed_help_text(text: str) -> str:
+    """Flatten Click help wrapping so phrase asserts survive column reflow."""
+    return " ".join(text.replace("\n", " ").split())
+
+
 def _write_concept(path: Path, *, title: str, type_: str = "concept") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
@@ -108,6 +113,13 @@ def test_graph_report_help_lists_flags() -> None:
     assert "--bundle" in result.stdout
     assert "--output" in result.stdout
     assert "--json" in result.stdout
+    assert "wiki-graph-out" in result.stdout
+    assert "SUMMARY.md" in result.stdout
+    assert "GRAPH_REPORT.md" in result.stdout
+    assert "graph.json" in result.stdout
+    collapsed = _collapsed_help_text(result.stdout)
+    assert "diagnostics, not quotas" in collapsed
+    assert "Never writes wiki notes and never merges bundles" in collapsed
 
 
 def test_context_help_documents_core_options() -> None:
@@ -4188,3 +4200,13 @@ def test_cli_orient_prints_guidance() -> None:
     assert "okf list-concepts" in result.stdout
     assert "okf --help" in result.stdout
     assert "okf unlinked-mentions --help" in result.stdout
+    assert "--bundle" in result.stdout
+    assert "--output" in result.stdout
+    assert "--json" in result.stdout
+    assert "wiki-graph-out" in result.stdout
+    assert "SUMMARY.md" in result.stdout
+    assert "GRAPH_REPORT.md" in result.stdout
+    assert "graph.json" in result.stdout
+    assert "generated diagnostics" in result.stdout
+    assert "not wiki notes" in result.stdout
+    assert "okf graph-report --help" in result.stdout
