@@ -117,10 +117,9 @@ def test_graph_report_help_lists_flags() -> None:
     assert "SUMMARY.md" in result.stdout
     assert "GRAPH_REPORT.md" in result.stdout
     assert "graph.json" in result.stdout
-    assert "diagnostics, not quotas" in result.stdout
-    assert "Never writes wiki notes and never merges bundles" in _collapsed_help_text(
-        result.stdout
-    )
+    collapsed = _collapsed_help_text(result.stdout)
+    assert "diagnostics, not quotas" in collapsed
+    assert "Never writes wiki notes and never merges bundles" in collapsed
 
 
 def test_context_help_documents_core_options() -> None:
