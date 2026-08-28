@@ -41,7 +41,6 @@ from okf_core.graph_model import (
     acquire_normalized_graph,
 )
 from okf_core.graph_report import (
-    BundleGraphArtifactPaths,
     GraphReportError,
     GraphReportProvenance,
     GraphSummaryRow,
