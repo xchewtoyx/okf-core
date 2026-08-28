@@ -344,6 +344,16 @@ def test_wrong_type_raises_graph_analysis_error(payload: object) -> None:
         analyze_normalized_graph(payload)  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    "top_n",
+    [-1, True, False, 1.5, "10", None],
+    ids=["negative", "true", "false", "float", "string", "none"],
+)
+def test_invalid_top_n_raises_graph_analysis_error(top_n: object) -> None:
+    with pytest.raises(GraphAnalysisError, match="top_n"):
+        analyze_normalized_graph(_model(_node("a")), top_n=top_n)  # type: ignore[arg-type]
+
+
 def test_equal_pagerank_tie_breaks_slug_asc() -> None:
     analysis = analyze_normalized_graph(
         _model(

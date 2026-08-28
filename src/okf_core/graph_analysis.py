@@ -163,12 +163,14 @@ def analyze_normalized_graph(
     OKF signals (orphan / zero inbound / zero outbound), not defects.
 
     Raises :class:`GraphAnalysisError` if ``model`` is not a
-    :class:`NormalizedBundleGraph`.
+    :class:`NormalizedBundleGraph`, or if ``top_n`` is not a
+    non-negative ``int`` (``bool`` is rejected).
     """
 
     typed = _require_normalized_model(model)
+    limit = _require_top_n(top_n)
     adjacency = _undirected_adjacency(typed)
-    top_by_pagerank, top_by_inbound = _centrality_rankings(typed, top_n)
+    top_by_pagerank, top_by_inbound = _centrality_rankings(typed, limit)
     return BundleGraphAnalysis(
         bundle_name=typed.bundle_name,
         overview=_overview_metrics(typed),
@@ -184,6 +186,14 @@ def _require_normalized_model(model: object) -> NormalizedBundleGraph:
     if not isinstance(model, NormalizedBundleGraph):
         raise GraphAnalysisError("model must be a NormalizedBundleGraph")
     return model
+
+
+def _require_top_n(top_n: object) -> int:
+    if isinstance(top_n, bool) or not isinstance(top_n, int):
+        raise GraphAnalysisError("top_n must be an int")
+    if top_n < 0:
+        raise GraphAnalysisError("top_n must be greater than or equal to 0")
+    return top_n
 
 
 def _overview_metrics(model: NormalizedBundleGraph) -> GraphOverview:
