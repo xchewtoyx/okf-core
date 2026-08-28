@@ -1,0 +1,295 @@
+{
+  "analysis": {
+    "articulation_points": [
+      {
+        "concept_id": "b",
+        "regions": [
+          [
+            "c",
+            "h"
+          ],
+          [
+            "a"
+          ]
+        ]
+      },
+      {
+        "concept_id": "c",
+        "regions": [
+          [
+            "a",
+            "b"
+          ],
+          [
+            "h"
+          ]
+        ]
+      }
+    ],
+    "bundle_name": "fragmented",
+    "components": {
+      "count": 3,
+      "other_memberships": [
+        [
+          "d",
+          "e"
+        ],
+        [
+          "untitled"
+        ]
+      ],
+      "sizes": [
+        4,
+        2,
+        1
+      ]
+    },
+    "diagnostics": {
+      "orphans": [
+        "untitled"
+      ],
+      "zero_inbound": [
+        "a",
+        "d",
+        "untitled"
+      ],
+      "zero_outbound": [
+        "e",
+        "h",
+        "untitled"
+      ]
+    },
+    "overview": {
+      "concept_count": 7,
+      "density": 0.09523809523809523,
+      "link_instance_count": 4,
+      "mean_in_degree": 0.5714285714285714,
+      "mean_out_degree": 0.5714285714285714,
+      "median_in_degree": 1.0,
+      "median_out_degree": 1.0,
+      "reciprocal_edge_ratio": 0.0,
+      "unique_directed_edge_count": 4
+    },
+    "top_by_inbound": [
+      {
+        "concept_id": "b",
+        "value": 1.0
+      },
+      {
+        "concept_id": "c",
+        "value": 1.0
+      },
+      {
+        "concept_id": "e",
+        "value": 1.0
+      },
+      {
+        "concept_id": "h",
+        "value": 1.0
+      },
+      {
+        "concept_id": "a",
+        "value": 0.0
+      },
+      {
+        "concept_id": "d",
+        "value": 0.0
+      },
+      {
+        "concept_id": "untitled",
+        "value": 0.0
+      }
+    ],
+    "top_by_pagerank": [
+      {
+        "concept_id": "h",
+        "value": 0.9
+      },
+      {
+        "concept_id": "c",
+        "value": 0.3
+      },
+      {
+        "concept_id": "b",
+        "value": 0.2
+      },
+      {
+        "concept_id": "a",
+        "value": 0.1
+      },
+      {
+        "concept_id": "d",
+        "value": 0.05
+      },
+      {
+        "concept_id": "e",
+        "value": 0.05
+      },
+      {
+        "concept_id": "untitled",
+        "value": 0.0
+      }
+    ]
+  },
+  "normalized_graph": {
+    "broken_links": [
+      {
+        "source_id": "a",
+        "source_path": "a.md",
+        "target": "../outside.md",
+        "target_concept_id": null,
+        "target_path": "../outside.md",
+        "text": "missing",
+        "title": null
+      },
+      {
+        "source_id": "a",
+        "source_path": "a.md",
+        "target": "/root-rel.md",
+        "target_concept_id": null,
+        "target_path": "/root-rel.md",
+        "text": "missing",
+        "title": null
+      }
+    ],
+    "bundle_name": "fragmented",
+    "edges": [
+      {
+        "instance_count": 1,
+        "source_id": "a",
+        "target_id": "b",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "b",
+        "target_id": "c",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "c",
+        "target_id": "h",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "d",
+        "target_id": "e",
+        "texts": [
+          "t0"
+        ]
+      }
+    ],
+    "excluded_links": [],
+    "nodes": [
+      {
+        "concept_id": "a",
+        "description": null,
+        "inbound_link_count": 0,
+        "is_orphan": false,
+        "outbound_link_count": 1,
+        "pagerank": 0.1,
+        "path": "a.md",
+        "title": "a",
+        "type": "note",
+        "unique_inbound_degree": 0,
+        "unique_outbound_degree": 1
+      },
+      {
+        "concept_id": "b",
+        "description": null,
+        "inbound_link_count": 1,
+        "is_orphan": false,
+        "outbound_link_count": 1,
+        "pagerank": 0.2,
+        "path": "b.md",
+        "title": "b",
+        "type": "note",
+        "unique_inbound_degree": 1,
+        "unique_outbound_degree": 1
+      },
+      {
+        "concept_id": "c",
+        "description": null,
+        "inbound_link_count": 1,
+        "is_orphan": false,
+        "outbound_link_count": 1,
+        "pagerank": 0.3,
+        "path": "c.md",
+        "title": "c",
+        "type": "note",
+        "unique_inbound_degree": 1,
+        "unique_outbound_degree": 1
+      },
+      {
+        "concept_id": "d",
+        "description": null,
+        "inbound_link_count": 0,
+        "is_orphan": false,
+        "outbound_link_count": 1,
+        "pagerank": 0.05,
+        "path": "d.md",
+        "title": "d",
+        "type": "note",
+        "unique_inbound_degree": 0,
+        "unique_outbound_degree": 1
+      },
+      {
+        "concept_id": "e",
+        "description": null,
+        "inbound_link_count": 1,
+        "is_orphan": false,
+        "outbound_link_count": 0,
+        "pagerank": 0.05,
+        "path": "e.md",
+        "title": "e",
+        "type": "note",
+        "unique_inbound_degree": 1,
+        "unique_outbound_degree": 0
+      },
+      {
+        "concept_id": "h",
+        "description": null,
+        "inbound_link_count": 1,
+        "is_orphan": false,
+        "outbound_link_count": 0,
+        "pagerank": 0.9,
+        "path": "h.md",
+        "title": "Hub sink",
+        "type": "note",
+        "unique_inbound_degree": 1,
+        "unique_outbound_degree": 0
+      },
+      {
+        "concept_id": "untitled",
+        "description": null,
+        "inbound_link_count": 0,
+        "is_orphan": true,
+        "outbound_link_count": 0,
+        "pagerank": 0.0,
+        "path": "untitled.md",
+        "title": null,
+        "type": "note",
+        "unique_inbound_degree": 0,
+        "unique_outbound_degree": 0
+      }
+    ],
+    "problems": [
+      {
+        "concept_id": "a",
+        "kind": "parse-error",
+        "message": "frontmatter is not a mapping",
+        "path": "a.md"
+      }
+    ],
+    "self_links": []
+  },
+  "schema_version": 1
+}

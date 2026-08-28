@@ -1,0 +1,260 @@
+{
+  "analysis": {
+    "articulation_points": [
+      {
+        "concept_id": "m",
+        "regions": [
+          [
+            "a",
+            "b"
+          ],
+          [
+            "x",
+            "y"
+          ]
+        ]
+      }
+    ],
+    "bundle_name": "healthy",
+    "components": {
+      "count": 1,
+      "other_memberships": [],
+      "sizes": [
+        5
+      ]
+    },
+    "diagnostics": {
+      "orphans": [],
+      "zero_inbound": [],
+      "zero_outbound": []
+    },
+    "overview": {
+      "concept_count": 5,
+      "density": 0.6,
+      "link_instance_count": 12,
+      "mean_in_degree": 2.4,
+      "mean_out_degree": 2.4,
+      "median_in_degree": 2.0,
+      "median_out_degree": 2.0,
+      "reciprocal_edge_ratio": 1.0,
+      "unique_directed_edge_count": 12
+    },
+    "top_by_inbound": [
+      {
+        "concept_id": "m",
+        "value": 4.0
+      },
+      {
+        "concept_id": "a",
+        "value": 2.0
+      },
+      {
+        "concept_id": "b",
+        "value": 2.0
+      },
+      {
+        "concept_id": "x",
+        "value": 2.0
+      },
+      {
+        "concept_id": "y",
+        "value": 2.0
+      }
+    ],
+    "top_by_pagerank": [
+      {
+        "concept_id": "m",
+        "value": 0.5
+      },
+      {
+        "concept_id": "x",
+        "value": 0.15
+      },
+      {
+        "concept_id": "y",
+        "value": 0.15
+      },
+      {
+        "concept_id": "a",
+        "value": 0.1
+      },
+      {
+        "concept_id": "b",
+        "value": 0.1
+      }
+    ]
+  },
+  "normalized_graph": {
+    "broken_links": [],
+    "bundle_name": "healthy",
+    "edges": [
+      {
+        "instance_count": 1,
+        "source_id": "a",
+        "target_id": "b",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "a",
+        "target_id": "m",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "b",
+        "target_id": "a",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "b",
+        "target_id": "m",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "m",
+        "target_id": "a",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "m",
+        "target_id": "b",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "m",
+        "target_id": "x",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "m",
+        "target_id": "y",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "x",
+        "target_id": "m",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "x",
+        "target_id": "y",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "y",
+        "target_id": "m",
+        "texts": [
+          "t0"
+        ]
+      },
+      {
+        "instance_count": 1,
+        "source_id": "y",
+        "target_id": "x",
+        "texts": [
+          "t0"
+        ]
+      }
+    ],
+    "excluded_links": [],
+    "nodes": [
+      {
+        "concept_id": "a",
+        "description": null,
+        "inbound_link_count": 2,
+        "is_orphan": false,
+        "outbound_link_count": 2,
+        "pagerank": 0.1,
+        "path": "a.md",
+        "title": "a",
+        "type": "note",
+        "unique_inbound_degree": 2,
+        "unique_outbound_degree": 2
+      },
+      {
+        "concept_id": "b",
+        "description": null,
+        "inbound_link_count": 2,
+        "is_orphan": false,
+        "outbound_link_count": 2,
+        "pagerank": 0.1,
+        "path": "b.md",
+        "title": "b",
+        "type": "note",
+        "unique_inbound_degree": 2,
+        "unique_outbound_degree": 2
+      },
+      {
+        "concept_id": "m",
+        "description": null,
+        "inbound_link_count": 4,
+        "is_orphan": false,
+        "outbound_link_count": 4,
+        "pagerank": 0.5,
+        "path": "m.md",
+        "title": "Shared hub",
+        "type": "note",
+        "unique_inbound_degree": 4,
+        "unique_outbound_degree": 4
+      },
+      {
+        "concept_id": "x",
+        "description": null,
+        "inbound_link_count": 2,
+        "is_orphan": false,
+        "outbound_link_count": 2,
+        "pagerank": 0.15,
+        "path": "x.md",
+        "title": "x",
+        "type": "note",
+        "unique_inbound_degree": 2,
+        "unique_outbound_degree": 2
+      },
+      {
+        "concept_id": "y",
+        "description": null,
+        "inbound_link_count": 2,
+        "is_orphan": false,
+        "outbound_link_count": 2,
+        "pagerank": 0.15,
+        "path": "y.md",
+        "title": "y",
+        "type": "note",
+        "unique_inbound_degree": 2,
+        "unique_outbound_degree": 2
+      }
+    ],
+    "problems": [],
+    "self_links": []
+  },
+  "schema_version": 1
+}
