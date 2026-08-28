@@ -58,7 +58,7 @@ To discover more advanced capabilities, commands, and options:
   ```sh
   okf <command> --help
   ```
-- **Detailed Reference**: Check the bundle's `README.md` for full command specifications and Python library APIs (e.g. `plan_markdown_link_rewrite`, `plan_markdown_section_patch`, `plan_markdown_section_append`, `move_concept`, `plan_graph_repair`, `apply_link_suggestions`, `normalize_bundle_graph`, `acquire_normalized_graph`, `log_concept_move`, `log_append`, `source_upsert`, `stamp_generated`, `stamp_verified`, `stamp_status`, `stamp_stale_after`).
+- **Detailed Reference**: Check the bundle's `README.md` for full command specifications and Python library APIs (e.g. `plan_markdown_link_rewrite`, `plan_markdown_section_patch`, `plan_markdown_section_append`, `move_concept`, `plan_graph_repair`, `apply_link_suggestions`, `normalize_bundle_graph`, `acquire_normalized_graph`, `analyze_normalized_graph`, `log_concept_move`, `log_append`, `source_upsert`, `stamp_generated`, `stamp_verified`, `stamp_status`, `stamp_stale_after`).
 - **Link Maintenance**: Run `okf unlinked-mentions --help` to discover options for finding concept-title mentions that are not yet linked, and for writing selected suggestions back as Markdown links with `--apply`.
 - **Orientation Guide**: Run `okf orient` to print this onboarding guide.
 """
