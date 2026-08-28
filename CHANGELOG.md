@@ -13,6 +13,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - **`analyze_normalized_graph`**: stdlib-only structural snapshot (`BundleGraphAnalysis`) over a `NormalizedBundleGraph` — unique-edge density and degree stats, weakly connected components, linear-time articulation points, OKF PageRank/inbound rankings, and orphan/zero-degree diagnostic lists — so later report stages can consume deterministic analysis without NetworkX or recomputing OKF PageRank (#227).
 - **`normalize_bundle_graph` / `acquire_normalized_graph`**: in-process composition of a `BundleGraph` and graph-annotated `BundleListing` into a portable unique-edge `NormalizedBundleGraph` (#225). Later report stages consume this library model instead of re-parsing concept bodies or shelling out to the `okf` CLI; disagreement between the two OKF fact sources, escaped-root node/problem/source paths, and wrong payload types raise `GraphModelError`. A broken or excluded target that resolves outside the bundle is kept as a portable relative path.
 
+### Fixed
+
+- **`run_graph_report` / `render_graph_summary` path-escape and subset-note diagnostics**: refuse `<output>/<slug>/` destinations (and the files written there) that resolve into a bundle root or `fleeting/`; unlink stale artifacts only after resolving them as files strictly under the output directory; and drive the SUMMARY subset note from the requested selection so a failed bundle is reported as omitted rather than as a user-requested subset (#231).
+
 ## [0.5.1] - 2026-08-19
 
 ### Changed

@@ -687,13 +687,16 @@ def _render_summary(
     rows: tuple[GraphSummaryRow, ...],
     *,
     configured: tuple[str, ...] | None = None,
+    selected: tuple[str, ...] | None = None,
 ) -> str:
+    row_names = tuple(row.bundle for row in rows)
+    configured_names = configured if configured is not None else row_names
+    selected_names = selected if selected is not None else row_names
     return render_graph_summary(
         rows,
         provenance=_FROZEN_PROVENANCE,
-        configured_bundle_names=(
-            configured if configured is not None else tuple(row.bundle for row in rows)
-        ),
+        configured_bundle_names=configured_names,
+        selected_bundle_names=selected_names,
     )
 
 
@@ -710,17 +713,50 @@ def test_summary_emits_subset_note_when_selected_names_differ() -> None:
     rendered = _render_summary(
         (_summary_row("alpha"), _summary_row("gamma")),
         configured=("alpha", "beta", "gamma"),
+        selected=("alpha", "gamma"),
     )
     assert "selected subset of configured bundles: alpha, gamma" in rendered
     assert "Configured bundles: alpha, beta, gamma" in rendered
+    assert "produced no row" not in rendered
 
 
 def test_summary_omits_subset_note_when_selected_matches_configured() -> None:
     rendered = _render_summary(
         (_summary_row("alpha"), _summary_row("beta")),
         configured=("beta", "alpha"),
+        selected=("alpha", "beta"),
     )
     assert "selected subset" not in rendered
+
+
+def test_summary_subset_note_uses_requested_selection_not_rows() -> None:
+    rendered = _render_summary(
+        (_summary_row("alpha"),),
+        configured=("alpha", "beta", "gamma"),
+        selected=("alpha", "gamma"),
+    )
+    assert "selected subset of configured bundles: alpha, gamma" in rendered
+    assert "produced no row: gamma" in rendered
+
+
+def test_summary_all_selected_with_missing_row_is_not_a_subset() -> None:
+    rendered = _render_summary(
+        (_summary_row("alpha"),),
+        configured=("alpha", "beta"),
+        selected=("alpha", "beta"),
+    )
+    assert "selected subset" not in rendered
+    assert "produced no row: beta" in rendered
+
+
+def test_summary_empty_rows_does_not_claim_an_empty_subset() -> None:
+    rendered = _render_summary(
+        (),
+        configured=("alpha", "beta"),
+        selected=("alpha", "beta"),
+    )
+    assert "selected subset of configured bundles:" not in rendered
+    assert "produced no row: alpha, beta" in rendered
 
 
 def test_attention_ranks_each_signal_by_neg_value_then_slug() -> None:
@@ -780,14 +816,17 @@ def test_summary_cell_escapes_pipe_and_does_not_emit_markdown_links() -> None:
 
 
 @pytest.mark.parametrize(
-    ("rows", "configured", "match"),
+    ("rows", "configured", "selected", "match"),
     [
-        (None, ("docs",), "rows"),
-        ("docs", ("docs",), "rows"),
-        ((object(),), ("docs",), "rows"),
-        ((_summary_row("docs"),), None, "configured_bundle_names"),
-        ((_summary_row("docs"),), "docs", "configured_bundle_names"),
-        ((_summary_row("docs"),), (1,), "configured_bundle_names"),
+        (None, ("docs",), ("docs",), "rows"),
+        ("docs", ("docs",), ("docs",), "rows"),
+        ((object(),), ("docs",), ("docs",), "rows"),
+        ((_summary_row("docs"),), None, ("docs",), "configured_bundle_names"),
+        ((_summary_row("docs"),), "docs", ("docs",), "configured_bundle_names"),
+        ((_summary_row("docs"),), (1,), ("docs",), "configured_bundle_names"),
+        ((_summary_row("docs"),), ("docs",), None, "selected_bundle_names"),
+        ((_summary_row("docs"),), ("docs",), "docs", "selected_bundle_names"),
+        ((_summary_row("docs"),), ("docs",), (1,), "selected_bundle_names"),
     ],
     ids=[
         "rows-none",
@@ -796,14 +835,18 @@ def test_summary_cell_escapes_pipe_and_does_not_emit_markdown_links() -> None:
         "configured-none",
         "configured-str",
         "configured-item",
+        "selected-none",
+        "selected-str",
+        "selected-item",
     ],
 )
 def test_render_graph_summary_rejects_wrong_input_types(
-    rows: object, configured: object, match: str
+    rows: object, configured: object, selected: object, match: str
 ) -> None:
     with pytest.raises(GraphReportError, match=match):
         render_graph_summary(
             rows,  # type: ignore[arg-type]
             provenance=_FROZEN_PROVENANCE,
             configured_bundle_names=configured,  # type: ignore[arg-type]
+            selected_bundle_names=selected,  # type: ignore[arg-type]
         )

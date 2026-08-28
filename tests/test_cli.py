@@ -1543,6 +1543,25 @@ def test_graph_report_output_at_bundle_dir_exits_2(tmp_path: Path) -> None:
     assert "forbidden" in result.stderr
 
 
+def test_graph_report_output_at_project_root_exits_2(tmp_path: Path) -> None:
+    config_path = _write_two_bundle_graph_report_project(tmp_path)
+
+    result = _runner().invoke(
+        cli,
+        [
+            "graph-report",
+            "--config",
+            str(config_path),
+            "--output",
+            str(tmp_path),
+        ],
+    )
+
+    assert result.exit_code == 2
+    assert "write destination" in result.stderr
+    assert not (tmp_path / "docs" / "GRAPH_REPORT.md").exists()
+
+
 # ---------------------------------------------------------------------------
 # okf index
 # ---------------------------------------------------------------------------

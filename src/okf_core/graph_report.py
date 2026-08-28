@@ -260,34 +260,45 @@ def render_graph_summary(
     *,
     provenance: GraphReportProvenance,
     configured_bundle_names: Sequence[str],
+    selected_bundle_names: Sequence[str],
 ) -> str:
     """Render the cross-bundle ``SUMMARY.md`` body.
 
-    ``rows`` are already slug-asc. The table covers those rows only; a
-    subset note is emitted when their bundle names differ from
-    ``configured_bundle_names`` (both compared slug-asc). The optional
-    Attention section ranks selected rows by each raw signal independently
-    (``(-value, slug)``) and omits a group when every selected value is
-    ``0``. There is no composite score. Cell text is literal inline Markdown
-    with ``|`` escaped as ``\\|``. The renderer emits no Markdown links and
-    performs no I/O.
+    ``rows`` are already slug-asc. The table covers those rows only. A
+    subset note is emitted when ``selected_bundle_names`` differs from
+    ``configured_bundle_names`` (both compared slug-asc), not when a
+    selected bundle is merely missing from ``rows``. A selected name
+    absent from ``rows`` is reported as an omitted row, not as a
+    user-requested subset. The optional Attention section ranks selected
+    rows by each raw signal independently (``(-value, slug)``) and omits a
+    group when every selected value is ``0``. There is no composite score.
+    Cell text is literal inline Markdown with ``|`` escaped as ``\\|``.
+    The renderer emits no Markdown links and performs no I/O.
 
     Raises :class:`GraphReportError` if ``rows`` is not a sequence of
     :class:`GraphSummaryRow`, ``provenance`` is not a
-    :class:`GraphReportProvenance`, or ``configured_bundle_names`` is not a
+    :class:`GraphReportProvenance`, or either name sequence is not a
     sequence of ``str``.
     """
 
     typed_rows = _require_summary_rows(rows)
     typed_provenance = _require_provenance(provenance)
-    configured = _require_bundle_names(configured_bundle_names)
+    configured = _require_bundle_names(
+        configured_bundle_names, field="configured_bundle_names"
+    )
+    selected = _require_bundle_names(
+        selected_bundle_names, field="selected_bundle_names"
+    )
     sections = [
         "# Graph report summary",
         _render_summary_provenance(typed_provenance),
     ]
-    subset_note = _render_subset_note(typed_rows, configured)
-    if subset_note is not None:
-        sections.append(subset_note)
+    for note, _problem in (
+        _subset_note(selected, configured),
+        _omitted_row_note(typed_rows, selected),
+    ):
+        if note is not None:
+            sections.append(note)
     sections.append(_render_summary_table(typed_rows))
     attention = _render_attention(typed_rows)
     if attention is not None:
@@ -372,12 +383,12 @@ def _require_summary_rows(rows: object) -> tuple[GraphSummaryRow, ...]:
     return typed
 
 
-def _require_bundle_names(names: object) -> tuple[str, ...]:
+def _require_bundle_names(names: object, *, field: str) -> tuple[str, ...]:
     if isinstance(names, (str, bytes)) or not isinstance(names, Sequence):
-        raise GraphReportError("configured_bundle_names must be a sequence of str")
+        raise GraphReportError(f"{field} must be a sequence of str")
     typed = tuple(names)
     if not all(_is_str(name) for name in typed):
-        raise GraphReportError("configured_bundle_names must be a sequence of str")
+        raise GraphReportError(f"{field} must be a sequence of str")
     return typed
 
 
@@ -787,18 +798,31 @@ def _render_summary_provenance(provenance: GraphReportProvenance) -> str:
     return "\n".join(lines)
 
 
-def _render_subset_note(
-    rows: tuple[GraphSummaryRow, ...], configured: tuple[str, ...]
-) -> str | None:
-    selected = tuple(sorted(row.bundle for row in rows))
+def _subset_note(
+    selected: tuple[str, ...], configured: tuple[str, ...]
+) -> tuple[str | None, None]:
+    selected_sorted = tuple(sorted(selected))
     configured_sorted = tuple(sorted(configured))
-    if selected == configured_sorted:
-        return None
+    if selected_sorted == configured_sorted:
+        return None, None
     return (
         "This summary covers a selected subset of configured bundles: "
-        f"{_inline(', '.join(selected))}. Configured bundles: "
+        f"{_inline(', '.join(selected_sorted))}. Configured bundles: "
         f"{_inline(', '.join(configured_sorted))}."
-    )
+    ), None
+
+
+def _omitted_row_note(
+    rows: tuple[GraphSummaryRow, ...], selected: tuple[str, ...]
+) -> tuple[str | None, None]:
+    present = {row.bundle for row in rows}
+    omitted = tuple(name for name in sorted(selected) if name not in present)
+    if not omitted:
+        return None, None
+    return (
+        "Selected bundles omitted from this summary because they "
+        f"produced no row: {_inline(', '.join(omitted))}."
+    ), None
 
 
 def _render_summary_table(rows: tuple[GraphSummaryRow, ...]) -> str:

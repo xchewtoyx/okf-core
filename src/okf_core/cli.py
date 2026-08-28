@@ -875,8 +875,9 @@ def graph_report_cmd(
 
     Acquires, analyzes, and renders each selected bundle, then writes
     GRAPH_REPORT.md and graph.json under <output>/<slug>/ plus SUMMARY.md
-    at the output root. The output directory must not be inside (or equal
-    to) a configured bundle root or fleeting/.
+    at the output root. The output directory, and each <output>/<slug>/
+    write destination, must not be equal to or inside a configured bundle
+    root or fleeting/.
     """
     try:
         cfg = load_config(config_path=config_path)

@@ -12,6 +12,7 @@ from okf_core import (
     GraphModelError,
     GraphReportError,
     GraphReportProvenance,
+    acquire_normalized_graph,
     load_config,
     run_graph_report,
 )
@@ -19,6 +20,7 @@ from okf_core.graph_report_run import (
     clean_stale_graph_report_artifacts,
     forbidden_graph_report_roots,
     validate_graph_report_output_dir,
+    validate_graph_report_write_destinations,
 )
 
 _FROZEN_PROVENANCE = GraphReportProvenance(
@@ -127,6 +129,23 @@ def test_output_inside_a_bundle_root_is_rejected(tmp_path: Path) -> None:
         run_graph_report(config, output_dir=inside, provenance=_FROZEN_PROVENANCE)
 
 
+def test_output_at_project_root_is_rejected_when_slug_lands_in_a_bundle(
+    tmp_path: Path,
+) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    docs_report = tmp_path / "docs" / "GRAPH_REPORT.md"
+    docs_json = tmp_path / "docs" / "graph.json"
+    assert not docs_report.exists()
+    assert not docs_json.exists()
+
+    with pytest.raises(GraphReportError, match="write destination"):
+        run_graph_report(config, output_dir=tmp_path, provenance=_FROZEN_PROVENANCE)
+
+    assert not docs_report.exists()
+    assert not docs_json.exists()
+    assert (tmp_path / "docs" / "alpha.md").is_file()
+
+
 def test_output_inside_fleeting_is_rejected(tmp_path: Path) -> None:
     config = load_config(config_path=_write_two_bundle_config(tmp_path))
     fleeting = tmp_path / "fleeting" / "out"
@@ -184,6 +203,26 @@ def test_clean_stale_graph_report_artifacts_is_filename_and_depth_limited(
     assert sibling_file.read_text(encoding="utf-8") == "keep sibling\n"
     assert child.is_dir()
     assert nested.is_dir()
+
+
+def test_clean_stale_does_not_follow_child_directory_symlink_outside_output(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "out"
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    (outside / "GRAPH_REPORT.md").write_text("keep report\n", encoding="utf-8")
+    (outside / "graph.json").write_text("keep json\n", encoding="utf-8")
+    output.mkdir()
+    (output / "docs").symlink_to(outside)
+    (output / "SUMMARY.md").symlink_to(outside / "GRAPH_REPORT.md")
+
+    clean_stale_graph_report_artifacts(output)
+
+    assert (outside / "GRAPH_REPORT.md").read_text(encoding="utf-8") == "keep report\n"
+    assert (outside / "graph.json").read_text(encoding="utf-8") == "keep json\n"
+    assert (output / "docs").is_symlink()
+    assert (output / "SUMMARY.md").is_symlink()
 
 
 @freeze_time("2026-08-28T12:34:56Z")
@@ -301,3 +340,40 @@ def test_per_bundle_failure_is_a_problem(
     assert len(result.problems) == 1
     assert result.problems[0].kind == kind
     assert str(exc) in result.problems[0].message
+
+
+def test_all_bundles_run_with_one_failure_does_not_claim_a_subset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = load_config(config_path=_write_two_bundle_config(tmp_path))
+    original = acquire_normalized_graph
+
+    def _fail_notes(bundle: object, *, manifest: object = None) -> object:
+        if getattr(bundle, "name", None) == "notes":
+            raise GraphModelError("notes failed")
+        return original(bundle, manifest=manifest)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(
+        "okf_core.graph_report_run.acquire_normalized_graph", _fail_notes
+    )
+    result = run_graph_report(
+        config, output_dir=tmp_path / "out", provenance=_FROZEN_PROVENANCE
+    )
+
+    assert result.is_subset is False
+    assert result.selected_bundle_names == ("docs", "notes")
+    assert [row.bundle for row in result.rows] == ["docs"]
+    summary = (tmp_path / "out" / "SUMMARY.md").read_text(encoding="utf-8")
+    assert "selected subset" not in summary
+    assert "produced no row: notes" in summary
+
+
+def test_write_destinations_reject_slug_dir_inside_forbidden_root(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path
+    forbidden = tmp_path / "docs"
+    forbidden.mkdir()
+
+    with pytest.raises(GraphReportError, match="write destination"):
+        validate_graph_report_write_destinations(output, ("docs",), (forbidden,))
