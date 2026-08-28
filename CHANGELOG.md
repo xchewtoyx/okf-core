@@ -6,6 +6,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`normalize_bundle_graph` / `acquire_normalized_graph`**: in-process composition of a `BundleGraph` and graph-annotated `BundleListing` into a portable unique-edge `NormalizedBundleGraph` (#225). Later report stages consume this library model instead of re-parsing concept bodies or shelling out to the `okf` CLI; disagreement between the two OKF fact sources, escaped-root node/problem/source paths, and wrong payload types raise `GraphModelError`. A broken or excluded target that resolves outside the bundle is kept as a portable relative path.
+
 ## [0.5.1] - 2026-08-19
 
 ### Changed
