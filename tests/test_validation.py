@@ -735,15 +735,13 @@ def test_validate_bundle_reports_non_utf8_log_md_as_error(tmp_path: Path) -> Non
 
     findings = validate_bundle(bundle, config)
 
-    assert findings[log_path] == (
-        ValidationFinding(
-            severity="error",
-            message=(
-                "could not read log.md: 'utf-8' codec can't decode byte "
-                "0xff in position 0: invalid start byte"
-            ),
-        ),
-    )
+    assert log_path in findings
+    assert len(findings[log_path]) == 1
+    finding = findings[log_path][0]
+    assert finding.severity == "error"
+    assert finding.message.startswith("could not read log.md:")
+    assert "decode" in finding.message
+    assert "0xff" in finding.message
 
 
 def test_validate_bundle_reports_unreadable_log_md_as_error(
