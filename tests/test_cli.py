@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,7 @@ def test_help_exits_zero_and_lists_commands() -> None:
     assert "move" in result.stdout
     assert "graph-repair" in result.stdout
     assert "graph-report" in result.stdout
+    assert "migrate-db" in result.stdout
     assert "log-append" in result.stdout
     assert "source-add" in result.stdout
     assert "stamp-generated" in result.stdout
@@ -2154,6 +2156,381 @@ def test_index_malformed_directory_metadata_exits_1(tmp_path: Path) -> None:
     assert (
         "failed to parse metadata file _directory.yml" in data["problems"][0]["message"]
     )
+
+
+# ---------------------------------------------------------------------------
+# okf migrate-db, and how the other commands report a stale cache
+# ---------------------------------------------------------------------------
+
+_MIGRATE_SENTENCE = "cache schema version 0 requires migration to 1; run okf migrate-db"
+
+
+def _write_cached_bundle_config(tmp_path: Path) -> Path:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f"""
+[bundles.default]
+bundle_root = "{tmp_path.as_posix()}"
+okf_cache_dir = ".okf-cache"
+""".strip(),
+        encoding="utf-8",
+    )
+    return config_path
+
+
+def _write_legacy_cache_db(tmp_path: Path) -> Path:
+    """A 0.4.0-era okf-cache.db: concepts without ctime_ns, no indexes, no stamp."""
+    db_path = tmp_path / ".okf-cache" / "okf-cache.db"
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("""
+            CREATE TABLE concepts (
+                concept_id TEXT PRIMARY KEY,
+                stable_id TEXT,
+                path TEXT NOT NULL,
+                sha256 TEXT NOT NULL,
+                mtime_ns INTEGER NOT NULL,
+                size INTEGER NOT NULL,
+                frontmatter TEXT NOT NULL,
+                links_resolved INTEGER DEFAULT 0,
+                pagerank REAL DEFAULT 0.0
+            );
+            """)
+        conn.execute("""
+            CREATE TABLE links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                source_concept_id TEXT NOT NULL,
+                target_concept_id TEXT,
+                text TEXT NOT NULL,
+                target TEXT NOT NULL
+            );
+            """)
+    return db_path
+
+
+def _user_version(db_path: Path) -> int:
+    with sqlite3.connect(db_path) as conn:
+        return int(conn.execute("PRAGMA user_version;").fetchone()[0])
+
+
+def test_migrate_db_help_documents_options_and_exit_codes() -> None:
+    result = _runner().invoke(cli, ["migrate-db", "--help"])
+
+    assert result.exit_code == 0
+    assert "--config" in result.stdout
+    assert "--bundle" in result.stdout
+    assert "--dry-run" in result.stdout
+    collapsed = _collapsed_help_text(result.stdout)
+    assert (
+        "Bring a bundle's SQLite cache database to the current schema version."
+        in collapsed
+    )
+    assert "Ordinary commands never change the schema" in collapsed
+    assert "2 when the bundle has no okf_cache_dir" in collapsed
+
+
+def test_migrate_db_upgrades_legacy_cache(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    db_path = _write_legacy_cache_db(tmp_path)
+
+    result = _runner().invoke(cli, ["migrate-db", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {
+        "bundle": "default",
+        "db_path": str(db_path),
+        "found_state": "outdated",
+        "found_version": 0,
+        "current_version": 1,
+        "dry_run": False,
+        "changed": True,
+        "applied_versions": [1],
+    }
+    assert (
+        result.stderr.strip()
+        == "Migrated cache for bundle 'default' from schema version 0 to 1"
+    )
+    assert _user_version(db_path) == 1
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(concepts);")}
+        indexes = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'index'"
+                " AND name NOT LIKE 'sqlite_%';"
+            )
+        }
+    assert "ctime_ns" in columns
+    assert indexes == {"idx_links_source", "idx_concepts_path"}
+
+
+def test_migrate_db_is_idempotent(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    _write_legacy_cache_db(tmp_path)
+    assert (
+        _runner().invoke(cli, ["migrate-db", "--config", str(config_path)]).exit_code
+        == 0
+    )
+
+    result = _runner().invoke(cli, ["migrate-db", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["found_state"] == "current"
+    assert data["changed"] is False
+    assert data["applied_versions"] == []
+    assert (
+        result.stderr.strip()
+        == "Cache for bundle 'default' is already at schema version 1"
+    )
+
+
+def test_migrate_db_initializes_missing_cache(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+
+    result = _runner().invoke(cli, ["migrate-db", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["found_state"] == "absent"
+    assert data["found_version"] is None
+    assert data["changed"] is True
+    assert (
+        result.stderr.strip()
+        == "Initialized cache for bundle 'default' at schema version 1"
+    )
+    assert _user_version(tmp_path / ".okf-cache" / "okf-cache.db") == 1
+
+
+def test_migrate_db_dry_run_reports_without_stamping(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    db_path = _write_legacy_cache_db(tmp_path)
+
+    result = _runner().invoke(
+        cli, ["migrate-db", "--config", str(config_path), "--dry-run"]
+    )
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout) == {
+        "bundle": "default",
+        "db_path": str(db_path),
+        "found_state": "outdated",
+        "found_version": 0,
+        "current_version": 1,
+        "dry_run": True,
+        "would_change": True,
+    }
+    assert (
+        result.stderr.strip()
+        == "Dry run: would migrate cache for bundle 'default' from schema version 0 to 1"
+    )
+    assert _user_version(db_path) == 0
+    with sqlite3.connect(db_path) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(concepts);")}
+    assert "ctime_ns" not in columns
+
+
+def test_migrate_db_dry_run_on_missing_cache_creates_nothing(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+
+    result = _runner().invoke(
+        cli, ["migrate-db", "--config", str(config_path), "--dry-run"]
+    )
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["found_state"] == "absent"
+    assert data["would_change"] is True
+    assert (
+        result.stderr.strip()
+        == "Dry run: would initialize cache for bundle 'default' at schema version 1"
+    )
+    assert not (tmp_path / ".okf-cache").exists()
+
+
+def test_migrate_db_without_cache_dir_exits_2(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path.as_posix()}"\n', encoding="utf-8"
+    )
+
+    result = _runner().invoke(cli, ["migrate-db", "--config", str(config_path)])
+
+    assert result.exit_code == 2
+    assert "okf_cache_dir" in result.stderr
+    assert result.stdout == ""
+
+
+@pytest.mark.parametrize("extra_args", [[], ["--dry-run"]], ids=["apply", "dry-run"])
+def test_migrate_db_newer_cache_exits_1(tmp_path: Path, extra_args: list[str]) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    db_path = tmp_path / ".okf-cache" / "okf-cache.db"
+    db_path.parent.mkdir(parents=True)
+    with sqlite3.connect(db_path) as conn:
+        conn.execute("PRAGMA user_version = 2;")
+
+    result = _runner().invoke(
+        cli, ["migrate-db", "--config", str(config_path), *extra_args]
+    )
+
+    assert result.exit_code == 1
+    assert "Cache migration error:" in result.stderr
+    assert "newer than the supported version 1" in result.stderr
+    assert result.stdout == ""
+    assert _user_version(db_path) == 2
+
+
+def test_migrate_db_unopenable_cache_exits_1(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    db_path = tmp_path / ".okf-cache" / "okf-cache.db"
+    db_path.parent.mkdir(parents=True)
+    db_path.write_bytes(b"this file is not a sqlite database, not even close\n" * 4)
+
+    result = _runner().invoke(cli, ["migrate-db", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    assert "Cache migration error: cache database could not be read" in result.stderr
+
+
+def test_scan_with_stale_cache_reports_cache_problems_and_exits_0(
+    tmp_path: Path,
+) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    db_path = _write_legacy_cache_db(tmp_path)
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    result = _runner().invoke(cli, ["scan", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert [c["concept_id"] for c in data["concepts"]] == ["a"]
+    assert data["problems"] == []
+    assert data["cache_problems"] == [
+        {
+            "db_path": str(db_path),
+            "kind": "cache-needs-migration",
+            "message": _MIGRATE_SENTENCE,
+        }
+    ]
+    assert result.stderr.splitlines() == [
+        "Scanned bundle 'default': 1 concepts, 0 problems",
+        f"Cache skipped for bundle 'default': {_MIGRATE_SENTENCE}",
+    ]
+    assert _user_version(db_path) == 0
+
+
+def test_scan_with_current_cache_has_empty_cache_problems(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    result = _runner().invoke(cli, ["scan", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["cache_problems"] == []
+    assert "Cache skipped" not in result.stderr
+
+
+def test_scan_quiet_with_stale_cache_exits_0_silently(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    _write_legacy_cache_db(tmp_path)
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    result = _runner().invoke(cli, ["scan", "--config", str(config_path), "--quiet"])
+
+    assert result.exit_code == 0
+    assert result.stdout == ""
+    assert result.stderr == ""
+
+
+def test_validate_with_stale_cache_is_not_a_validation_error(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    _write_legacy_cache_db(tmp_path)
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert json.loads(result.stdout)["findings"] == {}
+    assert "0 errors, 0 warnings" in result.stderr
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        ["list-concepts"],
+        ["list-concepts", "--with-graph-counts"],
+        ["graph"],
+        ["graph", "--broken"],
+        ["graph", "--concept", "a"],
+        ["context", "--seed", "a"],
+    ],
+    ids=[
+        "list-concepts",
+        "list-concepts-graph",
+        "graph",
+        "graph-broken",
+        "graph-concept",
+        "context",
+    ],
+)
+def test_optional_commands_report_stale_cache_once_and_exit_0(
+    tmp_path: Path, args: list[str]
+) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    db_path = _write_legacy_cache_db(tmp_path)
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    result = _runner().invoke(cli, [*args, "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert data["problems"] == []
+    assert data["cache_problems"] == [
+        {
+            "db_path": str(db_path),
+            "kind": "cache-needs-migration",
+            "message": _MIGRATE_SENTENCE,
+        }
+    ]
+    assert result.stderr.count("Cache skipped") == 1
+
+
+@pytest.mark.parametrize(
+    ("args", "prefix"),
+    [
+        (["search", "Alpha"], "Search configuration error: "),
+        (["unlinked-mentions"], "Unlinked mention configuration error: "),
+    ],
+    ids=["search", "unlinked-mentions"],
+)
+def test_required_commands_exit_2_on_stale_cache(
+    tmp_path: Path, args: list[str], prefix: str
+) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    db_path = _write_legacy_cache_db(tmp_path)
+    _write_concept(tmp_path / "a.md", title="Alpha")
+
+    result = _runner().invoke(cli, [*args, "--config", str(config_path)])
+
+    assert result.exit_code == 2
+    assert result.stderr.strip() == prefix + _MIGRATE_SENTENCE
+    assert result.stdout == ""
+    assert _user_version(db_path) == 0
+
+
+def test_search_works_after_migrate_db(tmp_path: Path) -> None:
+    config_path = _write_cached_bundle_config(tmp_path)
+    _write_legacy_cache_db(tmp_path)
+    _write_concept(tmp_path / "a.md", title="Alpha")
+    assert (
+        _runner().invoke(cli, ["migrate-db", "--config", str(config_path)]).exit_code
+        == 0
+    )
+
+    result = _runner().invoke(cli, ["search", "Alpha", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    assert [r["concept_id"] for r in json.loads(result.stdout)["results"]] == ["a"]
 
 
 # ---------------------------------------------------------------------------

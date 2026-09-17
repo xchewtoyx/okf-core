@@ -5,7 +5,7 @@ from __future__ import annotations
 import datetime
 import json
 import sys
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal, cast
 
@@ -15,6 +15,8 @@ from okf_core import (
     DEFAULT_LINK_SUGGESTION_HEADING,
     DEFAULT_LINK_SUGGESTION_HEADING_LEVEL,
     BundleConfig,
+    CacheMigrationError,
+    CacheSchemaStatus,
     ConceptManifestEntry,
     ConceptPathError,
     ConfigError,
@@ -38,9 +40,11 @@ from okf_core import (
     links_from,
     list_concepts,
     load_config,
+    migrate_cache,
     neighborhood,
     okf_version_for_index_write,
     parse_concept_document,
+    plan_cache_migration,
     plan_document_change,
     plan_document_change_from_reader,
     render_index_document,
@@ -284,7 +288,12 @@ def cli() -> None:
     help="Suppress command output and summary (does not suppress configuration/load errors).",
 )
 def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
-    """Scan a bundle and emit a JSON manifest."""
+    """Scan a bundle and emit a JSON manifest.
+
+    ``cache_problems`` in the output reports a configured SQLite cache that was
+    skipped (for example one that needs ``okf migrate-db``); the scan still
+    reads every document from disk, so this never affects the exit code.
+    """
     _, bundle = _load(config_path, bundle_name)
     manifest = scan_bundle(bundle)
     if not quiet:
@@ -304,6 +313,7 @@ def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
                 {"path": str(p.path), "kind": p.kind, "message": p.message}
                 for p in manifest.problems
             ],
+            "cache_problems": [_cache_problem_dict(p) for p in manifest.cache_problems],
         }
         click.echo(json.dumps(result, cls=_Encoder, indent=2))
         click.echo(
@@ -311,6 +321,7 @@ def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
             f"{len(manifest.problems)} problems",
             err=True,
         )
+        _echo_cache_problems(bundle.name, manifest.cache_problems)
     if quiet and manifest.problems:
         sys.exit(1)
 
@@ -413,12 +424,19 @@ def list_concepts_cmd(
     with_graph_counts: bool,
     with_content: bool,
 ) -> None:
-    """List addressable concepts for seed discovery."""
+    """List addressable concepts for seed discovery.
+
+    ``cache_problems`` in the output reports a configured SQLite cache that was
+    skipped (see ``okf scan``); it never affects the exit code.
+    """
     _, bundle = _load(config_path, bundle_name)
     manifest = scan_bundle(bundle)
     graph = build_bundle_graph(bundle, manifest=manifest) if with_graph_counts else None
     listing = list_concepts(
         bundle, manifest=manifest, graph=graph, with_content=with_content
+    )
+    cache_problems = (
+        graph.cache_problems if graph is not None else manifest.cache_problems
     )
 
     result = {
@@ -426,6 +444,7 @@ def list_concepts_cmd(
         "concepts": [_concept_listing_dict(concept) for concept in listing.concepts],
         "problems": [_listing_problem_dict(problem) for problem in listing.problems],
         "orphans": list(listing.orphans),
+        "cache_problems": [_cache_problem_dict(p) for p in cache_problems],
     }
     click.echo(json.dumps(result, cls=_Encoder, indent=2))
     orphan_info = f", {len(listing.orphans)} orphans" if with_graph_counts else ""
@@ -434,6 +453,7 @@ def list_concepts_cmd(
         f"{len(listing.problems)} problems{orphan_info}",
         err=True,
     )
+    _echo_cache_problems(bundle.name, cache_problems)
 
 
 @cli.command("search")
@@ -712,7 +732,12 @@ def context_cmd(
     direction: str,
     budget_chars: int | None,
 ) -> None:
-    """Build a deterministic context pack from seed concept IDs."""
+    """Build a deterministic context pack from seed concept IDs.
+
+    ``cache_problems`` in the output reports a configured SQLite cache that was
+    skipped (see ``okf scan``); unlike ``problems`` it never affects the exit
+    code.
+    """
     _, bundle = _load(config_path, bundle_name)
     pack = build_context_pack(
         bundle,
@@ -728,6 +753,7 @@ def context_cmd(
         "entries": [_context_entry_dict(entry) for entry in pack.entries],
         "omitted_concept_ids": list(pack.omitted_concept_ids),
         "problems": [_context_problem_dict(problem) for problem in pack.problems],
+        "cache_problems": [_cache_problem_dict(p) for p in pack.cache_problems],
     }
     click.echo(json.dumps(result, cls=_Encoder, indent=2))
     click.echo(
@@ -736,6 +762,7 @@ def context_cmd(
         f"{len(pack.problems)} problems",
         err=True,
     )
+    _echo_cache_problems(bundle.name, pack.cache_problems)
     if pack.problems:
         sys.exit(1)
 
@@ -785,7 +812,11 @@ def graph_cmd(
     depth: int,
     broken_only: bool,
 ) -> None:
-    """Inspect Markdown links and graph traversal for a bundle."""
+    """Inspect Markdown links and graph traversal for a bundle.
+
+    ``cache_problems`` in the output reports a configured SQLite cache that was
+    skipped (see ``okf scan``); it never affects the exit code.
+    """
     _, bundle = _load(config_path, bundle_name)
     graph = build_bundle_graph(bundle)
     concept_ids = {concept.concept_id for concept in graph.concepts}
@@ -826,12 +857,14 @@ def graph_cmd(
             "broken_links": [_link_dict(link) for link in graph.broken_links],
             "problems": [_graph_problem_dict(problem) for problem in graph.problems],
         }
+    result["cache_problems"] = [_cache_problem_dict(p) for p in graph.cache_problems]
     click.echo(json.dumps(result, cls=_Encoder, indent=2))
     click.echo(
         f"Built graph for bundle {bundle.name!r}: {len(graph.concepts)} concepts, "
         f"{len(graph.links)} links, {len(graph.broken_links)} broken",
         err=True,
     )
+    _echo_cache_problems(bundle.name, graph.cache_problems)
 
 
 @cli.command("graph-report")
@@ -1801,6 +1834,120 @@ def graph_repair_cmd(
     )
 
 
+@cli.command("migrate-db")
+@click.option(
+    "--config",
+    "config_path",
+    default=None,
+    metavar="PATH",
+    help="Path to okf-core.toml (default: search upward from cwd).",
+)
+@click.option(
+    "--bundle",
+    "bundle_name",
+    default="default",
+    show_default=True,
+    metavar="NAME",
+    help="Named bundle from config.",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report the pending schema change without writing anything.",
+)
+def migrate_db_cmd(
+    config_path: str | None,
+    bundle_name: str,
+    dry_run: bool,
+) -> None:
+    """Bring a bundle's SQLite cache database to the current schema version.
+
+    Ordinary commands never change the schema of an existing okf-cache.db.
+    When the file was written by an older okf-core, scan/graph/context run
+    without the cache and report it under cache_problems, and
+    search/unlinked-mentions exit 2 asking for this command. Running it
+    applies each pending version step inside one write transaction and
+    stamps PRAGMA user_version; a missing or empty file is created at the
+    current version, and a file already at the current version is left
+    untouched. Exit 0 in every one of those cases, 2 when the bundle has no
+    okf_cache_dir, and 1 when the migration fails or the file was written
+    by a newer okf-core than this one.
+    """
+    _, bundle = _load(config_path, bundle_name)
+    if bundle.okf_cache_dir is None:
+        click.echo(
+            f"Bundle {bundle.name!r} has no okf_cache_dir configured; "
+            "there is no cache database to migrate",
+            err=True,
+        )
+        sys.exit(2)
+
+    try:
+        if dry_run:
+            plan = plan_cache_migration(bundle)
+            status, changed, initialize = (
+                plan.status,
+                plan.would_change,
+                plan.would_initialize,
+            )
+            outcome: dict[str, Any] = {"would_change": changed}
+        else:
+            result = migrate_cache(bundle)
+            status, changed, initialize = (
+                result.status,
+                result.changed,
+                result.initialized,
+            )
+            outcome = {
+                "changed": changed,
+                "applied_versions": list(result.applied_versions),
+            }
+    except CacheMigrationError as exc:
+        click.echo(f"Cache migration error: {exc}", err=True)
+        sys.exit(1)
+
+    output = {
+        "bundle": bundle.name,
+        "db_path": str(status.db_path),
+        "found_state": status.state.value,
+        "found_version": status.found_version,
+        "current_version": status.current_version,
+        "dry_run": dry_run,
+        **outcome,
+    }
+    click.echo(json.dumps(output, cls=_Encoder, indent=2))
+    click.echo(
+        _migrate_db_summary(
+            bundle.name, status, dry_run=dry_run, changed=changed, initialize=initialize
+        ),
+        err=True,
+    )
+
+
+def _migrate_db_summary(
+    bundle_name: str,
+    status: CacheSchemaStatus,
+    *,
+    dry_run: bool,
+    changed: bool,
+    initialize: bool,
+) -> str:
+    """One stderr line describing what migrate-db did (or would do)."""
+    current = status.current_version
+    if not changed:
+        return (
+            f"Cache for bundle {bundle_name!r} is already at schema version {current}"
+        )
+    if initialize:
+        verb = "Dry run: would initialize" if dry_run else "Initialized"
+        return f"{verb} cache for bundle {bundle_name!r} at schema version {current}"
+    verb = "Dry run: would migrate" if dry_run else "Migrated"
+    return (
+        f"{verb} cache for bundle {bundle_name!r} from schema version "
+        f"{status.found_version} to {current}"
+    )
+
+
 @cli.command("list-bundles")
 @click.option(
     "--config",
@@ -2009,6 +2156,22 @@ def _graph_problem_dict(problem: Any) -> dict[str, Any]:
         "kind": problem.kind,
         "message": problem.message,
     }
+
+
+def _cache_problem_dict(problem: Any) -> dict[str, Any]:
+    return {
+        "db_path": str(problem.db_path),
+        "kind": problem.kind,
+        "message": problem.message,
+    }
+
+
+def _echo_cache_problems(bundle_name: str, problems: Sequence[Any]) -> None:
+    """One stderr line when the bundle's cache was skipped; never an exit code."""
+    if not problems:
+        return
+    reasons = "; ".join(problem.message for problem in problems)
+    click.echo(f"Cache skipped for bundle {bundle_name!r}: {reasons}", err=True)
 
 
 def _unresolved_link_dict(unresolved: Any) -> dict[str, Any]:
