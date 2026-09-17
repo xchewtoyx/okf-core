@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from okf_core.cache_db import CacheProblem
 from okf_core.config import BundleConfig
 from okf_core.graph import BundleGraph, ConceptLink, build_bundle_graph
 from okf_core.manifest import ConceptManifestEntry
@@ -38,13 +39,19 @@ class ContextPackProblem:
 
 @dataclass(frozen=True)
 class ContextPack:
-    """A deterministic seed-based context pack for one configured OKF bundle."""
+    """A deterministic seed-based context pack for one configured OKF bundle.
+
+    ``cache_problems`` is the underlying graph's report that the bundle's
+    SQLite cache was skipped (see ``BundleGraph.cache_problems``); it is not a
+    pack problem because the pack itself was built completely from disk.
+    """
 
     bundle_name: str
     seeds: tuple[str, ...]
     entries: tuple[ContextEntry, ...]
     omitted_concept_ids: tuple[str, ...]
     problems: tuple[ContextPackProblem, ...]
+    cache_problems: tuple[CacheProblem, ...] = ()
 
 
 def build_context_pack(
@@ -105,6 +112,7 @@ def build_context_pack(
         entries=tuple(entries),
         omitted_concept_ids=tuple(omitted),
         problems=tuple(problems),
+        cache_problems=resolved_graph.cache_problems,
     )
 
 

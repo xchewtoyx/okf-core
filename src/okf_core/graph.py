@@ -14,6 +14,7 @@ from urllib.parse import quote, unquote, urlsplit
 
 from markdown_it import MarkdownIt
 
+from okf_core.cache_db import CacheProblem
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError, parse_concept_document
 from okf_core.manifest import BundleManifest, ConceptManifestEntry, scan_bundle
@@ -144,13 +145,20 @@ class UnlinkedMentionsResult:
 
 @dataclass(frozen=True)
 class BundleGraph:
-    """A deterministic directed graph for one configured OKF bundle."""
+    """A deterministic directed graph for one configured OKF bundle.
+
+    ``cache_problems`` reports why the bundle's SQLite cache, if configured,
+    did not take part in the build (see ``BundleManifest.cache_problems``);
+    it also carries the manifest's own cache problems when the manifest was
+    scanned here, so a caller only has to look in one place.
+    """
 
     bundle_name: str
     concepts: tuple[ConceptManifestEntry, ...] = ()
     links: tuple[ConceptLink, ...] = ()
     broken_links: tuple[ConceptLink, ...] = ()
     problems: tuple[GraphProblem, ...] = ()
+    cache_problems: tuple[CacheProblem, ...] = ()
 
 
 def extract_markdown_links(markdown: str) -> tuple[MarkdownLink, ...]:
@@ -271,12 +279,34 @@ def build_bundle_graph(
             problems=tuple(
                 sorted(problems, key=lambda problem: (str(problem.path), problem.kind))
             ),
+            cache_problems=_merge_cache_problems(
+                resolved_manifest.cache_problems, pm.cache_problems
+            ),
         )
         pm.hook.okf_end_graph(bundle=bundle, graph=graph)
         return graph
     except Exception:
         pm.hook.okf_abort_graph(bundle=bundle)
         raise
+
+
+def _merge_cache_problems(
+    *groups: tuple[CacheProblem, ...],
+) -> tuple[CacheProblem, ...]:
+    """Concatenate cache problems, keeping the first of each (kind, db_path).
+
+    The scan nested inside a graph build opens the same cache file as the build
+    itself, so a stale cache would otherwise be reported twice.
+    """
+    seen: set[tuple[str, Path]] = set()
+    merged: list[CacheProblem] = []
+    for problem in (problem for group in groups for problem in group):
+        key = (problem.kind, problem.db_path)
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(problem)
+    return tuple(merged)
 
 
 def links_from(graph: BundleGraph, concept_id: str) -> tuple[ConceptLink, ...]:

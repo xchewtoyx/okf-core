@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import unquote, urlsplit
 
+from okf_core.cache_db import CacheDatabase, _write_transaction
 from okf_core.config import BundleConfig
 from okf_core.graph import BundleGraph, ConceptLink, compute_pagerank
 from okf_core.hooks import hookimpl
@@ -19,53 +20,20 @@ from okf_core.manifest import (
     _freeze_value,
 )
 
-# Held long enough to ride out a concurrent writer's flush (which is now a
-# short burst rather than a whole scan) without surfacing "database is locked".
-_BUSY_TIMEOUT_MS = 30000
-
-
-def _configure_connection(conn: sqlite3.Connection) -> None:
-    """Apply the PRAGMA configuration used by the cache plugin's connections.
-
-    WAL lets readers proceed while a writer is active; ``synchronous=NORMAL`` is
-    the WAL-safe setting that trims fsyncs so a write transaction releases its
-    lock sooner. ``busy_timeout`` is the backstop for the brief windows where
-    two writers still collide.
-    """
-    conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS};")
-    conn.execute("PRAGMA journal_mode = WAL;")
-    conn.execute("PRAGMA synchronous = NORMAL;")
-    conn.execute("PRAGMA foreign_keys = ON;")
-
-
-def _add_ctime_ns_column_if_missing(
-    conn: sqlite3.Connection, columns: set[str]
-) -> None:
-    """Add the legacy ctime_ns column, tolerating a concurrent migration winner."""
-    if "ctime_ns" in columns:
-        return
-    try:
-        conn.execute(
-            "ALTER TABLE concepts ADD COLUMN ctime_ns INTEGER DEFAULT 0 NOT NULL;"
-        )
-    except sqlite3.OperationalError as exc:
-        if "duplicate column name" not in str(exc).lower() or "ctime_ns" not in str(
-            exc
-        ):
-            raise
-
 
 class SqliteCachePlugin:
-    """SQLite caching plugin for OKF operations."""
+    """SQLite caching plugin for OKF operations.
 
-    def __init__(self, bundle: BundleConfig) -> None:
+    Takes an already-opened :class:`~okf_core.cache_db.CacheDatabase`, which
+    is the proof that the file exists at the current schema version. The
+    plugin therefore never creates directories, inspects the schema, or runs
+    DDL: every statement it issues is plain row-level SQL against a shape it
+    can rely on. See :func:`okf_core.cache_db.open_cache`.
+    """
+
+    def __init__(self, bundle: BundleConfig, db: CacheDatabase) -> None:
         self.bundle = bundle
-        if bundle.okf_cache_dir is None:
-            raise ValueError("okf_cache_dir is not configured")
-
-        self.cache_dir = bundle.okf_cache_dir
-        self.cache_dir.mkdir(parents=True, exist_ok=True)
-        self.db_path = self.cache_dir / "okf-cache.db"
+        self.db = db
         self._conn: sqlite3.Connection | None = None
         # Writes performed during a scan/graph phase are buffered here and
         # flushed in a single short transaction when the phase ends, so the
@@ -74,82 +42,9 @@ class SqliteCachePlugin:
         self._concept_ops: dict[str, tuple[str, tuple[Any, ...]]] = {}
         self._link_ops: dict[str, list[ConceptLink]] = {}
         self._active = False
-        self._init_db()
 
     def _connect(self) -> sqlite3.Connection:
-        # isolation_level=None puts the connection in autocommit mode so that
-        # transaction boundaries are explicit: reads never sit inside a lingering
-        # implicit transaction (which would pin the WAL and block checkpoints),
-        # and writes are wrapped in an explicit BEGIN IMMEDIATE at flush time.
-        conn = sqlite3.connect(
-            self.db_path, timeout=_BUSY_TIMEOUT_MS / 1000, isolation_level=None
-        )
-        _configure_connection(conn)
-        return conn
-
-    def _schema_ready(self, conn: sqlite3.Connection) -> bool:
-        """Return True if the concepts/links schema is already present.
-
-        Constructing a plugin happens on every bundle access; probing the
-        schema with reads and only issuing DDL when something is missing keeps
-        the common (already-initialised) path from taking a write lock and
-        contending with a concurrent scan. The probe covers the performance
-        indexes too, so a cache that predates them (or was hand-edited) is still
-        repaired by _init_db rather than silently running unindexed scans.
-        """
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(concepts);")}
-        if not {"concept_id", "ctime_ns"} <= columns:
-            return False
-        link_columns = {row[1] for row in conn.execute("PRAGMA table_info(links);")}
-        if "source_concept_id" not in link_columns:
-            return False
-        indexes = {
-            row[0]
-            for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'index';"
-            )
-        }
-        return {"idx_links_source", "idx_concepts_path"} <= indexes
-
-    def _init_db(self) -> None:
-        """Create tables if they do not exist."""
-        with self._connect() as conn:
-            if self._schema_ready(conn):
-                return
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS concepts (
-                    concept_id TEXT PRIMARY KEY,
-                    stable_id TEXT,
-                    path TEXT NOT NULL,
-                    sha256 TEXT NOT NULL,
-                    mtime_ns INTEGER NOT NULL,
-                    size INTEGER NOT NULL,
-                    frontmatter TEXT NOT NULL,
-                    links_resolved INTEGER DEFAULT 0,
-                    pagerank REAL DEFAULT 0.0,
-                    ctime_ns INTEGER DEFAULT 0 NOT NULL
-                );
-                """)
-            conn.execute("""
-                CREATE TABLE IF NOT EXISTS links (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    source_concept_id TEXT NOT NULL,
-                    target_concept_id TEXT,
-                    text TEXT NOT NULL,
-                    target TEXT NOT NULL,
-                    FOREIGN KEY (source_concept_id) REFERENCES concepts(concept_id) ON DELETE CASCADE
-                );
-                """)
-            # Create indexes for performance
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_links_source ON links(source_concept_id);"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_concepts_path ON concepts(path);"
-            )
-            # Migrate old schemas that predate ctime_ns.
-            columns = {row[1] for row in conn.execute("PRAGMA table_info(concepts);")}
-            _add_ctime_ns_column_if_missing(conn, columns)
+        return self.db.connect()
 
     def __del__(self) -> None:
         """Defensive fallback to close connection on garbage collection."""
@@ -252,9 +147,7 @@ class SqliteCachePlugin:
             # Flush every buffered write plus the obsolete-row pruning in one
             # short transaction. Nothing to flush (warm cache) skips the lock.
             if self._concept_ops or obsolete_ids:
-                conn = self._conn
-                conn.execute("BEGIN IMMEDIATE TRANSACTION;")
-                try:
+                with _write_transaction(self._conn) as conn:
                     for kind, params in self._concept_ops.values():
                         self._apply_concept_op(conn, kind, params)
                     if obsolete_ids:
@@ -262,10 +155,6 @@ class SqliteCachePlugin:
                             "DELETE FROM concepts WHERE concept_id = ?",
                             [(obs_id,) for obs_id in obsolete_ids],
                         )
-                    conn.execute("COMMIT;")
-                except Exception:
-                    conn.execute("ROLLBACK;")
-                    raise
         finally:
             # Always drop buffers and close the phase connection, even if the
             # flush raised: otherwise the read connection lingers and pins the
@@ -317,9 +206,7 @@ class SqliteCachePlugin:
             ]
 
             if self._link_ops or pagerank_updates:
-                conn = self._conn
-                conn.execute("BEGIN IMMEDIATE TRANSACTION;")
-                try:
+                with _write_transaction(self._conn) as conn:
                     for source_concept_id, links in self._link_ops.items():
                         self._apply_link_op(conn, source_concept_id, links)
                     for concept_id, pr_value in pagerank_updates:
@@ -327,10 +214,6 @@ class SqliteCachePlugin:
                             "UPDATE concepts SET pagerank = ? WHERE concept_id = ?",
                             (pr_value, concept_id),
                         )
-                    conn.execute("COMMIT;")
-                except Exception:
-                    conn.execute("ROLLBACK;")
-                    raise
         finally:
             # Always drop buffers and close the phase connection, even if the
             # flush raised (see okf_end_scan).
@@ -464,13 +347,8 @@ class SqliteCachePlugin:
                 self._concept_ops[entry.concept_id] = op
             else:
                 # Out-of-band call outside a scan phase: apply immediately.
-                conn.execute("BEGIN IMMEDIATE TRANSACTION;")
-                try:
+                with _write_transaction(conn):
                     self._apply_concept_op(conn, op[0], op[1])
-                    conn.execute("COMMIT;")
-                except Exception:
-                    conn.execute("ROLLBACK;")
-                    raise
 
     @hookimpl
     def okf_fetch_resolve_links(
@@ -558,18 +436,8 @@ class SqliteCachePlugin:
             if self._active:
                 self._link_ops[entry.concept_id] = list(links)
             else:
-                conn.execute("BEGIN IMMEDIATE TRANSACTION;")
-                try:
+                with _write_transaction(conn):
                     self._apply_link_op(conn, entry.concept_id, list(links))
-                    conn.execute("COMMIT;")
-                except Exception:
-                    conn.execute("ROLLBACK;")
-                    raise
-
-
-def get_cache_plugin(bundle: BundleConfig) -> SqliteCachePlugin:
-    """Create and return the SQLite Cache Plugin instance."""
-    return SqliteCachePlugin(bundle)
 
 
 def _unfreeze_value(value: Any) -> Any:

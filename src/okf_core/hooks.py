@@ -39,12 +39,20 @@ Plugin authors implementing ``@hookimpl`` methods must use the exact names above
 
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pluggy
 
+from okf_core.cache_db import (
+    CacheDatabase,
+    CacheProblem,
+    CacheSchemaError,
+    cache_db_path,
+    open_cache,
+)
 from okf_core.config import BundleConfig
 
 if TYPE_CHECKING:
@@ -190,17 +198,58 @@ class OkfSpec:
         """
 
 
-def get_hook_manager(bundle: BundleConfig) -> pluggy.PluginManager:
+class OkfPluginManager(pluggy.PluginManager):
+    """A ``pluggy.PluginManager`` that also reports why a cache plugin is absent.
+
+    ``cache_problems`` is empty when the bundle has no cache configured or the
+    cache plugin registered normally. It carries one
+    :class:`~okf_core.cache_db.CacheProblem` per reason the SQLite cache was
+    skipped (a stale schema that needs ``okf migrate-db``, a schema newer than
+    this okf-core supports, or a file SQLite could not open), so callers that
+    tolerate running without the cache can still tell the user it was skipped.
+    """
+
+    def __init__(self, project_name: str) -> None:
+        super().__init__(project_name)
+        self.cache_problems: tuple[CacheProblem, ...] = ()
+
+
+def get_hook_manager(bundle: BundleConfig) -> OkfPluginManager:
     """Initialize and return a plugin manager for the given bundle config.
 
-    If `bundle.okf_cache_dir` is configured, the SQLite cache plugin is loaded and registered.
+    If ``bundle.okf_cache_dir`` is configured, the cache file is opened through
+    :func:`okf_core.cache_db.open_cache` (creating a missing one at the
+    current schema version) and the SQLite cache plugin is registered. A file
+    that cannot be used as-is is never written to here: the plugin is left
+    unregistered and the reason is attached as ``cache_problems`` on the
+    returned manager, so scans and graph builds proceed uncached.
     """
-    pm = pluggy.PluginManager("okf")
+    pm = OkfPluginManager("okf")
     pm.add_hookspecs(OkfSpec)
 
     if bundle.okf_cache_dir is not None:
-        from okf_core.cache import get_cache_plugin
+        db, problems = _open_cache_for_hooks(bundle)
+        if db is not None:
+            from okf_core.cache import SqliteCachePlugin
 
-        pm.register(get_cache_plugin(bundle))
+            pm.register(SqliteCachePlugin(bundle, db))
+        pm.cache_problems = problems
 
     return pm
+
+
+def _open_cache_for_hooks(
+    bundle: BundleConfig,
+) -> tuple[CacheDatabase | None, tuple[CacheProblem, ...]]:
+    """Open the bundle's cache, converting a refusal into a reportable problem."""
+    try:
+        return open_cache(bundle), ()
+    except CacheSchemaError as exc:
+        return None, (exc.problem,)
+    except sqlite3.Error as exc:
+        problem = CacheProblem(
+            db_path=cache_db_path(bundle),
+            kind="cache-unavailable",
+            message=f"cache database could not be opened: {exc}",
+        )
+        return None, (problem,)

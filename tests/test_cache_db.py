@@ -22,12 +22,17 @@ from okf_core import (
     CacheProblem,
     CacheSchemaError,
     CacheSchemaState,
+    build_bundle_graph,
+    build_context_pack,
     inspect_cache,
     migrate_cache,
     open_cache,
     plan_cache_migration,
+    scan_bundle,
 )
+from okf_core.cache import SqliteCachePlugin
 from okf_core.cache_db import CURRENT_SCHEMA_VERSION, cache_db_path
+from okf_core.hooks import get_hook_manager
 
 MIGRATE_SENTENCE = "cache schema version 0 requires migration to 1; run okf migrate-db"
 
@@ -46,6 +51,13 @@ def _bundle(tmp_path: Path, cache_dir: Path | None) -> BundleConfig:
         reserved_filenames=("index.md", "log.md"),
         concept_path_strategy="relative-path",
         okf_cache_dir=cache_dir,
+    )
+
+
+def _write_concept(path: Path, title: str, body: str = "Body\n") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        f"---\ntype: concept\ntitle: {title}\n---\n{body}", encoding="utf-8"
     )
 
 
@@ -624,3 +636,157 @@ def test_migrate_cache_rollback_leaves_legacy_file_openable_by_migrate_again(
 
     assert result.applied_versions == (1,)
     _assert_current_shape(path)
+
+
+# ---------------------------------------------------------------------------
+# Consumers: the hook manager registers the plugin only for a current file and
+# reports every other outcome as a cache problem that scans, graphs, and
+# context packs carry without failing.
+# ---------------------------------------------------------------------------
+
+
+def test_hook_manager_registers_plugin_for_current_or_missing_cache(
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+
+    pm = get_hook_manager(bundle)
+
+    assert pm.cache_problems == ()
+    assert any(isinstance(p, SqliteCachePlugin) for p in pm.get_plugins())
+    _assert_current_shape(cache_db_path(bundle))
+
+
+def test_hook_manager_without_cache_dir_has_no_plugin_and_no_problems(
+    tmp_path: Path,
+) -> None:
+    pm = get_hook_manager(_bundle(tmp_path, None))
+
+    assert pm.cache_problems == ()
+    assert not any(isinstance(p, SqliteCachePlugin) for p in pm.get_plugins())
+
+
+@pytest.mark.parametrize(
+    ("writer", "kind"),
+    [
+        (_write_legacy_cache, "cache-needs-migration"),
+        (_write_fts_only_cache, "cache-needs-migration"),
+        (_write_newer_cache, "cache-unsupported-version"),
+    ],
+    ids=["legacy", "fts-only", "newer"],
+)
+def test_hook_manager_skips_plugin_and_reports_refused_cache(
+    tmp_path: Path, writer: Callable[[BundleConfig], Path], kind: str
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    path = writer(bundle)
+    version_before = _user_version(path)
+
+    pm = get_hook_manager(bundle)
+
+    assert not any(isinstance(p, SqliteCachePlugin) for p in pm.get_plugins())
+    assert [problem.kind for problem in pm.cache_problems] == [kind]
+    assert pm.cache_problems[0].db_path == path
+    assert _user_version(path) == version_before
+
+
+def test_hook_manager_reports_unopenable_cache_file(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _db_path(bundle).write_bytes(b"definitely not a sqlite database file at all\n" * 4)
+
+    pm = get_hook_manager(bundle)
+
+    assert not any(isinstance(p, SqliteCachePlugin) for p in pm.get_plugins())
+    assert [problem.kind for problem in pm.cache_problems] == ["cache-unavailable"]
+    assert "could not be opened" in pm.cache_problems[0].message
+
+
+def test_scan_bundle_with_stale_cache_succeeds_and_reports_cache_problem(
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _write_concept(bundle.bundle_root / "a.md", "Alpha")
+    path = _write_legacy_cache(bundle)
+
+    manifest = scan_bundle(bundle)
+
+    assert [entry.concept_id for entry in manifest.concepts] == ["a"]
+    assert manifest.problems == ()
+    assert manifest.cache_problems == (
+        CacheProblem(
+            db_path=path, kind="cache-needs-migration", message=MIGRATE_SENTENCE
+        ),
+    )
+    # The stale file was left exactly as found: no column, no index, no stamp,
+    # and the scan's rows were not written into it.
+    assert "ctime_ns" not in _columns(path, "concepts")
+    assert _indexes(path) == set()
+    assert _user_version(path) == 0
+    with sqlite3.connect(path) as conn:
+        assert conn.execute("SELECT count(*) FROM concepts;").fetchone()[0] == 1
+
+
+def test_scan_bundle_with_current_cache_reports_no_cache_problems(
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _write_concept(bundle.bundle_root / "a.md", "Alpha")
+
+    manifest = scan_bundle(bundle)
+
+    assert manifest.cache_problems == ()
+    _assert_current_shape(cache_db_path(bundle))
+
+
+def test_build_bundle_graph_reports_stale_cache_once(tmp_path: Path) -> None:
+    """The nested scan and the graph build open the same file; report it once."""
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _write_concept(bundle.bundle_root / "a.md", "Alpha", body="[B](b.md)\n")
+    _write_concept(bundle.bundle_root / "b.md", "Beta")
+    path = _write_legacy_cache(bundle)
+
+    graph = build_bundle_graph(bundle)
+
+    assert [link.target_concept_id for link in graph.links] == ["b"]
+    assert graph.problems == ()
+    assert [(p.kind, p.db_path) for p in graph.cache_problems] == [
+        ("cache-needs-migration", path)
+    ]
+
+
+def test_build_bundle_graph_with_given_manifest_merges_cache_problems(
+    tmp_path: Path,
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _write_concept(bundle.bundle_root / "a.md", "Alpha")
+    _write_legacy_cache(bundle)
+    manifest = scan_bundle(bundle)
+
+    graph = build_bundle_graph(bundle, manifest=manifest)
+
+    assert graph.cache_problems == manifest.cache_problems
+    assert len(graph.cache_problems) == 1
+
+
+def test_build_context_pack_carries_graph_cache_problems(tmp_path: Path) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _write_concept(bundle.bundle_root / "a.md", "Alpha")
+    _write_legacy_cache(bundle)
+
+    pack = build_context_pack(bundle, ["a"])
+
+    assert [entry.concept_id for entry in pack.entries] == ["a"]
+    assert pack.problems == ()
+    assert [p.kind for p in pack.cache_problems] == ["cache-needs-migration"]
+
+
+def test_plugin_construction_runs_no_schema_work(tmp_path: Path) -> None:
+    """The plugin trusts the CacheDatabase brand: no mkdir, no probe, no DDL."""
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    path = _write_current_cache(bundle)
+    with sqlite3.connect(path) as conn:
+        conn.execute("DROP INDEX idx_links_source;")
+
+    SqliteCachePlugin(bundle, CacheDatabase(path=path))
+
+    assert "idx_links_source" not in _indexes(path)
