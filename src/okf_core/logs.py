@@ -446,15 +446,6 @@ def load_log(path: Path) -> ParsedLog:
 
 
 def log_conformance_findings(parsed: ParsedLog) -> tuple[ValidationFinding, ...]:
-    """Report OKF v0.2 §9 heading-format and newest-first date-order errors.
-
-    Heading-format problems come from ``parse_log``: date headings MUST be
-    ISO 8601 ``YYYY-MM-DD`` calendar dates. Stray-block, nested-block, and
-    empty-entry problems are ignored. Date order is checked here, not in
-    ``parse_log``, so writers that re-sort via ``_insert_entry_for_date``
-    still accept an out-of-order log. Newest-first means strictly decreasing
-    ISO date strings. Duplicate dates are a violation.
-    """
     findings: list[ValidationFinding] = []
     for problem in parsed.problems:
         heading_finding = _heading_format_finding(problem)
@@ -850,8 +841,6 @@ def _date_section_from_heading(
 
     Returns ``(date, None)`` on success, or ``(None, LogParseProblem)`` when
     the heading is empty or not a valid calendar date in that form.
-    Problem messages start with ``_MALFORMED_DATE_HEADING_PREFIX`` so
-    ``log_conformance_findings`` can promote them without a copied string.
     """
     text = (heading_text or "").strip()
     if not text:

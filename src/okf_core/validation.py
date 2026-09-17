@@ -94,12 +94,6 @@ def validate_bundle(
 
 
 def _committed_log_paths(bundle: BundleConfig) -> tuple[Path, ...]:
-    """Collect every existing ``log.md`` under the bundle root.
-
-    Spec §9 says ``log.md`` MAY appear at any hierarchy level, so this walk
-    is not limited to concept-bearing directories. The exact name ``log.md``
-    matches how index drift looks for exact ``index.md``.
-    """
     root = bundle.bundle_root.resolve()
     if not root.is_dir():
         return ()
