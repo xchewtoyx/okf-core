@@ -126,13 +126,7 @@ def search_concepts(
 
 
 def _open_search_cache(bundle: BundleConfig, feature: str) -> CacheDatabase:
-    """Open the bundle's cache for FTS use, mapping every refusal to SearchConfigError.
-
-    ``feature`` names the caller in the no-cache-dir message ("search" or
-    "find_unlinked_mentions"). A stale or too-new schema is reported with the
-    same sentence the cache layer uses everywhere else, including the exact
-    ``run okf migrate-db`` instruction.
-    """
+    """Open the bundle's cache for FTS use, mapping every refusal to SearchConfigError."""
     if bundle.okf_cache_dir is None:
         raise SearchConfigError(
             "okf_cache_dir is not configured; enable bundle-level caching to use "
@@ -149,13 +143,6 @@ def _prepare_search_index(
     bundle: BundleConfig,
     listing: BundleListing | None,
 ) -> bool:
-    """Make ``concept_fts`` queryable and say whether it is.
-
-    With a listing, the table is created if needed and rebuilt from the
-    listing inside one write transaction (always True afterwards). Without one
-    (``refresh=False``) nothing is written: the answer is simply whether an
-    index already exists to read.
-    """
     if listing is None:
         return _has_search_index(conn)
     with _write_transaction(conn):

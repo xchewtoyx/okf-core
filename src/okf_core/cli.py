@@ -1932,7 +1932,6 @@ def _migrate_db_summary(
     changed: bool,
     initialize: bool,
 ) -> str:
-    """One stderr line describing what migrate-db did (or would do)."""
     current = status.current_version
     if not changed:
         return (
@@ -2167,7 +2166,6 @@ def _cache_problem_dict(problem: Any) -> dict[str, Any]:
 
 
 def _echo_cache_problems(bundle_name: str, problems: Sequence[Any]) -> None:
-    """One stderr line when the bundle's cache was skipped; never an exit code."""
     if not problems:
         return
     reasons = "; ".join(problem.message for problem in problems)

@@ -178,7 +178,6 @@ def test_title_match_in_metadata_not_suggested(tmp_path: Path) -> None:
 def test_no_refresh_with_no_index_yields_nothing_and_creates_no_index(
     tmp_path: Path,
 ) -> None:
-    """refresh=False is read-only: an unbuilt FTS index is not created."""
     root = tmp_path / "docs"
     _write_concept(root / "alpha.md", title="Alpha")
     _write_concept(root / "beta.md", title="Beta", body="See Alpha for details.\n")
@@ -215,7 +214,6 @@ def test_read_error_surfaces_in_problems(tmp_path: Path) -> None:
 
 
 def test_listing_problem_surfaces_as_graph_problem(tmp_path: Path) -> None:
-    """A concept the listing skips (no ``type``) is reported, not silently dropped."""
     root = tmp_path / "docs"
     _write_concept(root / "alpha.md", title="Alpha")
     (root / "untyped.md").write_text(

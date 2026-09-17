@@ -296,11 +296,6 @@ def build_bundle_graph(
 def _merge_cache_problems(
     *groups: tuple[CacheProblem, ...],
 ) -> tuple[CacheProblem, ...]:
-    """Concatenate cache problems, keeping the first of each (kind, db_path).
-
-    The scan nested inside a graph build opens the same cache file as the build
-    itself, so a stale cache would otherwise be reported twice.
-    """
     seen: set[tuple[str, Path]] = set()
     merged: list[CacheProblem] = []
     for problem in (problem for group in groups for problem in group):

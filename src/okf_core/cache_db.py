@@ -2,10 +2,7 @@
 
 This is the one module that knows where a bundle's SQLite cache lives, how a
 connection to it is configured, which schema version it is at, how a missing
-file is created, and how an older file is upgraded. It imports only the
-standard library and :mod:`okf_core.config`, so every cache consumer
-(:mod:`okf_core.cache`, :mod:`okf_core.search`, :mod:`okf_core.graph`) can
-open the file through it without an import cycle.
+file is created, and how an older file is upgraded.
 
 The schema version is ``PRAGMA user_version``. Version ``0`` is what every
 cache written before versioning reports, so a version-``0`` file is classified
@@ -28,20 +25,11 @@ from okf_core.config import BundleConfig
 
 DB_FILENAME: Final = "okf-cache.db"
 
-# Held long enough to ride out a concurrent writer's flush (a short burst, not
-# a whole scan) without surfacing "database is locked".
 _BUSY_TIMEOUT_MS: Final = 30_000
 
 
 def _migrate_0_to_1(conn: sqlite3.Connection) -> None:
-    """Bring an unversioned (or empty) file to the version 1 shape.
-
-    Pre-versioning caches exist in two shapes: 0.4.0/0.4.1 files without
-    ``ctime_ns`` and 0.4.2+ files that already match version 1. ``IF NOT
-    EXISTS`` covers the tables and indexes; the column is the one thing an
-    existing table has to be altered for, checked under the write lock the
-    runner already holds so no concurrent step can add it in between.
-    """
+    """Bring an unversioned (or empty) file to the version 1 shape."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS concepts (
             concept_id TEXT PRIMARY KEY,
@@ -77,10 +65,6 @@ def _migrate_0_to_1(conn: sqlite3.Connection) -> None:
     conn.execute("CREATE INDEX IF NOT EXISTS idx_concepts_path ON concepts(path);")
 
 
-# MIGRATIONS[n] upgrades schema version n to n + 1. The runner stamps
-# user_version after each step, so a step cannot forget to. concept_fts is
-# deliberately absent: it is a derived search index owned by search.py and
-# rebuilt from the bundle on every refresh, not versioned state.
 MIGRATIONS: Final[tuple[Callable[[sqlite3.Connection], None], ...]] = (_migrate_0_to_1,)
 
 CURRENT_SCHEMA_VERSION: Final[int] = len(MIGRATIONS)
@@ -110,9 +94,6 @@ class CacheProblem:
     message: str
 
 
-# Templates for the two states an ordinary command refuses to use. The
-# OUTDATED sentence is the one the CLI, SearchConfigError, and cache_problems
-# all report, so it lives in exactly one place.
 _REFUSALS: Final[dict[CacheSchemaState, tuple[str, str]]] = {
     CacheSchemaState.OUTDATED: (
         "cache-needs-migration",
@@ -177,9 +158,9 @@ class CacheMigrationError(Exception):
 class CacheDatabase:
     """A cache file verified to be at the current schema version.
 
-    Only :func:`open_cache` constructs one. Holding it is the proof that the
-    versioned schema is current, so every reader and writer downstream runs
-    plain SQL with no shape probing, no ``IF NOT EXISTS``, and no ``ALTER``.
+    Holding it is the proof that the versioned schema is current, so every
+    reader and writer downstream runs plain SQL with no shape probing, no
+    ``IF NOT EXISTS``, and no ``ALTER``.
     """
 
     path: Path
@@ -357,7 +338,6 @@ def _connect_configured(db_path: Path) -> sqlite3.Connection:
 
 @contextlib.contextmanager
 def _write_transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
-    """Run a block inside one ``BEGIN IMMEDIATE``, committing or rolling back."""
     conn.execute("BEGIN IMMEDIATE TRANSACTION;")
     try:
         yield conn
@@ -367,9 +347,6 @@ def _write_transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]
     conn.execute("COMMIT;")
 
 
-# Any okf-owned table under user_version 0 marks a file written before
-# versioning existed. An FTS-only leftover counts: an ordinary command must
-# not add concepts/links to an existing file; only migrate-db may.
 _VERSION_ZERO_MARKERS: Final = frozenset({"concepts", "concept_fts"})
 
 
@@ -391,15 +368,6 @@ def _classify(conn: sqlite3.Connection) -> tuple[CacheSchemaState, int]:
 
 
 def _upgrade_locked(db_path: Path, *, migrate_outdated: bool) -> tuple[int, ...]:
-    """Apply every pending version step under one write lock.
-
-    Re-classifies inside the lock: a concurrent opener or migrator that won
-    the race leaves the file CURRENT, and this call then applies nothing.
-    With ``migrate_outdated=False`` (an ordinary open) an OUTDATED file found
-    under the lock raises :class:`CacheSchemaError` instead of being upgraded.
-    Returns the versions stamped, in order. The connection is closed before
-    returning.
-    """
     conn = _connect_configured(db_path)
     try:
         with _write_transaction(conn):
@@ -416,7 +384,6 @@ def _upgrade_locked(db_path: Path, *, migrate_outdated: bool) -> tuple[int, ...]
 
 
 def _apply_migrations(conn: sqlite3.Connection, from_version: int) -> tuple[int, ...]:
-    """Run each step after ``from_version`` and stamp ``user_version`` after it."""
     targets = tuple(range(from_version + 1, CURRENT_SCHEMA_VERSION + 1))
     for target in targets:
         MIGRATIONS[target - 1](conn)

@@ -1,10 +1,4 @@
-"""Tests for the versioned cache file: classification, init, and migration.
-
-Every fixture here is a real SQLite file written with hand-rolled DDL, so the
-tests exercise the same on-disk shapes okf-core has shipped (0.4.0 caches
-without ``ctime_ns``, search-only leftovers, current files) rather than fake
-connections.
-"""
+"""Tests for the versioned cache file: classification, init, and migration."""
 
 from __future__ import annotations
 
@@ -40,11 +34,6 @@ from okf_core.cache_db import CURRENT_SCHEMA_VERSION, cache_db_path
 from okf_core.hooks import get_hook_manager
 
 MIGRATE_SENTENCE = "cache schema version 0 requires migration to 1; run okf migrate-db"
-
-
-# ---------------------------------------------------------------------------
-# Fixture builders: one per on-disk shape okf-core has to recognise.
-# ---------------------------------------------------------------------------
 
 
 def _bundle(tmp_path: Path, cache_dir: Path | None) -> BundleConfig:
@@ -86,7 +75,6 @@ def _write_unrelated_table(bundle: BundleConfig) -> Path:
 
 
 def _write_legacy_cache(bundle: BundleConfig) -> Path:
-    """The 0.4.0/0.4.1 shape: concepts without ctime_ns, links, no indexes."""
     path = _db_path(bundle)
     with sqlite3.connect(path) as conn:
         conn.execute("""
@@ -120,7 +108,6 @@ def _write_legacy_cache(bundle: BundleConfig) -> Path:
 
 
 def _write_fts_only_cache(bundle: BundleConfig) -> Path:
-    """A file ``okf search`` created before the concept cache ever ran."""
     path = _db_path(bundle)
     with sqlite3.connect(path) as conn:
         conn.execute("""
@@ -145,11 +132,6 @@ def _write_stamped_version(bundle: BundleConfig, version: int) -> Path:
 
 def _write_newer_cache(bundle: BundleConfig) -> Path:
     return _write_stamped_version(bundle, CURRENT_SCHEMA_VERSION + 1)
-
-
-# ---------------------------------------------------------------------------
-# Read-only probes.
-# ---------------------------------------------------------------------------
 
 
 def _user_version(path: Path) -> int:
@@ -197,11 +179,6 @@ def _assert_current_shape(path: Path) -> None:
     assert {"idx_links_source", "idx_concepts_path"} <= _indexes(path)
 
 
-# ---------------------------------------------------------------------------
-# Classification.
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.parametrize(
     ("writer", "expected_state", "expected_version"),
     [
@@ -242,7 +219,6 @@ def test_inspect_cache_classifies_each_on_disk_shape(
 
 
 def test_stamped_version_is_trusted_over_table_shape(tmp_path: Path) -> None:
-    """user_version is the only stamp: a version-1 file is CURRENT even if empty."""
     bundle = _bundle(tmp_path, tmp_path / "cache")
     _write_stamped_version(bundle, CURRENT_SCHEMA_VERSION)
 
@@ -252,13 +228,6 @@ def test_stamped_version_is_trusted_over_table_shape(tmp_path: Path) -> None:
 def test_stamped_older_version_is_outdated_under_a_newer_schema(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The step this design exists for: today's file once the next version ships.
-
-    Only one migration exists yet, so the future current version is simulated
-    by patching the module constant that the classifier and the refusal
-    message both read at call time. Classification only; migrating under the
-    simulation would need a registry step that does not exist.
-    """
     bundle = _bundle(tmp_path, tmp_path / "cache")
     path = _write_current_cache(bundle)
     monkeypatch.setattr(cache_db, "CURRENT_SCHEMA_VERSION", CURRENT_SCHEMA_VERSION + 1)
@@ -319,7 +288,6 @@ def test_status_problem_is_none_for_usable_states(
 
 
 def test_inspect_cache_does_not_touch_the_file(tmp_path: Path) -> None:
-    """Inspection is a pure read: no journal-mode switch, no WAL sidecar, no stamp."""
     bundle = _bundle(tmp_path, tmp_path / "cache")
     path = _write_legacy_cache(bundle)
     assert _journal_mode(path) == "delete"
@@ -357,12 +325,6 @@ def test_unreadable_file_propagates_from_inspect_and_wraps_in_plan(
         inspect_cache(bundle)
     with pytest.raises(CacheMigrationError, match="could not be read"):
         plan_cache_migration(bundle)
-
-
-# ---------------------------------------------------------------------------
-# Ordinary open: initialise what is empty, refuse what is stale, read what is
-# current.
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.parametrize(
@@ -422,11 +384,6 @@ def test_open_cache_refuses_newer_file(tmp_path: Path) -> None:
 def test_open_cache_recheck_inside_the_lock_refuses_a_file_that_became_legacy(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The write-lock re-classification, not the first look, protects the file.
-
-    Simulates the race in which the unlocked inspection saw an empty file but
-    an older okf-core created its tables before the initializer took the lock.
-    """
     bundle = _bundle(tmp_path, tmp_path / "cache")
     path = _write_legacy_cache(bundle)
     stale_look = CacheSchemaStatus(
@@ -444,11 +401,6 @@ def test_open_cache_recheck_inside_the_lock_refuses_a_file_that_became_legacy(
 
 
 def test_open_cache_current_file_runs_no_ddl(tmp_path: Path) -> None:
-    """A current file is trusted as-is: a dropped index is not put back.
-
-    This is the deliberate inverse of the pre-versioning behaviour, where every
-    open probed the shape and repaired it. Repair is now migrate-db's job.
-    """
     bundle = _bundle(tmp_path, tmp_path / "cache")
     path = _write_current_cache(bundle)
     with sqlite3.connect(path) as conn:
@@ -461,11 +413,6 @@ def test_open_cache_current_file_runs_no_ddl(tmp_path: Path) -> None:
 
 
 def test_open_cache_current_file_needs_no_write_lock(tmp_path: Path) -> None:
-    """Opening a current file must succeed while another writer holds the lock.
-
-    The open is a PRAGMA user_version read; if it took BEGIN IMMEDIATE it would
-    sit behind the blocker for the full busy timeout.
-    """
     bundle = _bundle(tmp_path, tmp_path / "cache")
     path = _write_current_cache(bundle)
     blocker = sqlite3.connect(path, isolation_level=None)
@@ -476,7 +423,7 @@ def test_open_cache_current_file_needs_no_write_lock(tmp_path: Path) -> None:
     def open_pass() -> None:
         try:
             result["db"] = open_cache(bundle)
-        except Exception as exc:  # noqa: BLE001 - collect failure # pragma: no cover
+        except Exception as exc:  # noqa: BLE001
             result["error"] = exc
 
     worker = threading.Thread(target=open_pass)
@@ -502,7 +449,7 @@ def test_concurrent_first_time_open_converges(tmp_path: Path) -> None:
         try:
             start.wait()
             db = open_cache(bundle)
-        except Exception as exc:  # noqa: BLE001 - collect failure # pragma: no cover
+        except Exception as exc:  # noqa: BLE001
             with lock:
                 errors.append(exc)
             return
@@ -521,7 +468,6 @@ def test_concurrent_first_time_open_converges(tmp_path: Path) -> None:
 
 
 def test_connect_applies_shared_connection_settings(tmp_path: Path) -> None:
-    """The one connection helper carries every PRAGMA the cache relies on."""
     bundle = _bundle(tmp_path, tmp_path / "cache")
     conn = open_cache(bundle).connect()
     try:
@@ -532,12 +478,6 @@ def test_connect_applies_shared_connection_settings(tmp_path: Path) -> None:
         assert conn.execute("PRAGMA foreign_keys;").fetchone()[0] == 1
     finally:
         conn.close()
-
-
-# ---------------------------------------------------------------------------
-# Migration: plan writes nothing; apply is a version-to-version step that is
-# safe to repeat.
-# ---------------------------------------------------------------------------
 
 
 def test_plan_cache_migration_reports_legacy_upgrade_without_writing(
@@ -657,12 +597,8 @@ def test_migrate_cache_refuses_newer_file_and_leaves_it_alone(tmp_path: Path) ->
 def test_migrate_cache_surfaces_unrelated_operational_error_from_alter(
     tmp_path: Path,
 ) -> None:
-    """The 0->1 ALTER must not swallow errors other than its own success.
-
-    A view named ``concepts`` slips past ``CREATE TABLE IF NOT EXISTS`` and
-    reports no ``ctime_ns`` column, so the step reaches its ALTER and SQLite
-    rejects it. That failure has to surface (wrapped, with the SQLite error as
-    its cause) and the whole step has to roll back.
+    """A view named ``concepts`` slips past ``CREATE TABLE IF NOT EXISTS`` and
+    reports no ``ctime_ns`` column.
     """
     bundle = _bundle(tmp_path, tmp_path / "cache")
     path = _db_path(bundle)
@@ -680,7 +616,6 @@ def test_migrate_cache_surfaces_unrelated_operational_error_from_alter(
 def test_migrate_cache_rollback_leaves_legacy_file_openable_by_migrate_again(
     tmp_path: Path,
 ) -> None:
-    """A failed step leaves the file exactly as found, so a fixed run can retry."""
     bundle = _bundle(tmp_path, tmp_path / "cache")
     path = _db_path(bundle)
     with sqlite3.connect(path) as conn:
@@ -694,13 +629,6 @@ def test_migrate_cache_rollback_leaves_legacy_file_openable_by_migrate_again(
 
     assert result.applied_versions == (1,)
     _assert_current_shape(path)
-
-
-# ---------------------------------------------------------------------------
-# Consumers: the hook manager registers the plugin only for a current file and
-# reports every other outcome as a cache problem that scans, graphs, and
-# context packs carry without failing.
-# ---------------------------------------------------------------------------
 
 
 def test_hook_manager_registers_plugin_for_current_or_missing_cache(
@@ -775,8 +703,6 @@ def test_scan_bundle_with_stale_cache_succeeds_and_reports_cache_problem(
             db_path=path, kind="cache-needs-migration", message=MIGRATE_SENTENCE
         ),
     )
-    # The stale file was left exactly as found: no column, no index, no stamp,
-    # and the scan's rows were not written into it.
     assert "ctime_ns" not in _columns(path, "concepts")
     assert _indexes(path) == set()
     assert _user_version(path) == 0
@@ -797,7 +723,6 @@ def test_scan_bundle_with_current_cache_reports_no_cache_problems(
 
 
 def test_build_bundle_graph_reports_stale_cache_once(tmp_path: Path) -> None:
-    """The nested scan and the graph build open the same file; report it once."""
     bundle = _bundle(tmp_path, tmp_path / "cache")
     _write_concept(bundle.bundle_root / "a.md", "Alpha", body="[B](b.md)\n")
     _write_concept(bundle.bundle_root / "b.md", "Beta")
@@ -839,7 +764,6 @@ def test_build_context_pack_carries_graph_cache_problems(tmp_path: Path) -> None
 
 
 def test_plugin_construction_runs_no_schema_work(tmp_path: Path) -> None:
-    """The plugin trusts the CacheDatabase brand: no mkdir, no probe, no DDL."""
     bundle = _bundle(tmp_path, tmp_path / "cache")
     path = _write_current_cache(bundle)
     with sqlite3.connect(path) as conn:
@@ -848,12 +772,6 @@ def test_plugin_construction_runs_no_schema_work(tmp_path: Path) -> None:
     SqliteCachePlugin(bundle, CacheDatabase(path=path))
 
     assert "idx_links_source" not in _indexes(path)
-
-
-# ---------------------------------------------------------------------------
-# Required consumers: search and unlinked mentions cannot run without the
-# cache, so a refused file is a SearchConfigError carrying the migrate sentence.
-# ---------------------------------------------------------------------------
 
 
 def _search(bundle: BundleConfig) -> object:
@@ -912,7 +830,6 @@ def test_required_consumers_refuse_newer_cache(
 
 
 def test_search_works_after_migrating_fts_only_file(tmp_path: Path) -> None:
-    """migrate-db is the one path that turns a search-only leftover usable."""
     bundle = _bundle(tmp_path, tmp_path / "cache")
     _write_concept(bundle.bundle_root / "alpha.md", "Alpha")
     _write_fts_only_cache(bundle)

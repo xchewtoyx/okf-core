@@ -145,12 +145,6 @@ def test_search_no_refresh_uses_current_fts_rows_only(tmp_path: Path) -> None:
 def test_search_no_refresh_with_no_index_succeeds_without_creating_one(
     tmp_path: Path,
 ) -> None:
-    """refresh=False is read-only: an unbuilt index means zero rows, not DDL.
-
-    The cache file itself is still created at the current schema version (that
-    is what opening the cache means); only the derived concept_fts table is
-    left for a refresh to build.
-    """
     root = tmp_path / "docs"
     _write_concept(root / "topic.md", title="Alpha")
     bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")

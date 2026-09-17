@@ -241,7 +241,6 @@ def get_hook_manager(bundle: BundleConfig) -> OkfPluginManager:
 def _open_cache_for_hooks(
     bundle: BundleConfig,
 ) -> tuple[CacheDatabase | None, tuple[CacheProblem, ...]]:
-    """Open the bundle's cache, converting a refusal into a reportable problem."""
     try:
         return open_cache(bundle), ()
     except CacheSchemaError as exc:

@@ -909,13 +909,6 @@ def test_end_scan_closes_connection_when_flush_fails(
 
 
 def test_ordinary_scan_does_not_repair_a_current_cache(tmp_path: Path) -> None:
-    """A scan trusts a current-version cache as-is; a dropped index stays gone.
-
-    The pre-versioning plugin probed the schema on every open and repaired
-    whatever was missing. Under schema versioning, ordinary commands read
-    ``PRAGMA user_version`` and run no DDL against an existing file; shape
-    repair belongs to ``okf migrate-db`` alone.
-    """
     root = tmp_path / "docs"
     _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n")
     cache_dir = tmp_path / "cache"
@@ -951,11 +944,6 @@ def test_ordinary_scan_does_not_repair_a_current_cache(tmp_path: Path) -> None:
 
 
 def test_hooks_fired_outside_a_phase_write_immediately(tmp_path: Path) -> None:
-    """Without okf_start_scan there is no buffer: each hook is its own write.
-
-    The entries come from an uncached scan so the rows asserted below can only
-    have been written by the two direct hook calls.
-    """
     from okf_core.graph import ConceptLink
 
     root = tmp_path / "docs"
