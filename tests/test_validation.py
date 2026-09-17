@@ -788,6 +788,30 @@ bundle_root = "missing"
     assert findings == {}
 
 
+def test_validate_bundle_skips_excluded_log_md(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "docs"
+exclude = ["skip/**"]
+""".strip(),
+        encoding="utf-8",
+    )
+    docs_root = tmp_path / "docs"
+    docs_root.mkdir()
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    _write_log(docs_root / "log.md", _NEWEST_FIRST_LOG)
+    skipped = docs_root / "skip" / "log.md"
+    _write_log(skipped, _FRIDAY_HEADING_LOG)
+
+    config = load_config(config_path=config_path)
+    findings = validate_bundle(config.bundles["default"], config)
+
+    assert docs_root / "log.md" not in findings
+    assert skipped not in findings
+
+
 def test_validate_bundle_skips_log_md_that_is_not_a_file(tmp_path: Path) -> None:
     config, bundle, docs_root = _default_docs_bundle(tmp_path)
     _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")

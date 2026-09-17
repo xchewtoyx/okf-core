@@ -23,7 +23,7 @@ from okf_core.index import (
     parse_index,
 )
 from okf_core.logs import ParsedLog, log_conformance_findings, parse_log
-from okf_core.manifest import BundleManifest, scan_bundle
+from okf_core.manifest import BundleManifest, _is_excluded, scan_bundle
 
 if TYPE_CHECKING:
     from okf_core.config import BundleConfig, OkfConfig, ProfileConfig, TaxonomyConfig
@@ -107,7 +107,9 @@ def _committed_log_paths(bundle: BundleConfig) -> tuple[Path, ...]:
     for directory, _dirnames, filenames in os.walk(root):
         if "log.md" in filenames:
             log_path = Path(directory) / "log.md"
-            if _is_bundle_file(log_path, root):
+            if _is_bundle_file(log_path, root) and not _is_excluded(
+                log_path, root, bundle
+            ):
                 paths.append(log_path)
     return tuple(sorted(paths))
 
