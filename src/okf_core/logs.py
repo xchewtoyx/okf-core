@@ -850,8 +850,6 @@ def _date_section_from_heading(
 
     Returns ``(date, None)`` on success, or ``(None, LogParseProblem)`` when
     the heading is empty or not a valid calendar date in that form.
-    Problem messages start with ``_MALFORMED_DATE_HEADING_PREFIX`` so
-    ``log_conformance_findings`` can promote them without a copied string.
     """
     text = (heading_text or "").strip()
     if not text:
