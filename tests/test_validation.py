@@ -727,6 +727,25 @@ def test_validate_bundle_checks_nested_topics_log_md(tmp_path: Path) -> None:
     assert findings[nested_log] == (_FRIDAY_HEADING_FINDING,)
 
 
+def test_validate_bundle_reports_non_utf8_log_md_as_error(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    log_path = docs_root / "log.md"
+    log_path.write_bytes(b"\xff")
+
+    findings = validate_bundle(bundle, config)
+
+    assert findings[log_path] == (
+        ValidationFinding(
+            severity="error",
+            message=(
+                "could not read log.md: 'utf-8' codec can't decode byte "
+                "0xff in position 0: invalid start byte"
+            ),
+        ),
+    )
+
+
 def test_validate_bundle_reports_unreadable_log_md_as_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
