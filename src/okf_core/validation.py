@@ -107,9 +107,24 @@ def _committed_log_paths(bundle: BundleConfig) -> tuple[Path, ...]:
     for directory, _dirnames, filenames in os.walk(root):
         if "log.md" in filenames:
             log_path = Path(directory) / "log.md"
-            if log_path.is_file():
+            if _is_bundle_file(log_path, root):
                 paths.append(log_path)
     return tuple(sorted(paths))
+
+
+def _is_bundle_file(path: Path, root: Path) -> bool:
+    """Return whether ``path`` is a regular file whose resolve stays in ``root``.
+
+    Matches ``scan_bundle`` containment. A ``log.md`` symlink whose target
+    leaves the bundle is excluded, not read as this bundle's log.
+    """
+    if not path.is_file():
+        return False
+    try:
+        path.resolve().relative_to(root)
+    except ValueError:
+        return False
+    return True
 
 
 def _read_log_for_validation(
