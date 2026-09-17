@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -21,6 +22,7 @@ from okf_core.index import (
     generate_index,
     parse_index,
 )
+from okf_core.logs import ParsedLog, log_conformance_findings, parse_log
 from okf_core.manifest import BundleManifest, scan_bundle
 
 if TYPE_CHECKING:
@@ -31,7 +33,14 @@ def validate_bundle(
     bundle: BundleConfig,
     config: OkfConfig,
 ) -> dict[Path, tuple[ValidationFinding, ...]]:
-    """Validate all concept documents in a bundle against its configured profile."""
+    """Validate concept documents, index drift, and existing log.md files.
+
+    After concept and index-drift checks, every existing ``log.md`` is
+    checked for OKF v0.2 §9 conformance. Date headings MUST be ISO 8601
+    ``YYYY-MM-DD`` calendar dates, and date-grouped sections MUST be newest
+    first. Findings are keyed at the ``log.md`` path. A bundle with no
+    ``log.md`` skips this check.
+    """
     findings: dict[Path, tuple[ValidationFinding, ...]] = {}
 
     # Scan the bundle to discover and parse concepts
@@ -78,6 +87,57 @@ def validate_bundle(
     ).items():
         findings[index_path] = findings.get(index_path, ()) + drift_findings
 
+    for log_path, log_findings in _log_conformance_findings_by_path(bundle).items():
+        findings[log_path] = findings.get(log_path, ()) + log_findings
+
+    return findings
+
+
+def _committed_log_paths(bundle: BundleConfig) -> tuple[Path, ...]:
+    """Collect every existing ``log.md`` under the bundle root.
+
+    Spec §9 says ``log.md`` MAY appear at any hierarchy level, so this walk
+    is not limited to concept-bearing directories. The exact name ``log.md``
+    matches how index drift looks for exact ``index.md``.
+    """
+    root = bundle.bundle_root.resolve()
+    if not root.is_dir():
+        return ()
+    paths: list[Path] = []
+    for directory, _dirnames, filenames in os.walk(root):
+        if "log.md" in filenames:
+            log_path = Path(directory) / "log.md"
+            if log_path.is_file():
+                paths.append(log_path)
+    return tuple(sorted(paths))
+
+
+def _read_log_for_validation(
+    path: Path,
+) -> tuple[ParsedLog | None, ValidationFinding | None]:
+    try:
+        content = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError) as exc:
+        return None, ValidationFinding(
+            severity="error",
+            message=f"could not read log.md: {exc}",
+        )
+    return parse_log(content), None
+
+
+def _log_conformance_findings_by_path(
+    bundle: BundleConfig,
+) -> dict[Path, tuple[ValidationFinding, ...]]:
+    findings: dict[Path, tuple[ValidationFinding, ...]] = {}
+    for log_path in _committed_log_paths(bundle):
+        parsed, read_problem = _read_log_for_validation(log_path)
+        if read_problem is not None:
+            findings[log_path] = (read_problem,)
+            continue
+        assert parsed is not None
+        log_findings = log_conformance_findings(parsed)
+        if log_findings:
+            findings[log_path] = log_findings
     return findings
 
 

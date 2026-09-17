@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from okf_core.config import BundleConfig
+from okf_core.documents import ValidationFinding
 from okf_core.markdown_engine import MARKDOWN as _MARKDOWN
 from okf_core.markdown_engine import link_children as _link_children
 from okf_core.markdown_engine import parse_inline_children as _parse_inline_children
@@ -27,6 +28,7 @@ from okf_core.patching import (
 from okf_core.paths import concept_id_to_path, path_to_concept_id
 
 _DATE_FORM = re.compile(r"\d{4}-\d{2}-\d{2}")
+_MALFORMED_DATE_HEADING_PREFIX = "skipped malformed date heading"
 
 
 @dataclass(frozen=True)
@@ -443,6 +445,56 @@ def load_log(path: Path) -> ParsedLog:
     return parse_log(content)
 
 
+def log_conformance_findings(parsed: ParsedLog) -> tuple[ValidationFinding, ...]:
+    """Report OKF v0.2 §9 heading-format and newest-first date-order errors.
+
+    Heading-format problems come from ``parse_log``: date headings MUST be
+    ISO 8601 ``YYYY-MM-DD`` calendar dates. Stray-block, nested-block, and
+    empty-entry problems are ignored. Date order is checked here, not in
+    ``parse_log``, so writers that re-sort via ``_insert_entry_for_date``
+    still accept an out-of-order log. Newest-first means strictly decreasing
+    ISO date strings. Duplicate dates are a violation.
+    """
+    findings: list[ValidationFinding] = []
+    for problem in parsed.problems:
+        heading_finding = _heading_format_finding(problem)
+        if heading_finding is not None:
+            findings.append(heading_finding)
+    previous: LogDateSection | None = None
+    for current in parsed.sections:
+        if previous is not None:
+            order_finding = _date_order_finding(previous, current)
+            if order_finding is not None:
+                findings.append(order_finding)
+        previous = current
+    return tuple(findings)
+
+
+def _heading_format_finding(problem: LogParseProblem) -> ValidationFinding | None:
+    if not problem.message.startswith(_MALFORMED_DATE_HEADING_PREFIX):
+        return None
+    return ValidationFinding(
+        severity="error",
+        message=problem.message,
+        field=problem.date,
+        line=problem.line,
+    )
+
+
+def _date_order_finding(
+    previous: LogDateSection, current: LogDateSection
+) -> ValidationFinding | None:
+    if previous.date > current.date:
+        return None
+    both = f"{previous.date} then {current.date}"
+    return ValidationFinding(
+        severity="error",
+        message=f"date headings {both} are not newest-first",
+        field=current.date,
+        line=None,
+    )
+
+
 class _ItemBlockKind(enum.Enum):
     """The structural shape of one block found directly inside a list item.
 
@@ -798,19 +850,24 @@ def _date_section_from_heading(
 
     Returns ``(date, None)`` on success, or ``(None, LogParseProblem)`` when
     the heading is empty or not a valid calendar date in that form.
+    Problem messages start with ``_MALFORMED_DATE_HEADING_PREFIX`` so
+    ``log_conformance_findings`` can promote them without a copied string.
     """
     text = (heading_text or "").strip()
     if not text:
         return None, LogParseProblem(
             date=None,
             line=line,
-            message="skipped malformed date heading: empty heading",
+            message=f"{_MALFORMED_DATE_HEADING_PREFIX}: empty heading",
         )
     if not _DATE_FORM.fullmatch(text):
         return None, LogParseProblem(
             date=text,
             line=line,
-            message=f"skipped malformed date heading: {text!r} is not ISO 8601 YYYY-MM-DD form",
+            message=(
+                f"{_MALFORMED_DATE_HEADING_PREFIX}: {text!r} is not "
+                "ISO 8601 YYYY-MM-DD form"
+            ),
         )
     try:
         datetime.date.fromisoformat(text)
@@ -818,7 +875,10 @@ def _date_section_from_heading(
         return None, LogParseProblem(
             date=text,
             line=line,
-            message=f"skipped malformed date heading: {text!r} is not a valid calendar date ({exc})",
+            message=(
+                f"{_MALFORMED_DATE_HEADING_PREFIX}: {text!r} is not a "
+                f"valid calendar date ({exc})"
+            ),
         )
     return text, None
 

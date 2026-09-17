@@ -12,6 +12,7 @@ from okf_core import (
     scan_bundle,
     validate_bundle,
 )
+from okf_core.config import BundleConfig, OkfConfig
 
 
 def test_validate_bundle_identifies_all_problems(tmp_path: Path) -> None:
@@ -558,6 +559,236 @@ profile = "strict"
     assert index_path in findings
     assert {f.field for f in findings[index_path]} == {"valid.md"}
     assert all(f.severity == "warning" for f in findings[index_path])
+
+
+_NEWEST_FIRST_LOG = (
+    "# Log\n\n## 2026-05-22\n* Newer entry.\n\n## 2026-05-15\n* Older entry.\n"
+)
+_FRIDAY_HEADING_LOG = "# Log\n\n## Friday\n* Entry.\n"
+_FRIDAY_HEADING_FINDING = ValidationFinding(
+    severity="error",
+    message=(
+        "skipped malformed date heading: 'Friday' is not ISO 8601 YYYY-MM-DD form"
+    ),
+    field="Friday",
+    line=3,
+)
+_MISSING_TYPE_FINDING = ValidationFinding(
+    severity="error",
+    message="Missing required frontmatter field: type",
+    field="type",
+)
+
+
+def _default_docs_bundle(tmp_path: Path) -> tuple[OkfConfig, BundleConfig, Path]:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "docs"
+""".strip(),
+        encoding="utf-8",
+    )
+    docs_root = tmp_path / "docs"
+    docs_root.mkdir()
+    config = load_config(config_path=config_path)
+    return config, config.bundles["default"], docs_root
+
+
+def _write_log(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8", newline="\n")
+
+
+def test_validate_bundle_newest_first_log_is_clean(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    _write_log(docs_root / "log.md", _NEWEST_FIRST_LOG)
+
+    findings = validate_bundle(bundle, config)
+
+    assert docs_root / "log.md" not in findings
+    assert docs_root / "note.md" not in findings
+
+
+def test_validate_bundle_without_log_md_leaves_concept_findings_unchanged(
+    tmp_path: Path,
+) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "invalid.md", "---\ntitle: Missing Type\n---\nBody\n")
+
+    findings = validate_bundle(bundle, config)
+
+    assert docs_root / "log.md" not in findings
+    assert findings[docs_root / "invalid.md"] == (_MISSING_TYPE_FINDING,)
+
+
+def test_validate_bundle_reports_non_iso_log_heading_as_error(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    log_path = docs_root / "log.md"
+    _write_log(log_path, _FRIDAY_HEADING_LOG)
+
+    findings = validate_bundle(bundle, config)
+
+    assert findings[log_path] == (_FRIDAY_HEADING_FINDING,)
+
+
+def test_validate_bundle_reports_invalid_calendar_log_heading_as_error(
+    tmp_path: Path,
+) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    log_path = docs_root / "log.md"
+    _write_log(log_path, "## 2026-02-30\n* Entry.\n")
+
+    findings = validate_bundle(bundle, config)
+
+    assert findings[log_path] == (
+        ValidationFinding(
+            severity="error",
+            message=(
+                "skipped malformed date heading: '2026-02-30' is not a "
+                "valid calendar date (day is out of range for month)"
+            ),
+            field="2026-02-30",
+            line=1,
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("content", "expected"),
+    [
+        (
+            "## 2026-05-15\n* Older entry.\n\n## 2026-05-22\n* Newer entry.\n",
+            ValidationFinding(
+                severity="error",
+                message=(
+                    "date headings 2026-05-15 then 2026-05-22 are not newest-first"
+                ),
+                field="2026-05-22",
+                line=None,
+            ),
+        ),
+        (
+            "## 2026-05-22\n* First.\n\n## 2026-05-22\n* Second.\n",
+            ValidationFinding(
+                severity="error",
+                message=(
+                    "date headings 2026-05-22 then 2026-05-22 are not newest-first"
+                ),
+                field="2026-05-22",
+                line=None,
+            ),
+        ),
+    ],
+    ids=["oldest_first", "duplicate_dates"],
+)
+def test_validate_bundle_reports_log_dates_that_are_not_newest_first(
+    tmp_path: Path, content: str, expected: ValidationFinding
+) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    log_path = docs_root / "log.md"
+    _write_log(log_path, content)
+
+    findings = validate_bundle(bundle, config)
+
+    assert findings[log_path] == (expected,)
+
+
+def test_validate_bundle_ignores_stray_block_in_newest_first_log(
+    tmp_path: Path,
+) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    log_path = docs_root / "log.md"
+    _write_log(
+        log_path,
+        "# Log\n\n## 2026-05-22\nA bare paragraph.\n\n* Newer entry.\n\n"
+        "## 2026-05-15\n* Older entry.\n",
+    )
+
+    findings = validate_bundle(bundle, config)
+
+    assert log_path not in findings
+
+
+def test_validate_bundle_checks_nested_topics_log_md(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    nested_log = docs_root / "topics" / "log.md"
+    _write_log(nested_log, _FRIDAY_HEADING_LOG)
+
+    findings = validate_bundle(bundle, config)
+
+    assert docs_root / "log.md" not in findings
+    assert findings[nested_log] == (_FRIDAY_HEADING_FINDING,)
+
+
+def test_validate_bundle_reports_unreadable_log_md_as_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    log_path = docs_root / "log.md"
+    _write_log(log_path, _NEWEST_FIRST_LOG)
+
+    original_read_text = Path.read_text
+
+    def raising_read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if self == log_path:
+            raise OSError("Permission denied")
+        return original_read_text(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", raising_read_text)
+
+    findings = validate_bundle(bundle, config)
+
+    assert findings[log_path] == (
+        ValidationFinding(
+            severity="error",
+            message="could not read log.md: Permission denied",
+        ),
+    )
+
+
+def test_validate_bundle_missing_bundle_root_has_no_log_key(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        """
+[defaults]
+bundle_root = "missing"
+""".strip(),
+        encoding="utf-8",
+    )
+    config = load_config(config_path=config_path)
+    findings = validate_bundle(config.bundles["default"], config)
+
+    assert findings == {}
+
+
+def test_validate_bundle_skips_log_md_that_is_not_a_file(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "note.md", "---\ntype: concept\n---\nBody\n")
+    (docs_root / "log.md").symlink_to("does-not-exist")
+
+    findings = validate_bundle(bundle, config)
+
+    assert docs_root / "log.md" not in findings
+
+
+def test_validate_bundle_log_and_concept_findings_coexist(tmp_path: Path) -> None:
+    config, bundle, docs_root = _default_docs_bundle(tmp_path)
+    _write_concept(docs_root / "invalid.md", "---\ntitle: Missing Type\n---\nBody\n")
+    log_path = docs_root / "log.md"
+    _write_log(log_path, _FRIDAY_HEADING_LOG)
+
+    findings = validate_bundle(bundle, config)
+
+    assert findings[docs_root / "invalid.md"] == (_MISSING_TYPE_FINDING,)
+    assert findings[log_path] == (_FRIDAY_HEADING_FINDING,)
 
 
 def _write_concept(path: Path, content: str) -> None:
