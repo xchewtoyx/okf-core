@@ -22,13 +22,16 @@ from okf_core import (
     CacheProblem,
     CacheSchemaError,
     CacheSchemaState,
+    SearchConfigError,
     build_bundle_graph,
     build_context_pack,
+    find_unlinked_mentions,
     inspect_cache,
     migrate_cache,
     open_cache,
     plan_cache_migration,
     scan_bundle,
+    search_concepts,
 )
 from okf_core.cache import SqliteCachePlugin
 from okf_core.cache_db import CURRENT_SCHEMA_VERSION, cache_db_path
@@ -790,3 +793,77 @@ def test_plugin_construction_runs_no_schema_work(tmp_path: Path) -> None:
     SqliteCachePlugin(bundle, CacheDatabase(path=path))
 
     assert "idx_links_source" not in _indexes(path)
+
+
+# ---------------------------------------------------------------------------
+# Required consumers: search and unlinked mentions cannot run without the
+# cache, so a refused file is a SearchConfigError carrying the migrate sentence.
+# ---------------------------------------------------------------------------
+
+
+def _search(bundle: BundleConfig) -> object:
+    return search_concepts(bundle, "Alpha")
+
+
+def _search_no_refresh(bundle: BundleConfig) -> object:
+    return search_concepts(bundle, "Alpha", refresh=False)
+
+
+def _unlinked(bundle: BundleConfig) -> object:
+    return find_unlinked_mentions(bundle)
+
+
+def _unlinked_no_refresh(bundle: BundleConfig) -> object:
+    return find_unlinked_mentions(bundle, refresh=False)
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [_search, _search_no_refresh, _unlinked, _unlinked_no_refresh],
+    ids=["search", "search-no-refresh", "unlinked", "unlinked-no-refresh"],
+)
+@pytest.mark.parametrize(
+    "writer", [_write_legacy_cache, _write_fts_only_cache], ids=["legacy", "fts-only"]
+)
+def test_required_consumers_refuse_outdated_cache_with_migrate_sentence(
+    tmp_path: Path,
+    writer: Callable[[BundleConfig], Path],
+    operation: Callable[[BundleConfig], object],
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _write_concept(bundle.bundle_root / "alpha.md", "Alpha")
+    path = writer(bundle)
+    tables_before = _tables(path)
+
+    with pytest.raises(SearchConfigError) as excinfo:
+        operation(bundle)
+
+    assert str(excinfo.value) == MIGRATE_SENTENCE
+    assert isinstance(excinfo.value.__cause__, CacheSchemaError)
+    assert _tables(path) == tables_before
+    assert _user_version(path) == 0
+
+
+@pytest.mark.parametrize("operation", [_search, _unlinked], ids=["search", "unlinked"])
+def test_required_consumers_refuse_newer_cache(
+    tmp_path: Path, operation: Callable[[BundleConfig], object]
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _write_concept(bundle.bundle_root / "alpha.md", "Alpha")
+    _write_newer_cache(bundle)
+
+    with pytest.raises(SearchConfigError, match="upgrade okf-core"):
+        operation(bundle)
+
+
+def test_search_works_after_migrating_fts_only_file(tmp_path: Path) -> None:
+    """migrate-db is the one path that turns a search-only leftover usable."""
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _write_concept(bundle.bundle_root / "alpha.md", "Alpha")
+    _write_fts_only_cache(bundle)
+    migrate_cache(bundle)
+
+    results = search_concepts(bundle, "Alpha")
+
+    assert [result.concept_id for result in results.results] == ["alpha"]
+    assert results.problems == ()

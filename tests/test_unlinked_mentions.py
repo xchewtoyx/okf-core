@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -172,6 +173,29 @@ def test_title_match_in_metadata_not_suggested(tmp_path: Path) -> None:
     bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
 
     assert find_unlinked_mentions(bundle).suggestions == ()
+
+
+def test_no_refresh_with_no_index_yields_nothing_and_creates_no_index(
+    tmp_path: Path,
+) -> None:
+    """refresh=False is read-only: an unbuilt FTS index is not created."""
+    root = tmp_path / "docs"
+    _write_concept(root / "alpha.md", title="Alpha")
+    _write_concept(root / "beta.md", title="Beta", body="See Alpha for details.\n")
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    result = find_unlinked_mentions(bundle, refresh=False)
+
+    assert result.suggestions == ()
+    assert result.problems == ()
+    with sqlite3.connect(tmp_path / "cache" / "okf-cache.db") as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert "concept_fts" not in tables
 
 
 def test_read_error_surfaces_in_problems(tmp_path: Path) -> None:

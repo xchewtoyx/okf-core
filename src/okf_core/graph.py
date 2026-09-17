@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import os
-import sqlite3
 from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import quote, unquote, urlsplit
 
 from markdown_it import MarkdownIt
@@ -29,6 +29,9 @@ from okf_core.paths import (
     is_reserved_concept_path,
     path_to_concept_id,
 )
+
+if TYPE_CHECKING:
+    from okf_core.listing import ListingProblem
 
 _MARKDOWN = MarkdownIt("commonmark")
 
@@ -364,59 +367,44 @@ def find_unlinked_mentions(
 
     Searches visible body prose only; matches in titles, frontmatter fields, code
     blocks, inline code, image destinations, or Markdown link destinations are
-    not reported.  Requires ``bundle.okf_cache_dir`` to be configured; raises
-    ``SearchConfigError`` otherwise.  Pass ``refresh=False`` to skip persistent
-    FTS index refresh and query the existing cache directly.  Regardless of
-    ``refresh``, concept files are read from disk to compute already-linked pairs
-    and eligible prose, so read/decode/parse errors may appear in ``problems`` in
-    either mode.
+    not reported.  Requires ``bundle.okf_cache_dir`` to be configured and the
+    cache file to be at the current schema version; raises ``SearchConfigError``
+    otherwise (for a stale file, with the ``okf migrate-db`` instruction).  The
+    bundle is scanned before the FTS connection is opened, so no cache lock is
+    held across the scan.  Pass ``refresh=False`` to skip the scan and the FTS
+    index rebuild and query the existing index directly; nothing is written in
+    that mode, and an index that was never built yields no suggestions.
+    Regardless of ``refresh``, concept files are read from disk to compute
+    already-linked pairs and eligible prose, so read/decode/parse errors may
+    appear in ``problems`` in either mode.
 
     Non-fatal failures (unreadable or unparseable concepts) are collected in
     ``UnlinkedMentionsResult.problems`` rather than raised or silently dropped.
     """
-    from okf_core.listing import list_concepts
+    from okf_core.listing import BundleListing, list_concepts
     from okf_core.search import (
-        SearchConfigError,
         _build_fts_query,
-        _ensure_search_schema,
-        _refresh_search_index,
+        _open_search_cache,
+        _prepare_search_index,
     )
 
-    if bundle.okf_cache_dir is None:
-        raise SearchConfigError(
-            "okf_cache_dir is not configured; enable bundle-level caching to use find_unlinked_mentions"
-        )
-
-    bundle.okf_cache_dir.mkdir(parents=True, exist_ok=True)
-    db_path = bundle.okf_cache_dir / "okf-cache.db"
-
+    db = _open_search_cache(bundle, "find_unlinked_mentions")
     problems: list[GraphProblem] = []
 
-    with sqlite3.connect(db_path, timeout=30.0) as conn:
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.execute("PRAGMA journal_mode = WAL;")
-        conn.execute("PRAGMA synchronous = NORMAL;")
-        _ensure_search_schema(conn)
+    listing: BundleListing | None = None
+    if refresh:
+        resolved_manifest = scan_bundle(bundle)
+        listing = list_concepts(bundle, manifest=resolved_manifest, with_content=True)
+        problems.extend(
+            _listing_problem_as_graph_problem(lp) for lp in listing.problems
+        )
 
-        if refresh:
-            resolved_manifest = scan_bundle(bundle)
-            listing = list_concepts(
-                bundle, manifest=resolved_manifest, with_content=True
-            )
-            _refresh_search_index(conn, bundle, listing)
-            for lp in listing.problems:
-                problems.append(
-                    GraphProblem(
-                        concept_id=lp.concept_id,
-                        path=lp.path,
-                        kind=lp.kind,
-                        message=lp.message,
-                    )
-                )
-
-        rows = conn.execute(
-            "SELECT concept_id, path, title FROM concept_fts"
-        ).fetchall()
+    with contextlib.closing(db.connect()) as conn:
+        rows: list[tuple[str, str, str | None]] = []
+        if _prepare_search_index(conn, bundle, listing):
+            rows = conn.execute(
+                "SELECT concept_id, path, title FROM concept_fts"
+            ).fetchall()
 
     all_concepts = {
         concept_id: (bundle.bundle_root / rel_path, title or "")
@@ -432,10 +420,7 @@ def find_unlinked_mentions(
     seen_pairs: set[tuple[str, str]] = set()
     suggestions: list[LinkSuggestion] = []
 
-    with sqlite3.connect(db_path, timeout=30.0) as conn:
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.execute("PRAGMA journal_mode = WAL;")
-        conn.execute("PRAGMA synchronous = NORMAL;")
+    with contextlib.closing(db.connect()) as conn:
         conn.execute("""
             CREATE VIRTUAL TABLE temp.unlinked_mentions_fts USING fts5(
                 concept_id UNINDEXED,
@@ -503,6 +488,15 @@ def find_unlinked_mentions(
         problems=tuple(
             sorted(problems, key=lambda p: (str(p.path), p.kind, p.concept_id))
         ),
+    )
+
+
+def _listing_problem_as_graph_problem(problem: ListingProblem) -> GraphProblem:
+    return GraphProblem(
+        concept_id=problem.concept_id,
+        path=problem.path,
+        kind=problem.kind,
+        message=problem.message,
     )
 
 

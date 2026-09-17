@@ -9,34 +9,6 @@ from okf_core import BundleConfig, SearchConfigError, scan_bundle, search_concep
 from okf_core.search import _ensure_search_schema, _flatten_field_value
 
 
-def test_search_connect_applies_long_timeout_immediately(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[dict[str, object]] = []
-
-    class RecordingConnection:
-        def __enter__(self) -> RecordingConnection:
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            return None
-
-        def execute(self, _sql: str, *args: object) -> RecordingConnection:
-            raise RuntimeError("stop after connect")
-
-    def connect(*args: object, **kwargs: object) -> RecordingConnection:
-        calls.append({"args": args, "kwargs": kwargs})
-        return RecordingConnection()
-
-    monkeypatch.setattr(sqlite3, "connect", connect)
-    bundle = _bundle(tmp_path / "docs", okf_cache_dir=tmp_path / "cache")
-
-    with pytest.raises(RuntimeError, match="stop after connect"):
-        search_concepts(bundle, "Alpha", refresh=False)
-
-    assert calls[0]["kwargs"] == {"timeout": 30.0}
-
-
 def test_search_creates_fts_schema_in_existing_cache_db(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "alpha.md", title="Alpha")
@@ -168,6 +140,49 @@ def test_search_no_refresh_uses_current_fts_rows_only(tmp_path: Path) -> None:
 
     assert search_concepts(bundle, "Alpha", refresh=False).results == ()
     assert [r.concept_id for r in search_concepts(bundle, "Alpha").results] == ["topic"]
+
+
+def test_search_no_refresh_with_no_index_succeeds_without_creating_one(
+    tmp_path: Path,
+) -> None:
+    """refresh=False is read-only: an unbuilt index means zero rows, not DDL.
+
+    The cache file itself is still created at the current schema version (that
+    is what opening the cache means); only the derived concept_fts table is
+    left for a refresh to build.
+    """
+    root = tmp_path / "docs"
+    _write_concept(root / "topic.md", title="Alpha")
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    results = search_concepts(bundle, "Alpha", refresh=False)
+
+    assert results.results == ()
+    assert results.problems == ()
+    with sqlite3.connect(tmp_path / "cache" / "okf-cache.db") as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert "concepts" in tables
+    assert "concept_fts" not in tables
+
+
+def test_search_no_refresh_reads_existing_index_without_rescanning(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "topic.md", title="Alpha")
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+    search_concepts(bundle, "Alpha")
+    _write_concept(root / "topic.md", title="Beta")
+
+    stale = search_concepts(bundle, "Alpha", refresh=False)
+
+    assert [r.concept_id for r in stale.results] == ["topic"]
 
 
 def test_search_requires_okf_cache_dir(tmp_path: Path) -> None:
