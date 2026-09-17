@@ -105,6 +105,8 @@ bundle_root = "docs"
 okf_cache_dir = ".okf-cache"
 ```
 
+The cache is a single SQLite file, `<okf_cache_dir>/okf-cache.db`, whose schema is versioned. A missing cache is created at the current version by the first command that needs it; a cache written by an older `okf-core` is left untouched and skipped by ordinary commands until you run [`okf migrate-db`](#okf-migrate-db).
+
 ### Non-Standard Extensions
 
 Optional, tool-specific features that do not comply with the base OKF v0.2 specification—such as `stable_id_field`—are deliberately kept out of the global `[defaults]` configuration. This keeps project-wide default settings strictly compliant with the base specification, ensuring that non-standard behaviors are explicitly scoped and opted-into per bundle.
@@ -157,11 +159,13 @@ Scans a bundle and emits a manifest:
 okf scan [--config PATH] [--bundle NAME] [--quiet]
 ```
 
-Output: `{"bundle": "...", "concepts": [...], "problems": [...]}`
+Output: `{"bundle": "...", "concepts": [...], "problems": [...], "cache_problems": [...]}`
 
 Each concept entry includes `concept_id`, `path`, `size`, `sha256`, and `frontmatter`. Scan problems (parse errors, etc.) are non-fatal and appear in `problems` with `path`, `kind`, and `message` fields; exit code is always `0` under normal execution.
 
-Use `--quiet` or `-q` to suppress command output and summary. When quiet mode is active, the command will exit `1` if any scan problems occurred. Configuration/load errors (which exit with code `2`) are not suppressed.
+`cache_problems` reports a configured SQLite cache (`okf_cache_dir`) that this run skipped, with `db_path`, `kind`, and `message` fields, plus one `Cache skipped for bundle ...` line on stderr. The usual cause is a cache written by an older `okf-core` (`kind` `cache-needs-migration`; the message says to run [`okf migrate-db`](#okf-migrate-db)); a cache written by a newer `okf-core` (`cache-unsupported-version`) or one SQLite cannot open (`cache-unavailable`) is reported the same way. The scan still reads every document from disk, so a skipped cache never changes the output's `concepts`, the exit code, or `okf validate`'s findings.
+
+Use `--quiet` or `-q` to suppress command output and summary. When quiet mode is active, the command will exit `1` if any scan problems occurred (`cache_problems` never trigger this). Configuration/load errors (which exit with code `2`) are not suppressed.
 
 ### `okf validate`
 
@@ -189,9 +193,9 @@ Lists addressable concept documents for seed discovery:
 okf list-concepts [--config PATH] [--bundle NAME] [--with-graph-counts] [--with-content]
 ```
 
-Output: `{"bundle": "...", "concepts": [...], "problems": [...], "orphans": [...]}`
+Output: `{"bundle": "...", "concepts": [...], "problems": [...], "orphans": [...], "cache_problems": [...]}`
 
-Each concept entry includes `concept_id`, `path`, `type`, `title`, `description`, promoted `fields`, preserved `frontmatter`, optional `outbound_link_count` / `inbound_link_count`, optional `pagerank` score, and optional raw Markdown body `content` (with frontmatter stripped). Graph metrics (`outbound_link_count`, `inbound_link_count`, `pagerank`) are `null` unless `--with-graph-counts` is supplied. The top-level `orphans` array lists concept IDs with no inbound or outbound links; it is empty unless `--with-graph-counts` is supplied. `content` is `null` unless `--with-content` is supplied. Listing problems are non-fatal and include `concept_id`, `path`, `kind`, and `message`.
+Each concept entry includes `concept_id`, `path`, `type`, `title`, `description`, promoted `fields`, preserved `frontmatter`, optional `outbound_link_count` / `inbound_link_count`, optional `pagerank` score, and optional raw Markdown body `content` (with frontmatter stripped). Graph metrics (`outbound_link_count`, `inbound_link_count`, `pagerank`) are `null` unless `--with-graph-counts` is supplied. The top-level `orphans` array lists concept IDs with no inbound or outbound links; it is empty unless `--with-graph-counts` is supplied. `content` is `null` unless `--with-content` is supplied. Listing problems are non-fatal and include `concept_id`, `path`, `kind`, and `message`. `cache_problems` has the same shape and meaning as in `okf scan`.
 
 ### `okf search`
 
@@ -201,13 +205,13 @@ Searches valid concept documents with local SQLite FTS5 lexical search:
 okf search QUERY [--config PATH] [--bundle NAME] [--limit N] [--no-refresh]
 ```
 
-Search requires bundle-level `okf_cache_dir` and reuses the existing `okf-cache.db` SQLite cache. It does not create a separate search database. By default the command refreshes the search index from the current bundle scan before querying; pass `--no-refresh` to search the current FTS rows only.
+Search requires bundle-level `okf_cache_dir` and reuses the existing `okf-cache.db` SQLite cache. It does not create a separate search database. By default the command refreshes the search index from the current bundle scan before querying; pass `--no-refresh` to search the current FTS rows only. `--no-refresh` is strictly read-only: if the index has never been built it returns zero results rather than creating one.
 
 Output: `{"bundle": "...", "query": "...", "results": [...], "problems": [...]}`
 
 Each result includes `concept_id`, `path`, `title`, `description`, `score`, and `snippets`. Search covers title, description, configured `listing_fields`, and Markdown body text. Search is intended for scale support and seed discovery before context packing; `index.md`, `list-concepts`, and explicit context seeds remain the primary progressive-disclosure surfaces.
 
-Missing `okf_cache_dir`, config errors, unknown bundles, and invalid limits exit `2`.
+Missing `okf_cache_dir`, config errors, unknown bundles, and invalid limits exit `2`. So does a cache database whose schema is not current: a cache written by an older `okf-core` exits `2` with `cache schema version 0 requires migration to 1; run okf migrate-db` (see [`okf migrate-db`](#okf-migrate-db)), and one written by a newer `okf-core` exits `2` asking you to upgrade. Unlike `scan` or `graph`, search cannot run without the cache, so it fails rather than reporting `cache_problems`.
 
 ### `okf unlinked-mentions`
 
@@ -217,13 +221,13 @@ Finds visible concept-title mentions that are not already Markdown links, and op
 okf unlinked-mentions [--config PATH] [--bundle NAME] [--no-refresh] [--apply] [--select SOURCE_ID:TARGET_ID ...] [--heading TEXT] [--heading-level N]
 ```
 
-The command requires bundle-level `okf_cache_dir`. By default it refreshes the persistent FTS index before finding suggestions; `--no-refresh` uses its current rows.
+The command requires bundle-level `okf_cache_dir`. By default it refreshes the persistent FTS index before finding suggestions; `--no-refresh` uses its current rows, and yields no suggestions (without creating an index) if none has been built yet.
 
 Without `--apply` (the default, unchanged read-only behavior), output contains `bundle`, `suggestions`, and non-fatal `problems`. Each suggestion includes `source_concept_id`, `source_path`, `target_concept_id`, `target_path`, `target_title`, `target_href` (the Markdown link destination that would be written, relative to the source concept), and the annotated FTS excerpt `matched_text`.
 
 With `--apply`, every discovered suggestion is written into its source concept's body as `- [target_title](target_href)`, appended under a `--heading` section (default `## See also`, `--heading-level` default `2`) -- pass one or more `--select SOURCE_ID:TARGET_ID` to restrict which discovered suggestions are written instead of applying all of them; a `--select` value with no matching discovered suggestion exits `2` without writing anything. Suggestions targeting the same source concept are grouped into a single write to that file. A suggestion whose target already has a link somewhere in the section is skipped, so re-running `--apply` (with an overlapping or identical selection) is idempotent rather than duplicating bullets. Output is `{"bundle": "...", "applied_suggestions": [...], "updated_files": [...], "problems": [...]}`.
 
-Missing `okf_cache_dir`, config errors, unknown bundles, a malformed `--select` value, and an unmatched `--select` pair exit `2`. Empty suggestions and non-fatal read or parse problems exit `0`. A write-planning failure (e.g. an invalid `--heading-level`, or an unrelated reference-style link definition in a target file) exits `1`.
+Missing `okf_cache_dir`, a cache database whose schema is not current (the same `run okf migrate-db` / upgrade cases as `okf search`), config errors, unknown bundles, a malformed `--select` value, and an unmatched `--select` pair exit `2`. Empty suggestions and non-fatal read or parse problems exit `0`. A write-planning failure (e.g. an invalid `--heading-level`, or an unrelated reference-style link definition in a target file) exits `1`.
 
 ### `okf context`
 
@@ -233,9 +237,9 @@ Builds a deterministic context pack from one or more seed concept IDs:
 okf context [--config PATH] [--bundle NAME] --seed CONCEPT_ID [--seed CONCEPT_ID ...] [--depth N] [--direction outbound|inbound|both] [--budget-chars N]
 ```
 
-Output: `{"bundle": "...", "seeds": [...], "entries": [...], "omitted_concept_ids": [...], "problems": [...]}`
+Output: `{"bundle": "...", "seeds": [...], "entries": [...], "omitted_concept_ids": [...], "problems": [...], "cache_problems": [...]}`
 
-Each entry includes `concept_id`, `path`, `title`, `selection_reason`, `graph_distance`, `char_count`, and raw Markdown `content`. Seeds are de-duplicated, kept in input order, and emitted before graph-expanded concepts. The `seeds` field contains only valid resolved seed IDs; unknown seeds appear in `problems` and are omitted from `seeds` and `entries`. `--depth` controls graph expansion, `--direction` selects outbound links, backlinks, or both, and `--budget-chars` applies the same stable prefix budget used by the Python API. Concepts excluded by budget appear in `omitted_concept_ids` without making the command fail.
+Each entry includes `concept_id`, `path`, `title`, `selection_reason`, `graph_distance`, `char_count`, and raw Markdown `content`. `cache_problems` has the same shape and meaning as in `okf scan`; unlike `problems` it never affects the exit code. Seeds are de-duplicated, kept in input order, and emitted before graph-expanded concepts. The `seeds` field contains only valid resolved seed IDs; unknown seeds appear in `problems` and are omitted from `seeds` and `entries`. `--depth` controls graph expansion, `--direction` selects outbound links, backlinks, or both, and `--budget-chars` applies the same stable prefix budget used by the Python API. Concepts excluded by budget appear in `omitted_concept_ids` without making the command fail.
 
 Unknown seeds and read problems appear in `problems` and exit `1`. Scan errors, config errors, and unknown bundles exit `2`.
 
@@ -270,7 +274,7 @@ okf graph [--config PATH] [--bundle NAME] --concept CONCEPT_ID [--depth N]
 okf graph [--config PATH] [--bundle NAME] --broken
 ```
 
-Full output includes `concepts`, resolved `links`, `broken_links`, and `problems`. `--concept` emits outbound links, backlinks, broken links from that concept, and a depth-limited `neighborhood`. `--broken` emits only broken internal concept links and graph problems.
+Full output includes `concepts`, resolved `links`, `broken_links`, and `problems`. `--concept` emits outbound links, backlinks, broken links from that concept, and a depth-limited `neighborhood`. `--broken` emits only broken internal concept links and graph problems. Every mode also includes `cache_problems`, with the same shape and meaning as in `okf scan`.
 
 Each link entry includes `source_concept_id`, `source_path`, `text`, `target`, `title`, `target_path`, and `target_concept_id`. `title` is the CommonMark link title attribute (e.g. `[B](b.md "related")` → `"related"`); it is `null` when no title is present or when the title is an empty string — both are treated as absent.
 
@@ -413,6 +417,22 @@ okf graph-repair [--config PATH] [--bundle NAME] [--dry-run]
 Every broken link in the bundle (a link whose target concept doesn't exist at the path it points to) is checked against any plugin implementing the `okf_fetch_moved_concept_path(dead_concept_id, bundle) -> Path | None` hook. If a plugin resolves a dead concept ID to a path, that link's href is rewritten to point there; if no plugin resolves it -- including the out-of-the-box default, since no plugin ships with `okf-core` today -- the link is reported as unresolved rather than causing a failure. A link whose target escapes the bundle root entirely (no concept-id-shaped target to look up) is also reported unresolved. Exits `1` only for an operational failure: a scan/parse problem elsewhere in the bundle (which could be hiding broken links, so the run aborts rather than risk an incomplete repair) or an unrelated write-safety refusal. Unresolved links never affect the exit code -- that's an expected steady state, not an error; check the `unresolved_links` field in the JSON output if you need to know whether anything is still broken.
 
 If a broken link's containing file also has an unrelated reference-style link definition anywhere in it, planning that file's rewrite fails -- but only that file's link(s) are downgraded to unresolved; every other file's resolvable links are still repaired.
+
+### `okf migrate-db`
+
+Brings a bundle's SQLite cache database (`<okf_cache_dir>/okf-cache.db`) to the current schema version:
+
+```sh
+okf migrate-db [--config PATH] [--bundle NAME] [--dry-run]
+```
+
+The cache schema is versioned through SQLite's `PRAGMA user_version`; this release's schema version is `1`. Ordinary commands never change the schema of an existing cache file. When the file was written by an older `okf-core` -- every release from 0.4.0 through 0.5.1 wrote the cache without a version stamp -- `scan`, `list-concepts`, `graph`, and `context` run without the cache and report it under `cache_problems`, while `search` and `unlinked-mentions` exit `2` with `cache schema version 0 requires migration to 1; run okf migrate-db`. A cache file that does not exist yet (or exists but holds none of the cache's tables) is created at the current version by whichever command first needs it, so `migrate-db` is only needed after upgrading `okf-core` across a schema change.
+
+`migrate-db` applies each pending version step inside one write transaction and then stamps `user_version`. It never scans the bundle or runs hooks, and it is idempotent: a second run reports `changed: false` and writes nothing. `--dry-run` reports what would happen without writing anything, and does not create a missing file either.
+
+Output: `{"bundle": "...", "db_path": "...", "found_state": "...", "found_version": N, "current_version": N, "dry_run": false, "changed": true, "applied_versions": [...]}`. With `--dry-run`, a single `would_change` field replaces `changed` and `applied_versions`. `found_state` is one of `absent`, `uninitialized`, `current`, `outdated`, or `unsupported-newer`, and `found_version` is `null` when no file exists. One summary line goes to stderr.
+
+Exits `0` whether the cache was migrated, initialized, or was already current; `2` when the bundle has no `okf_cache_dir` (or on a config/usage error); `1` when the migration fails or the file was written by a newer `okf-core` than the one installed (a downgrade is not a migration -- upgrade `okf-core` instead). The FTS search index (`concept_fts`) is not part of the versioned schema and is not touched by `migrate-db`: `search` and `unlinked-mentions` rebuild it on their next refresh. (An unstamped cache file from an older `okf-core` that holds only that index still counts as `outdated` and is migrated like any other.)
 
 ### `okf orient`
 
@@ -698,6 +718,28 @@ Scanning applies the bundle's configured include globs, exclude globs, and reser
 
 Malformed documents and other per-file scan failures are reported as structured manifest problems instead of aborting the full scan, allowing callers to inspect valid concepts and problems from the same scan result.
 
+When the bundle configures `okf_cache_dir` but its cache could not take part in the scan, `BundleManifest.cache_problems` carries a tuple of `CacheProblem` (`db_path`, `kind`, `message`) explaining why -- see Cache Database below. It is a separate channel from `problems` on purpose: `validate_bundle()` turns manifest problems into error findings, and a stale cache must never fail validation of a bundle of valid documents. `BundleGraph.cache_problems` and `ContextPack.cache_problems` carry the same tuple through `build_bundle_graph()` and `build_context_pack()` (deduplicated when a graph is built from an already-scanned manifest).
+
+### Cache Database
+
+The opt-in SQLite cache (`okf_cache_dir`) is one file, `okf-cache.db`, with a schema versioned through `PRAGMA user_version`; `cache_db.py` owns everything about that file. `inspect_cache(bundle)` classifies it without writing anything, returning a `CacheSchemaStatus` whose `state` is one `CacheSchemaState` -- `ABSENT` (no file), `UNINITIALIZED` (a file holding none of the cache's tables), `CURRENT`, `OUTDATED` (written by an older `okf-core`, including an unstamped file that holds only a search index), or `UNSUPPORTED_NEWER` -- alongside `found_version` (`None` for `ABSENT`) and `current_version`; `status.problem` is the `CacheProblem` an `OUTDATED` or `UNSUPPORTED_NEWER` file reports, else `None`.
+
+`open_cache(bundle)` is what ordinary code paths use. It returns a `CacheDatabase` (its `connect` method yields a configured autocommit connection), and holding one is the proof that the schema is current: an `ABSENT` or `UNINITIALIZED` file is created at the current version inside one write transaction (concurrent first-time openers converge), a `CURRENT` file is opened with a single `PRAGMA user_version` read and no DDL or write lock, and `OUTDATED` / `UNSUPPORTED_NEWER` raise `CacheSchemaError` (carrying the same `CacheProblem`) rather than ever changing an existing file's schema. The hook manager registers the cache plugin only when `open_cache` succeeds; otherwise it records the reason, which is how `cache_problems` reaches manifests, graphs, and context packs. `search_concepts()` and `find_unlinked_mentions()` open the cache the same way and translate a refusal into `SearchConfigError`.
+
+`plan_cache_migration(bundle)` and `migrate_cache(bundle)` are the read-only-plan / write pair behind `okf migrate-db`. The plan is a `CacheMigrationPlan` (`status`, `would_initialize`, `would_change`) that touches nothing; `migrate_cache` applies each pending version step and stamps `user_version` inside one write transaction, returning a `CacheMigrationResult` (`status`, `applied_versions`, `changed`, `initialized`). It is idempotent, never scans the bundle or runs hooks, and raises `CacheMigrationError` for a file written by a newer `okf-core` (a downgrade is not a migration), an unreadable file, or any SQLite failure -- an unrelated `OperationalError` inside a step is reported, not swallowed. Every one of these raises `ValueError` when the bundle has no `okf_cache_dir`.
+
+```python
+from okf_core import CacheSchemaState, inspect_cache, load_config, migrate_cache
+
+config = load_config()
+bundle = config.bundles["docs"]
+status = inspect_cache(bundle)
+if status.state is CacheSchemaState.OUTDATED:
+    result = migrate_cache(bundle)
+    # result.applied_versions — the version stamps written, e.g. (1,)
+    # result.changed         — False on a second run: migration is idempotent
+```
+
 ### Bundle Listings
 
 `list_concepts()` returns a deterministic, machine-readable catalog of valid concept documents that callers can use for task-based seed discovery before building context packs. It is the structured counterpart to `index.md` progressive disclosure: `index.md` remains a human- and agent-readable browsing surface, while bundle listings expose concept IDs and frontmatter for filtering without requiring search infrastructure.
@@ -718,7 +760,7 @@ listing = list_concepts(bundle, with_content=True)
 
 ### Lexical Search
 
-`search_concepts()` provides local FTS5 search over valid listed concepts. It requires `bundle.okf_cache_dir` and stores search rows in the same `okf-cache.db` used by scan and graph caching.
+`search_concepts()` provides local FTS5 search over valid listed concepts. It requires `bundle.okf_cache_dir` and stores search rows in the same `okf-cache.db` used by scan and graph caching. It raises `SearchConfigError` when `okf_cache_dir` is unset and, with the exact `run okf migrate-db` sentence, when the cache file's schema is not current (see Cache Database above) -- search cannot degrade to running without the cache the way `scan_bundle()` does. Pass `refresh=False` to query the existing FTS rows without rescanning; that path is read-only and returns no results (rather than creating the index) if none has been built yet.
 
 ```python
 from okf_core import load_config, search_concepts
@@ -838,7 +880,7 @@ External URLs, fragment-only links, `mailto:` links, non-Markdown assets, and co
 
 `links_from(graph, concept_id)`, `backlinks_to(graph, concept_id)`, and `neighborhood(graph, concept_id, depth=1)` provide deterministic traversal over resolved links. Neighborhood traversal treats links as bidirectional for discovery while preserving directed edges in the underlying graph. It raises `ValueError` for unknown concept IDs or negative depths.
 
-`find_unlinked_mentions(bundle, *, refresh=True)` scans visible concept-body prose for mentions of other concept titles that are not already Markdown links, returning an `UnlinkedMentionsResult` with `suggestions` (a tuple of `LinkSuggestion`) and `problems` (non-fatal read/parse failures). Fenced and indented code blocks, inline code, image destinations, and Markdown link destinations are excluded; displayed link text remains eligible prose. Each `LinkSuggestion` identifies the source and target concept, the target's `target_title`, and `matched_text`, an annotated prose excerpt from the FTS engine with `[`/`]` highlight markers around matched terms and `...` for truncation (not a literal string match). Requires `bundle.okf_cache_dir` to be configured (raises `SearchConfigError` otherwise); pass `refresh=False` to query the existing FTS cache without rebuilding it.
+`find_unlinked_mentions(bundle, *, refresh=True)` scans visible concept-body prose for mentions of other concept titles that are not already Markdown links, returning an `UnlinkedMentionsResult` with `suggestions` (a tuple of `LinkSuggestion`) and `problems` (non-fatal read/parse failures). Fenced and indented code blocks, inline code, image destinations, and Markdown link destinations are excluded; displayed link text remains eligible prose. Each `LinkSuggestion` identifies the source and target concept, the target's `target_title`, and `matched_text`, an annotated prose excerpt from the FTS engine with `[`/`]` highlight markers around matched terms and `...` for truncation (not a literal string match). Requires `bundle.okf_cache_dir` to be configured and the cache file's schema to be current (raises `SearchConfigError` otherwise, with the `run okf migrate-db` sentence in the stale-cache case -- see Cache Database above); pass `refresh=False` to query the existing FTS cache without rebuilding it, which is read-only and yields no suggestions if no index has been built yet.
 
 `link_suggestion_href(suggestion)` computes the Markdown link destination a suggestion would be written with: a `suggestion.source_path`-relative, POSIX-separator, percent-encoded path to `suggestion.target_path` -- the same relative-target convention `link_target_for_new_location` uses for a moved concept's rewritten link.
 

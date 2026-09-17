@@ -4587,3 +4587,4 @@ def test_cli_orient_prints_guidance() -> None:
     assert "generated diagnostics" in result.stdout
     assert "not wiki notes" in result.stdout
     assert "okf graph-report --help" in result.stdout
+    assert "okf migrate-db --help" in result.stdout
