@@ -214,6 +214,23 @@ def test_read_error_surfaces_in_problems(tmp_path: Path) -> None:
     assert any(p.kind == "read-error" for p in result.problems)
 
 
+def test_listing_problem_surfaces_as_graph_problem(tmp_path: Path) -> None:
+    """A concept the listing skips (no ``type``) is reported, not silently dropped."""
+    root = tmp_path / "docs"
+    _write_concept(root / "alpha.md", title="Alpha")
+    (root / "untyped.md").write_text(
+        "---\ntitle: Untyped\n---\nAlpha is related.\n", encoding="utf-8"
+    )
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    result = find_unlinked_mentions(bundle)
+
+    problem = next(p for p in result.problems if p.concept_id == "untyped")
+    assert problem.kind == "missing-type"
+    assert problem.path == root / "untyped.md"
+    assert all(s.source_concept_id != "untyped" for s in result.suggestions)
+
+
 def test_mutual_unlinked_mentions_both_suggested(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "alpha.md", title="Alpha", body="Beta is related.\n")

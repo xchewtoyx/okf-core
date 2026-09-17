@@ -948,3 +948,56 @@ def test_ordinary_scan_does_not_repair_a_current_cache(tmp_path: Path) -> None:
     }
     conn.close()
     assert "idx_concepts_path" not in indexes
+
+
+def test_hooks_fired_outside_a_phase_write_immediately(tmp_path: Path) -> None:
+    """Without okf_start_scan there is no buffer: each hook is its own write.
+
+    The entries come from an uncached scan so the rows asserted below can only
+    have been written by the two direct hook calls.
+    """
+    from okf_core.graph import ConceptLink
+
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n")
+    _write_concept(root / "b.md", "type: concept\ntitle: Beta\n")
+    uncached = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=None,
+    )
+    entries = {e.concept_id: e for e in scan_bundle(uncached).concepts}
+    cached = uncached.model_copy(update={"okf_cache_dir": tmp_path / "cache"})
+    plugin = SqliteCachePlugin(cached, open_cache(cached))
+    assert plugin._active is False
+
+    plugin.okf_exit_scan_concept(entries["a"], root / "a.md", root)
+    plugin.okf_exit_scan_concept(entries["b"], root / "b.md", root)
+    plugin.okf_exit_resolve_links(
+        entries["a"],
+        [
+            ConceptLink(
+                source_concept_id="a",
+                source_path=root / "a.md",
+                text="Beta",
+                target="b.md",
+                target_path=root / "b.md",
+                target_concept_id="b",
+            )
+        ],
+    )
+
+    conn = sqlite3.connect(tmp_path / "cache" / "okf-cache.db")
+    concepts = conn.execute(
+        "SELECT concept_id, links_resolved FROM concepts ORDER BY concept_id;"
+    ).fetchall()
+    links = conn.execute(
+        "SELECT source_concept_id, target_concept_id FROM links;"
+    ).fetchall()
+    conn.close()
+    assert concepts == [("a", 1), ("b", 0)]
+    assert links == [("a", "b")]

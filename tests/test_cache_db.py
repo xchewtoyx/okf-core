@@ -22,9 +22,11 @@ from okf_core import (
     CacheProblem,
     CacheSchemaError,
     CacheSchemaState,
+    CacheSchemaStatus,
     SearchConfigError,
     build_bundle_graph,
     build_context_pack,
+    cache_db,
     find_unlinked_mentions,
     inspect_cache,
     migrate_cache,
@@ -247,6 +249,35 @@ def test_stamped_version_is_trusted_over_table_shape(tmp_path: Path) -> None:
     assert inspect_cache(bundle).state is CacheSchemaState.CURRENT
 
 
+def test_stamped_older_version_is_outdated_under_a_newer_schema(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The step this design exists for: today's file once the next version ships.
+
+    Only one migration exists yet, so the future current version is simulated
+    by patching the module constant that the classifier and the refusal
+    message both read at call time. Classification only; migrating under the
+    simulation would need a registry step that does not exist.
+    """
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    path = _write_current_cache(bundle)
+    monkeypatch.setattr(cache_db, "CURRENT_SCHEMA_VERSION", CURRENT_SCHEMA_VERSION + 1)
+
+    status = inspect_cache(bundle)
+
+    assert status.state is CacheSchemaState.OUTDATED
+    assert status.found_version == CURRENT_SCHEMA_VERSION
+    assert status.current_version == CURRENT_SCHEMA_VERSION + 1
+    assert status.problem == CacheProblem(
+        db_path=path,
+        kind="cache-needs-migration",
+        message=(
+            f"cache schema version {CURRENT_SCHEMA_VERSION} requires migration "
+            f"to {CURRENT_SCHEMA_VERSION + 1}; run okf migrate-db"
+        ),
+    )
+
+
 @pytest.mark.parametrize(
     ("writer", "kind", "fragment"),
     [
@@ -386,6 +417,30 @@ def test_open_cache_refuses_newer_file(tmp_path: Path) -> None:
     assert excinfo.value.problem.kind == "cache-unsupported-version"
     assert _user_version(path) == CURRENT_SCHEMA_VERSION + 1
     assert _tables(path) == set()
+
+
+def test_open_cache_recheck_inside_the_lock_refuses_a_file_that_became_legacy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The write-lock re-classification, not the first look, protects the file.
+
+    Simulates the race in which the unlocked inspection saw an empty file but
+    an older okf-core created its tables before the initializer took the lock.
+    """
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    path = _write_legacy_cache(bundle)
+    stale_look = CacheSchemaStatus(
+        path, CacheSchemaState.UNINITIALIZED, 0, CURRENT_SCHEMA_VERSION
+    )
+    monkeypatch.setattr(cache_db, "inspect_cache", lambda _bundle: stale_look)
+
+    with pytest.raises(CacheSchemaError, match=MIGRATE_SENTENCE) as excinfo:
+        open_cache(bundle)
+
+    assert excinfo.value.problem.kind == "cache-needs-migration"
+    assert _user_version(path) == 0
+    assert "ctime_ns" not in _columns(path, "concepts")
+    assert _indexes(path) == set()
 
 
 def test_open_cache_current_file_runs_no_ddl(tmp_path: Path) -> None:
