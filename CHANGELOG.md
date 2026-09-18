@@ -24,7 +24,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
-- **Search and migrate-db error channels** (`search_concepts`, `find_unlinked_mentions`, `migrate_cache`): an unreadable cache file and a leftover `concept_fts` on a SQLite build without FTS5 now raise `SearchConfigError` (CLI exit 2) instead of leaking `sqlite3.Error`. `find_unlinked_mentions(refresh=False)` returns no suggestions when the persistent index is absent, instead of creating `temp.unlinked_mentions_fts`. `migrate_cache` wraps a filesystem error creating the cache directory as `CacheMigrationError`. (#158)
+- **Search and migrate-db error channels** (`search_concepts`, `find_unlinked_mentions`, `migrate_cache`): an unreadable cache file, a leftover `concept_fts` on a SQLite build without FTS5, and a leftover `concept_fts` that cannot be queried now raise `SearchConfigError` (CLI exit 2) instead of leaking `sqlite3.Error`. `find_unlinked_mentions(refresh=False)` returns no suggestions when the persistent index is absent, instead of creating `temp.unlinked_mentions_fts`. `migrate_cache` wraps a filesystem error creating the cache directory as `CacheMigrationError`. (#158)
 - **`apply_graph_report_output_file` / `run_graph_report` path-escape**: every graph-report write and stale unlink goes through one helper that `resolve()`s the final file path and refuses unless it is a strict descendant of `output_dir` and not equal to or inside a forbidden root, so a leftover `SUMMARY.md` or `<slug>/GRAPH_REPORT.md` symlink into a bundle cannot overwrite authoring files; the SUMMARY subset note is driven from the requested selection so a failed bundle is reported as omitted rather than as a user-requested subset (#231).
 
 ## [0.5.1] - 2026-08-19

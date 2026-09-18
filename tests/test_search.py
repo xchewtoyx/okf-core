@@ -220,6 +220,32 @@ def test_existing_index_without_fts5_becomes_search_config_error() -> None:
         _has_search_index(IndexWithoutFts())  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    "error",
+    [
+        sqlite3.OperationalError("malformed MATCH expression"),
+        sqlite3.DatabaseError("database disk image is malformed"),
+    ],
+    ids=["operational", "database"],
+)
+def test_broken_existing_index_becomes_search_config_error(
+    error: sqlite3.Error,
+) -> None:
+    class BrokenIndex:
+        def execute(self, sql: str) -> object:
+            if "sqlite_master" in sql:
+
+                class _Row:
+                    def fetchone(self) -> tuple[int]:
+                        return (1,)
+
+                return _Row()
+            raise error
+
+    with pytest.raises(SearchConfigError, match="could not be read"):
+        _has_search_index(BrokenIndex())  # type: ignore[arg-type]
+
+
 def test_fts5_schema_error_becomes_search_config_error() -> None:
     class MissingFtsConnection:
         def execute(self, _sql: str) -> None:

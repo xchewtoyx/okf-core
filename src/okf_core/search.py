@@ -156,16 +156,25 @@ def _prepare_search_index(
 
 
 def _has_search_index(conn: sqlite3.Connection) -> bool:
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'concept_fts';"
-    ).fetchone()
-    if row is None:
-        return False
     try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'concept_fts';"
+        ).fetchone()
+        if row is None:
+            return False
         conn.execute("SELECT 1 FROM concept_fts LIMIT 0;")
-    except sqlite3.OperationalError as exc:
-        _translate_fts5_error(exc)
+    except sqlite3.Error as exc:
+        _translate_search_probe_error(exc)
     return True
+
+
+def _translate_search_probe_error(exc: sqlite3.Error) -> None:
+    if (
+        isinstance(exc, sqlite3.OperationalError)
+        and "no such module: fts5" in str(exc).lower()
+    ):
+        _translate_fts5_error(exc)
+    raise SearchConfigError(f"search index could not be read: {exc}") from exc
 
 
 def _translate_fts5_error(exc: sqlite3.OperationalError) -> None:
