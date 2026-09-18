@@ -205,7 +205,7 @@ Searches valid concept documents with local SQLite FTS5 lexical search:
 okf search QUERY [--config PATH] [--bundle NAME] [--limit N] [--no-refresh]
 ```
 
-Search requires bundle-level `okf_cache_dir` and reuses the existing `okf-cache.db` SQLite cache. It does not create a separate search database. By default the command refreshes the search index from the current bundle scan before querying; pass `--no-refresh` to search the current FTS rows only. `--no-refresh` is strictly read-only: if the index has never been built it returns zero results rather than creating one.
+Search requires bundle-level `okf_cache_dir` and reuses the existing `okf-cache.db` SQLite cache. It does not create a separate search database. By default the command refreshes the search index from the current bundle scan before querying; pass `--no-refresh` to search the current FTS rows only. `--no-refresh` does not create or rebuild the persistent `concept_fts` index: if that index has never been built it returns zero results rather than creating one. A missing cache file is still initialized at the current schema version.
 
 Output: `{"bundle": "...", "query": "...", "results": [...], "problems": [...]}`
 
@@ -221,7 +221,7 @@ Finds visible concept-title mentions that are not already Markdown links, and op
 okf unlinked-mentions [--config PATH] [--bundle NAME] [--no-refresh] [--apply] [--select SOURCE_ID:TARGET_ID ...] [--heading TEXT] [--heading-level N]
 ```
 
-The command requires bundle-level `okf_cache_dir`. By default it refreshes the persistent FTS index before finding suggestions; `--no-refresh` uses its current rows, and yields no suggestions (without creating an index) if none has been built yet.
+The command requires bundle-level `okf_cache_dir`. By default it refreshes the persistent FTS index before finding suggestions; `--no-refresh` uses its current `concept_fts` rows without rebuilding that index, and yields no suggestions if none has been built yet. A missing cache file is still initialized at the current schema version.
 
 Without `--apply` (the default, unchanged read-only behavior), output contains `bundle`, `suggestions`, and non-fatal `problems`. Each suggestion includes `source_concept_id`, `source_path`, `target_concept_id`, `target_path`, `target_title`, `target_href` (the Markdown link destination that would be written, relative to the source concept), and the annotated FTS excerpt `matched_text`.
 

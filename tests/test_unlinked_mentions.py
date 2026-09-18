@@ -199,7 +199,9 @@ def test_no_refresh_with_no_index_yields_nothing_and_creates_no_index(
 
     assert result.suggestions == ()
     assert result.problems == ()
-    with sqlite3.connect(tmp_path / "cache" / "okf-cache.db") as conn:
+    db_path = tmp_path / "cache" / "okf-cache.db"
+    assert db_path.is_file()
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
         tables = {
             row[0]
             for row in conn.execute(

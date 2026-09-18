@@ -367,8 +367,10 @@ def find_unlinked_mentions(
     otherwise (for a stale file, with the ``okf migrate-db`` instruction).  The
     bundle is scanned before the FTS connection is opened, so no cache lock is
     held across the scan.  Pass ``refresh=False`` to skip the scan and the FTS
-    index rebuild and query the existing index directly; nothing is written in
-    that mode, and an index that was never built yields no suggestions.
+    index rebuild and query the existing index directly.  That mode does not
+    rebuild or persist ``concept_fts``; an index that was never built yields
+    no suggestions.  A missing cache file is still initialized at the current
+    schema version, and matching still uses a temporary FTS table.
     Concept files are read from disk only for concepts present in that index,
     so read/decode/parse errors appear in ``problems`` only for those
     concepts.

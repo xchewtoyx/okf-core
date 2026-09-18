@@ -74,9 +74,10 @@ def search_concepts(
     ``okf migrate-db`` (or is newer than this okf-core supports) raises
     :class:`SearchConfigError` before anything is scanned. With
     ``refresh=True`` the bundle is scanned and the FTS index rebuilt inside one
-    write transaction; with ``refresh=False`` the existing index is queried
-    as-is and nothing is written -- an index that was never built yields zero
-    results rather than being created.
+    write transaction; with ``refresh=False`` the existing ``concept_fts``
+    rows are queried as-is and that persistent index is not created or
+    rebuilt -- an index that was never built yields zero results rather than
+    being created.
     """
 
     if limit < 0:

@@ -79,8 +79,8 @@ grafts below are recorded so the comparison does not have to be re-run.
 6. **The FTS index is a derived overlay, not a version step.**
    `concept_fts` is created lazily by search paths, only on a
    `CacheDatabase` (so only on a current file) and only when refreshing;
-   `--no-refresh` performs no DDL and returns zero rows if the index does
-   not exist. Dropping and rebuilding it is a refresh, not a migration, so
+   `--no-refresh` does not create or rebuild `concept_fts` and returns
+   zero rows if the index does not exist. Dropping and rebuilding it is a refresh, not a migration, so
    FTS shape changes never need a `MIGRATIONS` entry. The one exception is
    historical: an unstamped file that holds only `concept_fts` was written
    by an older `okf-core`, and is OUTDATED (decision 2), so an ordinary open
