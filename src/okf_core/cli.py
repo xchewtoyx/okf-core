@@ -351,10 +351,13 @@ def scan(config_path: str | None, bundle_name: str, quiet: bool) -> None:
 def validate(config_path: str | None, bundle_name: str, quiet: bool) -> None:
     """Validate a bundle.
 
-    Checks every concept document against the configured profile, and every
+    Checks every concept document against the configured profile, every
     concept-bearing directory's committed index.md for drift against a fresh
-    regeneration (advisory warnings only; never affects the exit code).
-    Emits findings as JSON unless quiet is True.
+    regeneration (advisory warnings only; never affects the exit code), and
+    every existing log.md for OKF v0.2 §9 date-heading format (ISO 8601
+    YYYY-MM-DD) and newest-first section order (error severity; affects the
+    exit code). Bundles without log.md are unchanged. Emits findings as JSON
+    unless quiet is True.
     """
     cfg, bundle = _load(config_path, bundle_name)
     findings = validate_bundle(bundle, cfg)
