@@ -327,6 +327,43 @@ def test_unreadable_file_propagates_from_inspect_and_wraps_in_plan(
         plan_cache_migration(bundle)
 
 
+def test_inspect_cache_propagates_classify_error_not_commit_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bundle = _bundle(tmp_path, tmp_path / "cache")
+    _write_empty_file(bundle)
+
+    def _raise(_conn: sqlite3.Connection) -> tuple[CacheSchemaState, int]:
+        raise sqlite3.DatabaseError("classify failed")
+
+    monkeypatch.setattr(cache_db, "_classify", _raise)
+
+    with pytest.raises(sqlite3.DatabaseError, match="classify failed"):
+        inspect_cache(bundle)
+
+
+def test_write_transaction_rolls_back_when_commit_fails(tmp_path: Path) -> None:
+    path = tmp_path / "okf-cache.db"
+    raw = sqlite3.connect(path, isolation_level=None)
+    executed: list[str] = []
+
+    class _Conn:
+        def execute(self, sql: str, *args: object) -> sqlite3.Cursor:
+            executed.append(sql)
+            if sql == "COMMIT;":
+                raise sqlite3.OperationalError("disk I/O error")
+            return raw.execute(sql, *args)
+
+    with (
+        pytest.raises(sqlite3.OperationalError, match="disk I/O error"),
+        cache_db._write_transaction(_Conn()) as conn,
+    ):
+        conn.execute("CREATE TABLE t (id INTEGER);")
+
+    assert "ROLLBACK;" in executed
+    raw.close()
+
+
 @pytest.mark.parametrize(
     "writer",
     [None, _write_empty_file, _write_unrelated_table],
@@ -698,6 +735,18 @@ def test_hook_manager_reports_unopenable_cache_file(tmp_path: Path) -> None:
     assert "could not be opened" in pm.cache_problems[0].message
 
 
+def test_hook_manager_reports_mkdir_oserror(tmp_path: Path) -> None:
+    blocking_file = tmp_path / "cache"
+    blocking_file.write_text("not a directory\n", encoding="utf-8")
+    bundle = _bundle(tmp_path, blocking_file)
+
+    pm = get_hook_manager(bundle)
+
+    assert not any(isinstance(p, SqliteCachePlugin) for p in pm.get_plugins())
+    assert [problem.kind for problem in pm.cache_problems] == ["cache-unavailable"]
+    assert "could not be opened" in pm.cache_problems[0].message
+
+
 def test_scan_bundle_with_stale_cache_succeeds_and_reports_cache_problem(
     tmp_path: Path,
 ) -> None:
@@ -838,6 +887,21 @@ def test_required_consumers_refuse_newer_cache(
 
     with pytest.raises(SearchConfigError, match="upgrade okf-core"):
         operation(bundle)
+
+
+@pytest.mark.parametrize("operation", [_search, _unlinked], ids=["search", "unlinked"])
+def test_required_consumers_map_mkdir_oserror(
+    tmp_path: Path, operation: Callable[[BundleConfig], object]
+) -> None:
+    blocking_file = tmp_path / "cache"
+    blocking_file.write_text("not a directory\n", encoding="utf-8")
+    bundle = _bundle(tmp_path, blocking_file)
+    _write_concept(bundle.bundle_root / "alpha.md", "Alpha")
+
+    with pytest.raises(SearchConfigError, match="could not be opened") as excinfo:
+        operation(bundle)
+
+    assert isinstance(excinfo.value.__cause__, OSError)
 
 
 def test_search_works_after_migrating_fts_only_file(tmp_path: Path) -> None:

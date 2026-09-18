@@ -138,7 +138,7 @@ def _open_search_cache(bundle: BundleConfig, feature: str) -> CacheDatabase:
         return open_cache(bundle)
     except CacheSchemaError as exc:
         raise SearchConfigError(str(exc)) from exc
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, OSError) as exc:
         raise SearchConfigError(f"cache database could not be opened: {exc}") from exc
 
 

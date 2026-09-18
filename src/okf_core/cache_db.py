@@ -234,11 +234,7 @@ def inspect_cache(bundle: BundleConfig) -> CacheSchemaStatus:
         # A deferred (read) transaction gives the version and table reads one
         # snapshot. Without it a concurrent initializer can commit between the
         # two, and "version 0 with a concepts table" would misread as OUTDATED.
-        conn.execute("BEGIN;")
-        try:
-            state, found = _classify(conn)
-        finally:
-            conn.execute("COMMIT;")
+        state, found = _classify_snapshot(conn)
     finally:
         conn.close()
     return CacheSchemaStatus(db_path, state, found, CURRENT_SCHEMA_VERSION)
@@ -337,15 +333,33 @@ def _connect_configured(db_path: Path) -> sqlite3.Connection:
     return conn
 
 
+def _classify_snapshot(conn: sqlite3.Connection) -> tuple[CacheSchemaState, int]:
+    conn.execute("BEGIN;")
+    try:
+        state, found = _classify(conn)
+        conn.execute("COMMIT;")
+        return state, found
+    except BaseException:
+        _rollback_quietly(conn)
+        raise
+
+
+def _rollback_quietly(conn: sqlite3.Connection) -> None:
+    try:
+        conn.execute("ROLLBACK;")
+    except sqlite3.Error:
+        pass
+
+
 @contextlib.contextmanager
 def _write_transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     conn.execute("BEGIN IMMEDIATE TRANSACTION;")
     try:
         yield conn
+        conn.execute("COMMIT;")
     except BaseException:
-        conn.execute("ROLLBACK;")
+        _rollback_quietly(conn)
         raise
-    conn.execute("COMMIT;")
 
 
 _VERSION_ZERO_MARKERS: Final = frozenset({"concepts", "concept_fts"})

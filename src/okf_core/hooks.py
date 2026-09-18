@@ -245,7 +245,7 @@ def _open_cache_for_hooks(
         return open_cache(bundle), ()
     except CacheSchemaError as exc:
         return None, (exc.problem,)
-    except sqlite3.Error as exc:
+    except (sqlite3.Error, OSError) as exc:
         problem = CacheProblem(
             db_path=cache_db_path(bundle),
             kind="cache-unavailable",
