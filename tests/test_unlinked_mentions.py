@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -157,7 +158,19 @@ def test_no_cache_dir_raises(tmp_path: Path) -> None:
     _write_concept(root / "alpha.md", title="Alpha")
     bundle = _bundle(root, okf_cache_dir=None)
 
-    with pytest.raises(SearchConfigError):
+    with pytest.raises(SearchConfigError, match="unlinked-mentions"):
+        find_unlinked_mentions(bundle)
+
+
+def test_unreadable_cache_becomes_search_config_error(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "alpha.md", title="Alpha")
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "okf-cache.db").write_bytes(b"this is not a sqlite database\n" * 4)
+    bundle = _bundle(root, okf_cache_dir=cache_dir)
+
+    with pytest.raises(SearchConfigError, match="could not be opened"):
         find_unlinked_mentions(bundle)
 
 
@@ -174,6 +187,30 @@ def test_title_match_in_metadata_not_suggested(tmp_path: Path) -> None:
     assert find_unlinked_mentions(bundle).suggestions == ()
 
 
+def test_no_refresh_with_no_index_yields_nothing_and_creates_no_index(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "alpha.md", title="Alpha")
+    _write_concept(root / "beta.md", title="Beta", body="See Alpha for details.\n")
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    result = find_unlinked_mentions(bundle, refresh=False)
+
+    assert result.suggestions == ()
+    assert result.problems == ()
+    db_path = tmp_path / "cache" / "okf-cache.db"
+    assert db_path.is_file()
+    with sqlite3.connect(f"file:{db_path}?mode=ro", uri=True) as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+    assert "concept_fts" not in tables
+
+
 def test_read_error_surfaces_in_problems(tmp_path: Path) -> None:
     """A missing concept file surfaces as a read-error problem, not a crash."""
     root = tmp_path / "docs"
@@ -188,6 +225,22 @@ def test_read_error_surfaces_in_problems(tmp_path: Path) -> None:
     result = find_unlinked_mentions(bundle, refresh=False)
 
     assert any(p.kind == "read-error" for p in result.problems)
+
+
+def test_listing_problem_surfaces_as_graph_problem(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "alpha.md", title="Alpha")
+    (root / "untyped.md").write_text(
+        "---\ntitle: Untyped\n---\nAlpha is related.\n", encoding="utf-8"
+    )
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    result = find_unlinked_mentions(bundle)
+
+    problem = next(p for p in result.problems if p.concept_id == "untyped")
+    assert problem.kind == "missing-type"
+    assert problem.path == root / "untyped.md"
+    assert all(s.source_concept_id != "untyped" for s in result.suggestions)
 
 
 def test_mutual_unlinked_mentions_both_suggested(tmp_path: Path) -> None:

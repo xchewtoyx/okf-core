@@ -6,35 +6,11 @@ from pathlib import Path
 import pytest
 
 from okf_core import BundleConfig, SearchConfigError, scan_bundle, search_concepts
-from okf_core.search import _ensure_search_schema, _flatten_field_value
-
-
-def test_search_connect_applies_long_timeout_immediately(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    calls: list[dict[str, object]] = []
-
-    class RecordingConnection:
-        def __enter__(self) -> RecordingConnection:
-            return self
-
-        def __exit__(self, *args: object) -> None:
-            return None
-
-        def execute(self, _sql: str, *args: object) -> RecordingConnection:
-            raise RuntimeError("stop after connect")
-
-    def connect(*args: object, **kwargs: object) -> RecordingConnection:
-        calls.append({"args": args, "kwargs": kwargs})
-        return RecordingConnection()
-
-    monkeypatch.setattr(sqlite3, "connect", connect)
-    bundle = _bundle(tmp_path / "docs", okf_cache_dir=tmp_path / "cache")
-
-    with pytest.raises(RuntimeError, match="stop after connect"):
-        search_concepts(bundle, "Alpha", refresh=False)
-
-    assert calls[0]["kwargs"] == {"timeout": 30.0}
+from okf_core.search import (
+    _ensure_search_schema,
+    _flatten_field_value,
+    _has_search_index,
+)
 
 
 def test_search_creates_fts_schema_in_existing_cache_db(tmp_path: Path) -> None:
@@ -170,6 +146,43 @@ def test_search_no_refresh_uses_current_fts_rows_only(tmp_path: Path) -> None:
     assert [r.concept_id for r in search_concepts(bundle, "Alpha").results] == ["topic"]
 
 
+def test_search_no_refresh_with_no_index_succeeds_without_creating_one(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "topic.md", title="Alpha")
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+
+    results = search_concepts(bundle, "Alpha", refresh=False)
+
+    assert results.results == ()
+    assert results.problems == ()
+    with sqlite3.connect(tmp_path / "cache" / "okf-cache.db") as conn:
+        tables = {
+            row[0]
+            for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 1
+    assert "concepts" in tables
+    assert "concept_fts" not in tables
+
+
+def test_search_no_refresh_reads_existing_index_without_rescanning(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "topic.md", title="Alpha")
+    bundle = _bundle(root, okf_cache_dir=tmp_path / "cache")
+    search_concepts(bundle, "Alpha")
+    _write_concept(root / "topic.md", title="Beta")
+
+    stale = search_concepts(bundle, "Alpha", refresh=False)
+
+    assert [r.concept_id for r in stale.results] == ["topic"]
+
+
 def test_search_requires_okf_cache_dir(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "topic.md", title="Alpha")
@@ -177,6 +190,60 @@ def test_search_requires_okf_cache_dir(tmp_path: Path) -> None:
 
     with pytest.raises(SearchConfigError, match="okf_cache_dir"):
         search_concepts(bundle, "Alpha")
+
+
+def test_unreadable_cache_becomes_search_config_error(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "topic.md", title="Alpha")
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "okf-cache.db").write_bytes(b"this is not a sqlite database\n" * 4)
+    bundle = _bundle(root, okf_cache_dir=cache_dir)
+
+    with pytest.raises(SearchConfigError, match="could not be opened"):
+        search_concepts(bundle, "Alpha")
+
+
+def test_existing_index_without_fts5_becomes_search_config_error() -> None:
+    class IndexWithoutFts:
+        def execute(self, sql: str) -> object:
+            if "sqlite_master" in sql:
+
+                class _Row:
+                    def fetchone(self) -> tuple[int]:
+                        return (1,)
+
+                return _Row()
+            raise sqlite3.OperationalError("no such module: fts5")
+
+    with pytest.raises(SearchConfigError, match="SQLite FTS5 is not available"):
+        _has_search_index(IndexWithoutFts())  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        sqlite3.OperationalError("malformed MATCH expression"),
+        sqlite3.DatabaseError("database disk image is malformed"),
+    ],
+    ids=["operational", "database"],
+)
+def test_broken_existing_index_becomes_search_config_error(
+    error: sqlite3.Error,
+) -> None:
+    class BrokenIndex:
+        def execute(self, sql: str) -> object:
+            if "sqlite_master" in sql:
+
+                class _Row:
+                    def fetchone(self) -> tuple[int]:
+                        return (1,)
+
+                return _Row()
+            raise error
+
+    with pytest.raises(SearchConfigError, match="could not be read"):
+        _has_search_index(BrokenIndex())  # type: ignore[arg-type]
 
 
 def test_fts5_schema_error_becomes_search_config_error() -> None:

@@ -7,7 +7,8 @@ from pathlib import Path
 
 import pytest
 
-from okf_core.cache import SqliteCachePlugin, _add_ctime_ns_column_if_missing
+from okf_core.cache import SqliteCachePlugin
+from okf_core.cache_db import open_cache
 from okf_core.config import BundleConfig
 from okf_core.graph import build_bundle_graph
 from okf_core.manifest import BundleManifest, scan_bundle
@@ -99,23 +100,6 @@ def test_cache_initialization_does_not_create_search_schema(tmp_path: Path) -> N
         cursor = conn.cursor()
         cursor.execute("SELECT count(*) FROM sqlite_master WHERE name = 'concept_fts'")
         assert cursor.fetchone()[0] == 0
-
-
-def test_ctime_ns_migration_tolerates_duplicate_column_race() -> None:
-    class RacingConnection:
-        def execute(self, _sql: str) -> None:
-            raise sqlite3.OperationalError("duplicate column name: ctime_ns")
-
-    _add_ctime_ns_column_if_missing(RacingConnection(), set())  # type: ignore[arg-type]
-
-
-def test_ctime_ns_migration_does_not_mask_other_operational_errors() -> None:
-    class BrokenConnection:
-        def execute(self, _sql: str) -> None:
-            raise sqlite3.OperationalError("attempt to write a readonly database")
-
-    with pytest.raises(sqlite3.OperationalError, match="readonly database"):
-        _add_ctime_ns_column_if_missing(BrokenConnection(), set())  # type: ignore[arg-type]
 
 
 def test_cache_hits_skip_file_reads(
@@ -903,7 +887,7 @@ def test_end_scan_closes_connection_when_flush_fails(
         okf_cache_dir=tmp_path / "cache",
     )
 
-    plugin = SqliteCachePlugin(bundle)
+    plugin = SqliteCachePlugin(bundle, open_cache(bundle))
     plugin.okf_start_scan()
     assert plugin._active is True
     assert plugin._conn is not None
@@ -924,12 +908,7 @@ def test_end_scan_closes_connection_when_flush_fails(
     assert plugin._concept_ops == {}
 
 
-def test_missing_performance_index_is_recreated_on_open(tmp_path: Path) -> None:
-    """Opening a cache that lost a performance index repairs it.
-
-    _schema_ready probes for the indexes, so _init_db no longer early-returns on
-    a cache that predates them (or was hand-edited) and leaves scans unindexed.
-    """
+def test_ordinary_scan_does_not_repair_a_current_cache(tmp_path: Path) -> None:
     root = tmp_path / "docs"
     _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n")
     cache_dir = tmp_path / "cache"
@@ -951,13 +930,62 @@ def test_missing_performance_index_is_recreated_on_open(tmp_path: Path) -> None:
     conn.commit()
     conn.close()
 
-    # Constructing a plugin runs _init_db, which must notice and recreate it.
-    SqliteCachePlugin(bundle)
+    manifest = scan_bundle(bundle)
 
+    assert len(manifest.concepts) == 1
+    assert manifest.cache_problems == ()
     conn = sqlite3.connect(db_path)
     indexes = {
         row[0]
         for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index';")
     }
     conn.close()
-    assert "idx_concepts_path" in indexes
+    assert "idx_concepts_path" not in indexes
+
+
+def test_hooks_fired_outside_a_phase_write_immediately(tmp_path: Path) -> None:
+    from okf_core.graph import ConceptLink
+
+    root = tmp_path / "docs"
+    _write_concept(root / "a.md", "type: concept\ntitle: Alpha\n")
+    _write_concept(root / "b.md", "type: concept\ntitle: Beta\n")
+    uncached = BundleConfig(
+        name="docs",
+        bundle_root=root,
+        include=("**/*.md",),
+        exclude=(),
+        reserved_filenames=("index.md", "log.md"),
+        concept_path_strategy="relative-path",
+        okf_cache_dir=None,
+    )
+    entries = {e.concept_id: e for e in scan_bundle(uncached).concepts}
+    cached = uncached.model_copy(update={"okf_cache_dir": tmp_path / "cache"})
+    plugin = SqliteCachePlugin(cached, open_cache(cached))
+    assert plugin._active is False
+
+    plugin.okf_exit_scan_concept(entries["a"], root / "a.md", root)
+    plugin.okf_exit_scan_concept(entries["b"], root / "b.md", root)
+    plugin.okf_exit_resolve_links(
+        entries["a"],
+        [
+            ConceptLink(
+                source_concept_id="a",
+                source_path=root / "a.md",
+                text="Beta",
+                target="b.md",
+                target_path=root / "b.md",
+                target_concept_id="b",
+            )
+        ],
+    )
+
+    conn = sqlite3.connect(tmp_path / "cache" / "okf-cache.db")
+    concepts = conn.execute(
+        "SELECT concept_id, links_resolved FROM concepts ORDER BY concept_id;"
+    ).fetchall()
+    links = conn.execute(
+        "SELECT source_concept_id, target_concept_id FROM links;"
+    ).fetchall()
+    conn.close()
+    assert concepts == [("a", 1), ("b", 0)]
+    assert links == [("a", "b")]

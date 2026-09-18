@@ -1,7 +1,14 @@
-"""FTS5 lexical search for OKF bundles."""
+"""FTS5 lexical search for OKF bundles.
+
+The ``concept_fts`` table lives inside the bundle's ``okf-cache.db`` but is
+not part of its versioned schema: it is a derived index, rebuilt from the
+bundle on every refresh, so it is created lazily here (only when a refresh is
+about to write it) rather than by a cache migration step.
+"""
 
 from __future__ import annotations
 
+import contextlib
 import re
 import sqlite3
 from collections.abc import Mapping
@@ -9,13 +16,25 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from okf_core.cache_db import (
+    CacheDatabase,
+    CacheSchemaError,
+    _write_transaction,
+    open_cache,
+)
 from okf_core.config import BundleConfig
 from okf_core.listing import BundleListing, ListingProblem, list_concepts
 from okf_core.manifest import BundleManifest, scan_bundle
 
 
 class SearchConfigError(Exception):
-    """Raised when lexical search cannot be configured for a bundle."""
+    """Raised when lexical search cannot be configured for a bundle.
+
+    Covers a bundle without ``okf_cache_dir``, a SQLite build without FTS5,
+    a cache file that cannot be opened, and a cache file whose schema
+    version an ordinary command must not use (one that needs
+    ``okf migrate-db``, or one newer than this okf-core).
+    """
 
 
 @dataclass(frozen=True)
@@ -48,17 +67,22 @@ def search_concepts(
     refresh: bool = True,
     manifest: BundleManifest | None = None,
 ) -> BundleSearchResults:
-    """Search a bundle's existing opt-in SQLite cache with FTS5."""
+    """Search a bundle's opt-in SQLite cache with FTS5.
+
+    The cache is opened through :func:`okf_core.cache_db.open_cache`: a missing
+    file is created at the current schema version, while a file that needs
+    ``okf migrate-db`` (or is newer than this okf-core supports) raises
+    :class:`SearchConfigError` before anything is scanned. With
+    ``refresh=True`` the bundle is scanned and the FTS index rebuilt inside one
+    write transaction; with ``refresh=False`` the existing ``concept_fts``
+    rows are queried as-is and that persistent index is not created or
+    rebuilt -- an index that was never built yields zero results rather than
+    being created.
+    """
 
     if limit < 0:
         raise ValueError("limit must be greater than or equal to 0")
-    if bundle.okf_cache_dir is None:
-        raise SearchConfigError(
-            "okf_cache_dir is not configured; enable bundle-level caching to use search"
-        )
-
-    db_path = bundle.okf_cache_dir / "okf-cache.db"
-    bundle.okf_cache_dir.mkdir(parents=True, exist_ok=True)
+    db = _open_search_cache(bundle, "search")
     fts_query = _build_fts_query(query)
 
     problems: tuple[ListingProblem, ...] = ()
@@ -68,16 +92,9 @@ def search_concepts(
         listing = list_concepts(bundle, manifest=resolved_manifest, with_content=True)
         problems = listing.problems
 
-    with sqlite3.connect(db_path, timeout=30.0) as conn:
-        conn.execute("PRAGMA busy_timeout = 30000;")
-        conn.execute("PRAGMA foreign_keys = ON;")
-        conn.execute("PRAGMA journal_mode = WAL;")
-        conn.execute("PRAGMA synchronous = NORMAL;")
-        _ensure_search_schema(conn)
-        if listing is not None:
-            _refresh_search_index(conn, bundle, listing)
-
-        if limit == 0 or fts_query is None:
+    with contextlib.closing(db.connect()) as conn:
+        indexed = _prepare_search_index(conn, bundle, listing)
+        if not indexed or limit == 0 or fts_query is None:
             return BundleSearchResults(
                 bundle_name=bundle.name,
                 query=query,
@@ -110,6 +127,64 @@ def search_concepts(
     )
 
 
+def _open_search_cache(bundle: BundleConfig, feature: str) -> CacheDatabase:
+    """Open the bundle's cache for FTS use, mapping every refusal to SearchConfigError."""
+    if bundle.okf_cache_dir is None:
+        raise SearchConfigError(
+            "okf_cache_dir is not configured; enable bundle-level caching to use "
+            f"{feature}"
+        )
+    try:
+        return open_cache(bundle)
+    except CacheSchemaError as exc:
+        raise SearchConfigError(str(exc)) from exc
+    except (sqlite3.Error, OSError) as exc:
+        raise SearchConfigError(f"cache database could not be opened: {exc}") from exc
+
+
+def _prepare_search_index(
+    conn: sqlite3.Connection,
+    bundle: BundleConfig,
+    listing: BundleListing | None,
+) -> bool:
+    if listing is None:
+        return _has_search_index(conn)
+    with _write_transaction(conn):
+        _ensure_search_schema(conn)
+        _refresh_search_index(conn, bundle, listing)
+    return True
+
+
+def _has_search_index(conn: sqlite3.Connection) -> bool:
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'concept_fts';"
+        ).fetchone()
+        if row is None:
+            return False
+        conn.execute("SELECT 1 FROM concept_fts LIMIT 0;")
+    except sqlite3.Error as exc:
+        _translate_search_probe_error(exc)
+    return True
+
+
+def _translate_search_probe_error(exc: sqlite3.Error) -> None:
+    if (
+        isinstance(exc, sqlite3.OperationalError)
+        and "no such module: fts5" in str(exc).lower()
+    ):
+        _translate_fts5_error(exc)
+    raise SearchConfigError(f"search index could not be read: {exc}") from exc
+
+
+def _translate_fts5_error(exc: sqlite3.OperationalError) -> None:
+    if "no such module: fts5" not in str(exc).lower():
+        raise exc
+    raise SearchConfigError(
+        "SQLite FTS5 is not available; install or use a Python SQLite build with FTS5 support"
+    ) from exc
+
+
 def _ensure_search_schema(conn: sqlite3.Connection) -> None:
     try:
         conn.execute("""
@@ -124,11 +199,7 @@ def _ensure_search_schema(conn: sqlite3.Connection) -> None:
             );
             """)
     except sqlite3.OperationalError as exc:
-        if "no such module: fts5" not in str(exc).lower():
-            raise
-        raise SearchConfigError(
-            "SQLite FTS5 is not available; install or use a Python SQLite build with FTS5 support"
-        ) from exc
+        _translate_fts5_error(exc)
 
 
 def _refresh_search_index(

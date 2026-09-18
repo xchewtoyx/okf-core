@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from types import MappingProxyType
 from typing import Any
 
+from okf_core.cache_db import CacheProblem
 from okf_core.config import BundleConfig
 from okf_core.documents import DocumentParseError, parse_concept_document
 from okf_core.paths import (
@@ -68,11 +69,18 @@ class ManifestProblem:
 
 @dataclass(frozen=True)
 class BundleManifest:
-    """A deterministic manifest for one configured bundle."""
+    """A deterministic manifest for one configured bundle.
+
+    ``cache_problems`` reports why the bundle's SQLite cache, if configured,
+    did not take part in the scan (e.g. its schema needs ``okf migrate-db``).
+    It is kept apart from ``problems`` because the scan itself still succeeded
+    and every document was read from disk; nothing about the bundle is wrong.
+    """
 
     bundle_name: str
     concepts: tuple[ConceptManifestEntry, ...] = ()
     problems: tuple[ManifestProblem, ...] = ()
+    cache_problems: tuple[CacheProblem, ...] = ()
 
 
 def scan_bundle(bundle: BundleConfig) -> BundleManifest:
@@ -136,6 +144,7 @@ def scan_bundle(bundle: BundleConfig) -> BundleManifest:
             problems=tuple(
                 sorted(problems, key=lambda problem: (str(problem.path), problem.kind))
             ),
+            cache_problems=pm.cache_problems,
         )
         pm.hook.okf_end_scan(bundle=bundle, manifest=manifest)
         return manifest
