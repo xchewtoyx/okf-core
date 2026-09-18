@@ -6,9 +6,9 @@ file is created, and how an older file is upgraded.
 
 The schema version is ``PRAGMA user_version``. Version ``0`` is what every
 cache written before versioning reports, so a version-``0`` file is classified
-by its tables: one that already carries an okf-owned table is OUTDATED and is
-only ever written by :func:`migrate_cache`; one with no okf tables is
-UNINITIALIZED and is created at the current version like a missing file.
+by its tables: one that already carries ``concepts`` or ``concept_fts`` is
+OUTDATED and is only ever written by :func:`migrate_cache`; one with neither
+is UNINITIALIZED and is created at the current version like a missing file.
 """
 
 from __future__ import annotations

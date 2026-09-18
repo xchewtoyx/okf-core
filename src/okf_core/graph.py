@@ -385,7 +385,7 @@ def find_unlinked_mentions(
         _prepare_search_index,
     )
 
-    db = _open_search_cache(bundle, "find_unlinked_mentions")
+    db = _open_search_cache(bundle, "unlinked-mentions")
     problems: list[GraphProblem] = []
 
     listing: BundleListing | None = None

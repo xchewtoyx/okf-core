@@ -158,7 +158,7 @@ def test_no_cache_dir_raises(tmp_path: Path) -> None:
     _write_concept(root / "alpha.md", title="Alpha")
     bundle = _bundle(root, okf_cache_dir=None)
 
-    with pytest.raises(SearchConfigError):
+    with pytest.raises(SearchConfigError, match="unlinked-mentions"):
         find_unlinked_mentions(bundle)
 
 
