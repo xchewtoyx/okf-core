@@ -162,6 +162,18 @@ def test_no_cache_dir_raises(tmp_path: Path) -> None:
         find_unlinked_mentions(bundle)
 
 
+def test_unreadable_cache_becomes_search_config_error(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "alpha.md", title="Alpha")
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "okf-cache.db").write_bytes(b"this is not a sqlite database\n" * 4)
+    bundle = _bundle(root, okf_cache_dir=cache_dir)
+
+    with pytest.raises(SearchConfigError, match="could not be opened"):
+        find_unlinked_mentions(bundle)
+
+
 def test_title_match_in_metadata_not_suggested(tmp_path: Path) -> None:
     """A target title appearing only in another concept's title should not be suggested."""
     root = tmp_path / "docs"

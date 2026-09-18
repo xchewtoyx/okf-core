@@ -31,8 +31,9 @@ class SearchConfigError(Exception):
     """Raised when lexical search cannot be configured for a bundle.
 
     Covers a bundle without ``okf_cache_dir``, a SQLite build without FTS5,
-    and a cache file whose schema version an ordinary command must not use
-    (one that needs ``okf migrate-db``, or one newer than this okf-core).
+    a cache file that cannot be opened, and a cache file whose schema
+    version an ordinary command must not use (one that needs
+    ``okf migrate-db``, or one newer than this okf-core).
     """
 
 
@@ -136,6 +137,8 @@ def _open_search_cache(bundle: BundleConfig, feature: str) -> CacheDatabase:
         return open_cache(bundle)
     except CacheSchemaError as exc:
         raise SearchConfigError(str(exc)) from exc
+    except sqlite3.Error as exc:
+        raise SearchConfigError(f"cache database could not be opened: {exc}") from exc
 
 
 def _prepare_search_index(
@@ -155,7 +158,21 @@ def _has_search_index(conn: sqlite3.Connection) -> bool:
     row = conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'concept_fts';"
     ).fetchone()
-    return row is not None
+    if row is None:
+        return False
+    try:
+        conn.execute("SELECT 1 FROM concept_fts LIMIT 0;")
+    except sqlite3.OperationalError as exc:
+        _translate_fts5_error(exc)
+    return True
+
+
+def _translate_fts5_error(exc: sqlite3.OperationalError) -> None:
+    if "no such module: fts5" not in str(exc).lower():
+        raise exc
+    raise SearchConfigError(
+        "SQLite FTS5 is not available; install or use a Python SQLite build with FTS5 support"
+    ) from exc
 
 
 def _ensure_search_schema(conn: sqlite3.Connection) -> None:
@@ -172,11 +189,7 @@ def _ensure_search_schema(conn: sqlite3.Connection) -> None:
             );
             """)
     except sqlite3.OperationalError as exc:
-        if "no such module: fts5" not in str(exc).lower():
-            raise
-        raise SearchConfigError(
-            "SQLite FTS5 is not available; install or use a Python SQLite build with FTS5 support"
-        ) from exc
+        _translate_fts5_error(exc)
 
 
 def _refresh_search_index(

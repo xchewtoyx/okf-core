@@ -594,6 +594,17 @@ def test_migrate_cache_refuses_newer_file_and_leaves_it_alone(tmp_path: Path) ->
     assert _tables(path) == set()
 
 
+def test_migrate_cache_wraps_mkdir_oserror(tmp_path: Path) -> None:
+    blocking_file = tmp_path / "cache"
+    blocking_file.write_text("not a directory\n", encoding="utf-8")
+    bundle = _bundle(tmp_path, blocking_file)
+
+    with pytest.raises(CacheMigrationError, match="cache migration failed") as excinfo:
+        migrate_cache(bundle)
+
+    assert isinstance(excinfo.value.__cause__, OSError)
+
+
 def test_migrate_cache_surfaces_unrelated_operational_error_from_alter(
     tmp_path: Path,
 ) -> None:

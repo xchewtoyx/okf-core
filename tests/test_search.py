@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 
 from okf_core import BundleConfig, SearchConfigError, scan_bundle, search_concepts
-from okf_core.search import _ensure_search_schema, _flatten_field_value
+from okf_core.search import (
+    _ensure_search_schema,
+    _flatten_field_value,
+    _has_search_index,
+)
 
 
 def test_search_creates_fts_schema_in_existing_cache_db(tmp_path: Path) -> None:
@@ -186,6 +190,34 @@ def test_search_requires_okf_cache_dir(tmp_path: Path) -> None:
 
     with pytest.raises(SearchConfigError, match="okf_cache_dir"):
         search_concepts(bundle, "Alpha")
+
+
+def test_unreadable_cache_becomes_search_config_error(tmp_path: Path) -> None:
+    root = tmp_path / "docs"
+    _write_concept(root / "topic.md", title="Alpha")
+    cache_dir = tmp_path / "cache"
+    cache_dir.mkdir()
+    (cache_dir / "okf-cache.db").write_bytes(b"this is not a sqlite database\n" * 4)
+    bundle = _bundle(root, okf_cache_dir=cache_dir)
+
+    with pytest.raises(SearchConfigError, match="could not be opened"):
+        search_concepts(bundle, "Alpha")
+
+
+def test_existing_index_without_fts5_becomes_search_config_error() -> None:
+    class IndexWithoutFts:
+        def execute(self, sql: str) -> object:
+            if "sqlite_master" in sql:
+
+                class _Row:
+                    def fetchone(self) -> tuple[int]:
+                        return (1,)
+
+                return _Row()
+            raise sqlite3.OperationalError("no such module: fts5")
+
+    with pytest.raises(SearchConfigError, match="SQLite FTS5 is not available"):
+        _has_search_index(IndexWithoutFts())  # type: ignore[arg-type]
 
 
 def test_fts5_schema_error_becomes_search_config_error() -> None:

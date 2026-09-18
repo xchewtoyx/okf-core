@@ -293,7 +293,8 @@ def migrate_cache(bundle: BundleConfig) -> CacheMigrationResult:
     stamped inside one ``BEGIN IMMEDIATE`` that re-classifies the file first,
     so a concurrent migrator that loses the race applies nothing. Never runs a
     bundle scan or any hook. Raises :class:`CacheMigrationError` for a newer
-    file or any SQLite failure, and ``ValueError`` without ``okf_cache_dir``.
+    file, a filesystem error creating the cache directory, or any SQLite
+    failure, and ``ValueError`` without ``okf_cache_dir``.
     """
     plan = plan_cache_migration(bundle)
     if not plan.would_change:
@@ -301,7 +302,7 @@ def migrate_cache(bundle: BundleConfig) -> CacheMigrationResult:
     try:
         plan.status.db_path.parent.mkdir(parents=True, exist_ok=True)
         applied = _upgrade_locked(plan.status.db_path, migrate_outdated=True)
-    except (sqlite3.Error, CacheSchemaError) as exc:
+    except (sqlite3.Error, CacheSchemaError, OSError) as exc:
         raise CacheMigrationError(f"cache migration failed: {exc}") from exc
     return CacheMigrationResult(plan.status, applied)
 

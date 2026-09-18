@@ -369,9 +369,9 @@ def find_unlinked_mentions(
     held across the scan.  Pass ``refresh=False`` to skip the scan and the FTS
     index rebuild and query the existing index directly; nothing is written in
     that mode, and an index that was never built yields no suggestions.
-    Regardless of ``refresh``, concept files are read from disk to compute
-    already-linked pairs and eligible prose, so read/decode/parse errors may
-    appear in ``problems`` in either mode.
+    Concept files are read from disk only for concepts present in that index,
+    so read/decode/parse errors appear in ``problems`` only for those
+    concepts.
 
     Non-fatal failures (unreadable or unparseable concepts) are collected in
     ``UnlinkedMentionsResult.problems`` rather than raised or silently dropped.
@@ -395,11 +395,16 @@ def find_unlinked_mentions(
         )
 
     with contextlib.closing(db.connect()) as conn:
-        rows: list[tuple[str, str, str | None]] = []
-        if _prepare_search_index(conn, bundle, listing):
-            rows = conn.execute(
-                "SELECT concept_id, path, title FROM concept_fts"
-            ).fetchall()
+        if not _prepare_search_index(conn, bundle, listing):
+            return UnlinkedMentionsResult(
+                suggestions=(),
+                problems=tuple(
+                    sorted(problems, key=lambda p: (str(p.path), p.kind, p.concept_id))
+                ),
+            )
+        rows = conn.execute(
+            "SELECT concept_id, path, title FROM concept_fts"
+        ).fetchall()
 
     all_concepts = {
         concept_id: (bundle.bundle_root / rel_path, title or "")
