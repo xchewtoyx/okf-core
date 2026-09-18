@@ -6,6 +6,7 @@ import sqlite3
 import threading
 from collections.abc import Callable
 from pathlib import Path
+from typing import cast
 
 import pytest
 
@@ -348,15 +349,17 @@ def test_write_transaction_rolls_back_when_commit_fails(tmp_path: Path) -> None:
     executed: list[str] = []
 
     class _Conn:
-        def execute(self, sql: str, *args: object) -> sqlite3.Cursor:
+        def execute(
+            self, sql: str, parameters: tuple[object, ...] = ()
+        ) -> sqlite3.Cursor:
             executed.append(sql)
             if sql == "COMMIT;":
                 raise sqlite3.OperationalError("disk I/O error")
-            return raw.execute(sql, *args)
+            return raw.execute(sql, parameters)
 
     with (
         pytest.raises(sqlite3.OperationalError, match="disk I/O error"),
-        cache_db._write_transaction(_Conn()) as conn,
+        cache_db._write_transaction(cast(sqlite3.Connection, _Conn())) as conn,
     ):
         conn.execute("CREATE TABLE t (id INTEGER);")
 
