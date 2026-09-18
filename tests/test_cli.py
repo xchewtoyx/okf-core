@@ -476,6 +476,50 @@ def test_validate_reports_index_drift_and_stays_exit_zero(tmp_path: Path) -> Non
     assert "1 warnings" in result.stderr
 
 
+def test_validate_newest_first_log_exits_zero(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "valid.md", title="Valid")
+    (tmp_path / "log.md").write_text(
+        "# Log\n\n## 2026-05-22\n* Newer.\n\n## 2026-05-15\n* Older.\n",
+        encoding="utf-8",
+    )
+
+    result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+
+    assert result.exit_code == 0
+    data = json.loads(result.stdout)
+    assert str(tmp_path / "log.md") not in data["findings"]
+
+
+def test_validate_malformed_log_heading_exits_one(tmp_path: Path) -> None:
+    config_path = tmp_path / "okf-core.toml"
+    config_path.write_text(
+        f'[defaults]\nbundle_root = "{tmp_path}"\n', encoding="utf-8"
+    )
+    _write_concept(tmp_path / "valid.md", title="Valid")
+    log_path = tmp_path / "log.md"
+    log_path.write_text("# Log\n\n## Friday\n* Entry.\n", encoding="utf-8")
+
+    result = _runner().invoke(cli, ["validate", "--config", str(config_path)])
+
+    assert result.exit_code == 1
+    data = json.loads(result.stdout)
+    assert data["findings"][str(log_path)] == [
+        {
+            "severity": "error",
+            "message": (
+                "skipped malformed date heading: 'Friday' is not "
+                "ISO 8601 YYYY-MM-DD form"
+            ),
+            "field": "Friday",
+            "line": 3,
+        }
+    ]
+
+
 def test_validate_index_drift_warning_does_not_mask_coexisting_error(
     tmp_path: Path,
 ) -> None:
